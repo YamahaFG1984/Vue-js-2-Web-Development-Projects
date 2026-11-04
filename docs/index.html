@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vue 3 项目实战教程 · 用 6 个应用学会现代 Vue</title>
+<meta name="description" content="改编自《Vue.js 2 Web Development Projects》，全部代码升级为 Vue 3 与最新生态：Vite、Pinia、Vue Router 4、Vitest、Nuxt。">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="0">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<div class="hero">
+  <span class="chapter-eyebrow">面向初学者的 8 章 + 附录</span>
+  <h1>Vue 3 项目实战：用 6 个应用学会现代 Vue</h1>
+  <p class="sub">
+    这套教程改编自 Packt 出版的《Vue.js 2 Web Development Projects》（Guillaume Chau 著）。
+    原书“边做项目边学”的结构被完整保留 —— Markdown 笔记本、卡牌游戏、客服中心、地图博客、在线商店、实时仪表盘 ——
+    但书中的 <strong>Vue 2 代码全部改写为 Vue 3</strong>，2017 年的工具链也全部换成了今天的生态。
+    每一处改动都配有“原书写法 / 现在写法”的对照，并配有大量示意图。
+  </p>
+  <p style="margin-top:14px">
+    <span class="pill">Vue 3.5+</span><span class="pill">组合式 API</span><span class="pill">&lt;script setup&gt;</span>
+    <span class="pill">Vite</span><span class="pill">Vue Router 4</span><span class="pill">Pinia</span>
+    <span class="pill">Vitest</span><span class="pill">vue-i18n</span><span class="pill">Nuxt</span><span class="pill">Meteor 3</span>
+  </p>
+</div>
+
+<h2 id="why">为什么要“翻新”这本书</h2>
+
+<p>
+  原书写于 2017 年，结构清晰、项目有趣，至今仍是很好的入门路线。但它基于 Vue 2，而 Vue 2 已于 2023 年底停止维护；
+  书中用到的 vue-cli、Vuex、Jest 配置、vue-googlemaps、Google+ API 等，要么已被官方替换，要么已经无法使用。照着原书敲代码，今天会处处碰壁。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="原书 Vue 2 技术栈与本教程 Vue 3 技术栈的对比">
+  <rect class="bx-d" x="20" y="20" width="300" height="210" rx="14"/>
+  <text class="ttl" x="170" y="46" text-anchor="middle">原书（2017）</text>
+  <text class="sm" x="170" y="76" text-anchor="middle">new Vue · 选项式 API · 过滤器</text>
+  <text class="sm" x="170" y="100" text-anchor="middle">vue-cli + webpack + Babel</text>
+  <text class="sm" x="170" y="124" text-anchor="middle">vue-router 3 · Vuex · mixins</text>
+  <text class="sm" x="170" y="148" text-anchor="middle">Jest · .eslintrc · vue-i18n 7</text>
+  <text class="sm" x="170" y="172" text-anchor="middle">vue-server-renderer 手写 SSR</text>
+  <text class="sm" x="170" y="196" text-anchor="middle">vue-googlemaps · Google+ API</text>
+
+  <path class="ln-a" d="M330 125 H426" marker-end="url(#ar-a)"/>
+  <text class="halo ttl on-a" x="378" y="116" text-anchor="middle">逐章改写</text>
+
+  <rect class="bx-a" x="440" y="20" width="300" height="210" rx="14"/>
+  <text class="ttl on-a" x="590" y="46" text-anchor="middle">本教程（Vue 3 生态）</text>
+  <text class="sm" x="590" y="76" text-anchor="middle">createApp · 组合式 API · &lt;script setup&gt;</text>
+  <text class="sm" x="590" y="100" text-anchor="middle">create-vue + Vite</text>
+  <text class="sm" x="590" y="124" text-anchor="middle">Vue Router 4 · Pinia · 组合式函数</text>
+  <text class="sm" x="590" y="148" text-anchor="middle">Vitest · ESLint 扁平配置 · vue-i18n 11</text>
+  <text class="sm" x="590" y="172" text-anchor="middle">Nuxt / Vite SSR</text>
+  <text class="sm" x="590" y="196" text-anchor="middle">Leaflet · OpenID Connect · Meteor 3</text>
+</svg>
+<figcaption>图 0-1　技术栈的全面换代</figcaption>
+</figure>
+
+<h2 id="projects">六个项目，一条渐进的路线</h2>
+
+<p>
+  Vue 自称“渐进式框架”，这本书的结构也是渐进的：前三章只需要一个 HTML 文件和一个 <code>&lt;script&gt;</code> 标签；
+  从第 4 章开始引入构建工具，然后一层层加上路由、状态管理、测试、国际化、服务端渲染，最后是一个全栈实时应用。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 346" role="img" aria-label="六个项目由浅入深的阶梯式学习路线">
+  <rect class="bx-g" x="20" y="220" width="112" height="74" rx="10"/>
+  <text class="sm on-g" x="76" y="240" text-anchor="middle">第 2 章 · 项目一</text>
+  <text class="ttl" x="76" y="262" text-anchor="middle" style="font-size:12px">Markdown 笔记本</text>
+  <text class="sm" x="76" y="282" text-anchor="middle">响应式 · 指令</text>
+  <path class="ln-d" d="M20 300 H132"/>
+  <rect class="bx-g" x="142" y="182" width="112" height="74" rx="10"/>
+  <text class="sm on-g" x="198" y="202" text-anchor="middle">第 3 章 · 项目二</text>
+  <text class="ttl" x="198" y="224" text-anchor="middle">城堡决斗卡牌</text>
+  <text class="sm" x="198" y="244" text-anchor="middle">组件 · 动画</text>
+  <path class="ln-d" d="M142 262 H254"/>
+  <rect class="bx-b" x="264" y="144" width="112" height="74" rx="10"/>
+  <text class="sm on-b" x="320" y="164" text-anchor="middle">第 4–5 章 · 项目三</text>
+  <text class="ttl" x="320" y="186" text-anchor="middle">客服支持中心</text>
+  <text class="sm" x="320" y="206" text-anchor="middle">Vite · 路由</text>
+  <path class="ln-d" d="M264 224 H376"/>
+  <rect class="bx-p" x="386" y="106" width="112" height="74" rx="10"/>
+  <text class="sm on-p" x="442" y="126" text-anchor="middle">第 6 章 · 项目四</text>
+  <text class="ttl" x="442" y="148" text-anchor="middle">地理定位博客</text>
+  <text class="sm" x="442" y="168" text-anchor="middle">Pinia · 地图</text>
+  <path class="ln-d" d="M386 186 H498"/>
+  <rect class="bx-a" x="508" y="68" width="112" height="74" rx="10"/>
+  <text class="sm on-a" x="564" y="88" text-anchor="middle">第 7 章 · 项目五</text>
+  <text class="ttl" x="564" y="110" text-anchor="middle">在线商店</text>
+  <text class="sm" x="564" y="130" text-anchor="middle">测试 · SSR</text>
+  <path class="ln-d" d="M508 148 H620"/>
+  <rect class="bx-r" x="630" y="30" width="112" height="74" rx="10"/>
+  <text class="sm on-r" x="686" y="50" text-anchor="middle">第 8 章 · 项目六</text>
+  <text class="ttl" x="686" y="72" text-anchor="middle">实时仪表盘</text>
+  <text class="sm" x="686" y="92" text-anchor="middle">Meteor 全栈</text>
+  <path class="ln-d" d="M630 110 H742"/>
+  <path class="ln-a" d="M20 336 H736" marker-end="url(#ar-a)"/>
+  <text class="sm" x="20" y="326">一个 HTML 文件、一个 script 标签</text>
+  <text class="sm" x="736" y="326" text-anchor="end">构建工具 → 路由 → 状态管理 → 测试 / SSR → 全栈实时</text>
+  <text class="lbl" x="20" y="30">第 1 章：先用 5 分钟认识 Vue</text>
+  <text class="lbl" x="20" y="50">附录：Vue 2 → Vue 3 速查表</text>
+</svg>
+<figcaption>图 0-2　六个项目，从简单到复杂</figcaption>
+</figure>
+
+<h2 id="who">这套教程写给谁</h2>
+
+<ul>
+  <li><strong>会一点 HTML / CSS / JavaScript，想学一个前端框架</strong>的人。每个概念都从“为什么需要它”讲起，配图解释原理。</li>
+  <li><strong>手里有 Vue 2 书籍或老项目</strong>的人。每一处改动都有“原书 Vue 2 / 现在 Vue 3”的左右对照，附录还有一份完整的速查表。</li>
+  <li><strong>想系统了解 Vue 3 生态</strong>的人。路由、状态管理、测试、国际化、SSR、全栈实时，覆盖了一个真实项目会遇到的大部分环节。</li>
+</ul>
+
+<div class="box note">
+  <div class="t">&#9432; 需要什么前置知识</div>
+  <p>
+    会用变量、函数、数组、对象就够了。箭头函数、解构、模板字符串、<code>async/await</code>、ES 模块会在用到时简单说明。
+    从第 4 章起需要用命令行运行 <code>npm</code> 命令。
+  </p>
+</div>
+
+<h2 id="how">怎么使用这套教程</h2>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#128214;</span><h4>按顺序读</h4><p>章节是递进的，后面会用到前面的知识。第 1–3 章可以直接在浏览器里跑，不需要安装任何东西。</p></div>
+  <div class="card"><span class="ic">&#9000;&#65039;</span><h4>动手敲代码</h4><p>每个代码块右上角都有“复制”按钮，但亲手敲一遍记得更牢。每章末尾有练习题。</p></div>
+  <div class="card"><span class="ic">&#128193;</span><h4>配合仓库代码</h4><p>仓库里的 <code>ChapterXX</code> 目录是原书的 Vue 2 源码和素材（样式、图片、数据），可以直接复用素材、对照阅读。</p></div>
+  <div class="card"><span class="ic">&#9654;&#65039;</span><h4>在线演示</h4><p>部分章节内嵌了可交互的小演示，标有“在线演示”字样，直接在页面上就能玩。</p></div>
+</div>
+
+<p>页面里的提示框有几种颜色：</p>
+
+<div class="box note"><div class="t">&#9432; 说明</div><p>补充背景知识或细节。</p></div>
+<div class="box tip"><div class="t">&#10003; 技巧</div><p>更好的写法、实用的工具。</p></div>
+<div class="box warn"><div class="t">&#9888; 注意</div><p>常见的坑，以及 <strong>Vue 3 中的破坏性变化</strong>。</p></div>
+<div class="box key"><div class="t">&#9733; 重点</div><p>本章最核心的概念或与原书的关键差异。</p></div>
+<div class="box deep"><div class="t">&#128269; 深入</div><p>原理性的内容，初次阅读可以跳过。</p></div>
+
+<h2 id="toc">目录</h2>
+
+<div id="toc-grid"></div>
+
+<h2 id="notes">版本说明</h2>
+
+<p>
+  本教程基于 <strong>Vue 3.5+</strong>、Vite、Vue Router 4、Pinia 3、Vitest、vue-i18n 11、Nuxt 4、Meteor 3 编写。
+  前端生态更新很快，命令行提示、配置文件的细节可能和你看到的略有不同，遇到差异时以各工具的官方文档为准；
+  本教程讲解的核心概念（响应式、组件、路由、状态管理、测试、SSR）是稳定的。
+</p>
+
+<div class="box tip">
+  <div class="t">&#10003; 本地预览这套页面</div>
+  <p>
+    所有页面都是纯静态 HTML，直接双击 <code>docs/index.html</code> 就能打开；也可以在仓库根目录运行 <code>npx serve docs</code>。
+    部署到 GitHub Pages：在仓库 Settings → Pages 中选择从 <code>master</code> 分支的 <code>/docs</code> 目录发布即可。
+  </p>
+</div>
+
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

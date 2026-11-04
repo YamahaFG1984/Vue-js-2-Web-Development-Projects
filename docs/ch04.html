@@ -1,0 +1,1082 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 4 章 · 工程化：Vite 与单文件组件 — Vue 3 项目实战教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="4">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 4 章</span>
+<h1>工程化：Vite 与单文件组件</h1>
+<p class="lede">
+  前三章都是“一个 HTML + 几个 script 标签”的老派写法。要做更大的应用，我们需要一套正经的开发环境：
+  脚手架、开发服务器、构建工具，以及 Vue 最重要的文件格式 —— 单文件组件 <code>.vue</code>。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>安装 Node.js，配置好 VS Code 和 Vue 官方扩展</li>
+    <li>用 <code>npm create vue@latest</code> 创建项目，理解 Vite 为什么快</li>
+    <li>看懂项目结构：<code>index.html</code> → <code>main.js</code> → <code>App.vue</code></li>
+    <li>理解模板是如何被编译成渲染函数的，会写简单的 <code>h()</code> 和 JSX</li>
+    <li>掌握单文件组件的三个块，尤其是 <code>&lt;script setup&gt;</code> 和 <code>&lt;style scoped&gt;</code></li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="toolchain">工具链换代：2017 vs. 今天</h2>
+
+<p>
+  原书这一章用的是 vue-cli 2 + webpack + Babel。这套组合当年很先进，但配置复杂、启动慢。
+  今天 Vue 官方的推荐是 <strong>create-vue + Vite</strong>：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="Vue 工具链从 vue-cli/webpack/Babel 演进到 create-vue/Vite">
+  <text class="ttl" x="190" y="24" text-anchor="middle">原书（2017）</text>
+  <text class="ttl on-a" x="570" y="24" text-anchor="middle">本教程（Vue 3 生态）</text>
+
+  <rect class="bx-d" x="40" y="40" width="300" height="40" rx="8"/>
+  <text x="190" y="65" text-anchor="middle">vue-cli 2：<tspan class="mono">vue init webpack-simple</tspan></text>
+  <rect class="bx-a" x="420" y="40" width="300" height="40" rx="8"/>
+  <text class="on-a" x="570" y="65" text-anchor="middle">create-vue：<tspan class="mono">npm create vue@latest</tspan></text>
+  <text class="sm" x="380" y="64" text-anchor="middle">脚手架</text>
+
+  <rect class="bx-d" x="40" y="92" width="300" height="40" rx="8"/>
+  <text x="190" y="117" text-anchor="middle">webpack + webpack-dev-server</text>
+  <rect class="bx-a" x="420" y="92" width="300" height="40" rx="8"/>
+  <text class="on-a" x="570" y="117" text-anchor="middle">Vite（开发服务器 + 构建）</text>
+  <text class="sm" x="380" y="116" text-anchor="middle">构建</text>
+
+  <rect class="bx-d" x="40" y="144" width="300" height="40" rx="8"/>
+  <text x="190" y="169" text-anchor="middle">Babel + babel-polyfill</text>
+  <rect class="bx-a" x="420" y="144" width="300" height="40" rx="8"/>
+  <text class="on-a" x="570" y="169" text-anchor="middle">esbuild / Rolldown（内置，无需配置）</text>
+  <text class="sm" x="380" y="168" text-anchor="middle">编译 JS</text>
+
+  <rect class="bx-d" x="40" y="196" width="300" height="40" rx="8"/>
+  <text x="190" y="221" text-anchor="middle">VS Code + Vetur 扩展</text>
+  <rect class="bx-a" x="420" y="196" width="300" height="40" rx="8"/>
+  <text class="on-a" x="570" y="221" text-anchor="middle">VS Code + Vue - Official 扩展</text>
+  <text class="sm" x="380" y="220" text-anchor="middle">编辑器</text>
+
+  <text class="sm" x="380" y="260" text-anchor="middle">vue-cli 3/4/5 后来也进入了维护模式，官方文档已不再推荐用它创建新项目</text>
+</svg>
+<figcaption>图 4-1　开发工具链的换代</figcaption>
+</figure>
+
+<h2 id="env">准备开发环境</h2>
+
+<h3>Node.js 与 npm</h3>
+
+<p>
+  所有现代前端工具都运行在 <a href="https://nodejs.org/">Node.js</a> 上。去官网下载 <strong>LTS（长期支持）版本</strong> 安装即可，npm 会一起装好。
+  Vite 对 Node 版本有最低要求（目前是 20.19+ 或 22.12+），装最新的 LTS 就不用操心。
+</p>
+
+<div class="code" data-lang="bash" data-file="终端"><pre>
+node -v    # 例如 v24.x.x
+npm -v     # 例如 11.x.x
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 包管理器可以换</div>
+  <p>
+    本教程用 npm 演示。社区里 <a href="https://pnpm.io/">pnpm</a> 也很流行（更快、更省磁盘），命令几乎一一对应：
+    <code>npm install</code> → <code>pnpm install</code>，<code>npm run dev</code> → <code>pnpm dev</code>。
+  </p>
+</div>
+
+<h3>代码编辑器</h3>
+
+<p>
+  推荐 <a href="https://code.visualstudio.com/">Visual Studio Code</a>，并安装 Vue 官方扩展 <strong>Vue - Official</strong>（以前叫 Volar）。
+  它提供 <code>.vue</code> 文件的语法高亮、智能提示、类型检查和跳转。
+</p>
+
+<div class="box warn">
+  <div class="t">&#9888; 不要再装 Vetur</div>
+  <p>原书推荐的 Vetur 扩展是为 Vue 2 设计的，已不再维护，而且和 Vue - Official 冲突。如果装过，请卸载或禁用。原书提到的 Atom 编辑器也已停止开发。</p>
+</div>
+
+<p>JetBrains 的 WebStorm 也原生支持 Vue，而且现在对非商业用途免费。</p>
+
+<h2 id="scaffold">用 create-vue 创建项目</h2>
+
+<p>原书需要先全局安装 vue-cli，再 <code>vue init</code>。现在一条命令就够了，不需要全局安装任何东西：</p>
+
+<div class="code" data-lang="bash" data-file="终端"><pre>
+npm create vue@latest
+</pre></div>
+
+<p>
+  <code>npm create vue</code> 会临时下载并运行 <code>create-vue</code> 这个包。它会问你几个问题（不同版本措辞略有差异）：
+</p>
+
+<div class="code" data-lang="text" data-file="终端交互"><pre>
+◆ 请输入项目名称：
+│ demo
+│
+◆ 请选择要包含的功能：（↑/↓ 切换，空格选择，回车确认）
+│ ◻ TypeScript
+│ ◻ JSX 支持
+│ ◻ Router（单页面应用开发）
+│ ◻ Pinia（状态管理）
+│ ◻ Vitest（单元测试）
+│ ◻ 端到端测试
+│ ◻ ESLint（错误预防）
+│ ◻ Prettier（代码格式化）
+└
+</pre></div>
+
+<p>
+  这是一个“菜单”：需要什么就勾什么，后面的章节会逐个用到它们。现在什么都不选，直接回车，得到一个最精简的项目。然后：
+</p>
+
+<div class="code" data-lang="bash" data-file="终端"><pre>
+cd demo
+npm install     # 安装 package.json 里声明的依赖
+npm run dev     # 启动开发服务器
+</pre></div>
+
+<div class="code" data-lang="text" data-file="终端输出"><pre>
+  VITE v7.x.x  ready in 312 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: use --host to expose
+  ➜  press h + enter to show help
+</pre></div>
+
+<p>浏览器打开 <code>http://localhost:5173/</code> 就能看到欢迎页面。修改任何文件并保存，页面会<strong>立即</strong>更新，而且通常不会丢失当前状态 —— 这叫<strong>热模块替换（HMR）</strong>。</p>
+
+<h3>Vite 为什么这么快</h3>
+
+<p>
+  Vite（法语“快”，读作 /vit/）的快，来自一个关键的思路转变：<strong>开发时不打包</strong>。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 330" role="img" aria-label="传统打包式开发服务器与 Vite 基于原生 ES 模块的开发服务器对比">
+  <text class="ttl" x="190" y="22" text-anchor="middle">webpack：先全部打包，再启动</text>
+  <rect class="bx" x="20" y="38" width="80" height="26" rx="5"/><text class="sm" x="60" y="56" text-anchor="middle">main.js</text>
+  <rect class="bx" x="20" y="70" width="80" height="26" rx="5"/><text class="sm" x="60" y="88" text-anchor="middle">App.vue</text>
+  <rect class="bx" x="20" y="102" width="80" height="26" rx="5"/><text class="sm" x="60" y="120" text-anchor="middle">页面 A</text>
+  <rect class="bx" x="20" y="134" width="80" height="26" rx="5"/><text class="sm" x="60" y="152" text-anchor="middle">页面 B</text>
+  <rect class="bx" x="20" y="166" width="80" height="26" rx="5"/><text class="sm" x="60" y="184" text-anchor="middle">… 几百个</text>
+  <path class="ln" d="M102 115 H140" marker-end="url(#ar)"/>
+  <rect class="bx-r" x="144" y="70" width="110" height="90" rx="10"/>
+  <text class="on-r" x="199" y="104" text-anchor="middle">打包</text>
+  <text class="sm" x="199" y="124" text-anchor="middle">处理所有文件</text>
+  <text class="sm" x="199" y="142" text-anchor="middle">项目越大越慢</text>
+  <path class="ln" d="M256 115 H290" marker-end="url(#ar)"/>
+  <rect class="bx" x="294" y="90" width="66" height="50" rx="8"/>
+  <text class="sm" x="327" y="112" text-anchor="middle">bundle</text>
+  <text class="sm" x="327" y="128" text-anchor="middle">.js</text>
+  <text class="sm on-r" x="190" y="214" text-anchor="middle">启动要等几十秒，改一行也要重新打包相关部分</text>
+
+  <path class="ln-d" d="M380 14 V230"/>
+
+  <text class="ttl on-a" x="570" y="22" text-anchor="middle">Vite：先启动，按需编译</text>
+  <rect class="bx-g" x="396" y="38" width="110" height="44" rx="8"/>
+  <text class="on-g" x="451" y="58" text-anchor="middle">浏览器</text>
+  <text class="sm" x="451" y="74" text-anchor="middle">原生支持 import</text>
+  <rect class="bx-a" x="620" y="38" width="120" height="44" rx="8"/>
+  <text class="on-a" x="680" y="58" text-anchor="middle">Vite 服务器</text>
+  <text class="sm" x="680" y="74" text-anchor="middle">毫秒级启动</text>
+  <path class="ln-g" d="M508 52 H616" marker-end="url(#ar)"/>
+  <text class="halo mono sm" x="562" y="46" text-anchor="middle">GET /main.js</text>
+  <path class="ln-a" d="M616 70 H510" marker-end="url(#ar-a)"/>
+  <rect class="bx" x="600" y="100" width="64" height="26" rx="5"/><text class="sm" x="632" y="118" text-anchor="middle">main.js</text>
+  <rect class="bx" x="676" y="100" width="64" height="26" rx="5"/><text class="sm" x="708" y="118" text-anchor="middle">App.vue</text>
+  <rect class="bx-d" x="600" y="134" width="64" height="26" rx="5"/><text class="sm" x="632" y="152" text-anchor="middle">页面 A</text>
+  <rect class="bx-d" x="676" y="134" width="64" height="26" rx="5"/><text class="sm" x="708" y="152" text-anchor="middle">页面 B</text>
+  <text class="sm" x="460" y="118" text-anchor="middle">浏览器请求到哪个文件</text>
+  <text class="sm" x="460" y="136" text-anchor="middle">Vite 才编译哪个文件</text>
+  <text class="sm" x="670" y="180" text-anchor="middle">没访问的页面（虚线）</text>
+  <text class="sm" x="670" y="196" text-anchor="middle">根本不会被处理</text>
+  <text class="sm on-g" x="570" y="214" text-anchor="middle">启动与项目大小基本无关；改一个文件只重新编译这一个</text>
+
+  <rect class="bx-b" x="20" y="246" width="720" height="70" rx="10"/>
+  <text class="ttl on-b" x="380" y="270" text-anchor="middle">生产构建（npm run build）时 Vite 仍然会打包</text>
+  <text class="sm" x="380" y="292" text-anchor="middle">因为线上环境里，几百个小文件分别请求太慢 —— 打包、压缩、拆分代码、给文件名加哈希，</text>
+  <text class="sm" x="380" y="308" text-anchor="middle">这一步用的是高度优化的打包器（Vite 正在把底层换成 Rust 编写的 Rolldown）</text>
+</svg>
+<figcaption>图 4-2　开发时“按需编译”，构建时才打包</figcaption>
+</figure>
+
+<h2 id="structure">项目结构</h2>
+
+<div class="tree"><b>demo/</b>
+├── <b>index.html</b>          <i># 入口页面，放在根目录（不是 public/ 里）</i>
+├── package.json        <i># 项目信息、依赖、npm 脚本</i>
+├── vite.config.js      <i># Vite 配置</i>
+├── public/             <i># 原样复制的静态文件（favicon 等）</i>
+└── <b>src/</b>
+    ├── <b>main.js</b>         <i># JS 入口：创建并挂载应用</i>
+    ├── <b>App.vue</b>         <i># 根组件</i>
+    ├── assets/         <i># 会被构建处理的资源（图片、CSS）</i>
+    └── components/     <i># 其他组件</i></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="入口链：index.html 引入 main.js，main.js 导入 App.vue，App.vue 导入子组件">
+  <rect class="bx" x="20" y="60" width="160" height="80" rx="10"/>
+  <text class="ttl" x="100" y="86" text-anchor="middle">index.html</text>
+  <text class="mono sm" x="100" y="108" text-anchor="middle">&lt;div id="app"&gt;</text>
+  <text class="mono sm" x="100" y="126" text-anchor="middle">&lt;script type="module"</text>
+
+  <path class="ln" d="M182 100 H226" marker-end="url(#ar)"/>
+  <text class="halo sm" x="204" y="92" text-anchor="middle">src=</text>
+
+  <rect class="bx-b" x="230" y="60" width="180" height="80" rx="10"/>
+  <text class="ttl on-b" x="320" y="86" text-anchor="middle">src/main.js</text>
+  <text class="mono sm" x="320" y="108" text-anchor="middle">createApp(App)</text>
+  <text class="mono sm" x="320" y="126" text-anchor="middle">.mount('#app')</text>
+
+  <path class="ln" d="M412 100 H456" marker-end="url(#ar)"/>
+  <text class="halo sm" x="434" y="92" text-anchor="middle">import</text>
+
+  <rect class="bx-a" x="460" y="60" width="130" height="80" rx="10"/>
+  <text class="ttl on-a" x="525" y="94" text-anchor="middle">App.vue</text>
+  <text class="sm" x="525" y="116" text-anchor="middle">根组件</text>
+
+  <path class="ln" d="M592 85 L636 55" marker-end="url(#ar)"/>
+  <path class="ln" d="M592 115 L636 145" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="640" y="30" width="100" height="40" rx="8"/>
+  <text class="sm on-g" x="690" y="55" text-anchor="middle">Header.vue</text>
+  <rect class="bx-g" x="640" y="130" width="100" height="40" rx="8"/>
+  <text class="sm on-g" x="690" y="155" text-anchor="middle">Movies.vue</text>
+  <text class="lbl" x="380" y="190" text-anchor="middle">一切从 index.html 开始：它是 Vite 的真正入口</text>
+</svg>
+<figcaption>图 4-3　从页面到组件的引用链</figcaption>
+</figure>
+
+<div class="code" data-lang="html" data-file="index.html"><pre>
+&lt;!doctype html&gt;
+&lt;html lang="zh-CN"&gt;
+  &lt;head&gt;
+    &lt;meta charset="UTF-8"&gt;
+    &lt;meta name="viewport" content="width=device-width, initial-scale=1.0"&gt;
+    &lt;title&gt;Demo&lt;/title&gt;
+  &lt;/head&gt;
+  &lt;body&gt;
+    &lt;div id="app"&gt;&lt;/div&gt;
+    &lt;script type="module" src="/src/main.js"&gt;&lt;/script&gt;
+  &lt;/body&gt;
+&lt;/html&gt;
+</pre></div>
+
+<div class="code" data-lang="json" data-file="package.json（节选）"><pre>
+{
+  "name": "demo",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",              // npm run dev：开发服务器
+    "build": "vite build",      // npm run build：生产构建
+    "preview": "vite preview"   // npm run preview：本地预览构建结果
+  },
+  "dependencies": {
+    "vue": "^3.5.0"             // 运行时需要的包
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.0",   // 只在开发/构建时需要的包
+    "vite": "^7.0.0"
+  }
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; dependencies 与 devDependencies</div>
+  <p>
+    应用运行时真正要用的包（vue、vue-router、marked……）放 <code>dependencies</code>，用 <code>npm install 包名</code> 安装；
+    只在开发和构建时用的工具（vite、eslint、sass……）放 <code>devDependencies</code>，用 <code>npm install -D 包名</code> 安装。
+    （JSON 本身不允许注释，上面的注释只是为了讲解。）
+  </p>
+</div>
+
+<div class="code" data-lang="js" data-file="vite.config.js"><pre>
+import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
+
+export default defineConfig({
+  plugins: [vue()],   // 让 Vite 认识 .vue 文件
+})
+</pre></div>
+
+<h2 id="create">创建应用</h2>
+
+<p>把 <code>src</code> 里的东西清空，从零写一个最小的入口：</p>
+
+<div class="code" data-lang="js" data-file="src/main.js"><pre>
+import { createApp, h } from 'vue'
+
+createApp({
+  render: () =&gt; h('div', 'hello world'),
+}).mount('#app')
+</pre></div>
+
+<p>
+  从这里开始，我们全面使用 ES 模块：用 <code>import</code> 引入别的文件或包，用 <code>export</code> 导出。
+  注意 <code>import ... from 'vue'</code> —— 不再是全局变量 <code>Vue</code>，而是从 npm 包里按需导入。
+</p>
+
+<div class="vs">
+  <div class="old"><div class="h">原书 · Vue 2</div>
+<div class="code" data-lang="js"><pre>
+import Vue from 'vue'
+
+new Vue({
+  el: '#app',
+  render: h =&gt; h('div', 'hello world'),
+})
+</pre></div></div>
+  <div class="new"><div class="h">Vue 3</div>
+<div class="code" data-lang="js"><pre>
+import { createApp, h } from 'vue'
+
+createApp({
+  render: () =&gt; h('div', 'hello world'),
+}).mount('#app')
+</pre></div></div>
+</div>
+
+<p>注意 <code>h</code> 的来源变了：Vue 2 里它作为参数传给 <code>render</code>，Vue 3 里要从 <code>'vue'</code> 导入。</p>
+
+<h2 id="render">渲染函数与虚拟 DOM</h2>
+
+<p>
+  上面的 <code>render</code> 是什么？要回答这个问题，得先知道 Vue 是怎么更新页面的。
+  直接操作真实 DOM 很慢，所以 Vue 在内存里维护一棵用普通 JS 对象描述的“<strong>虚拟 DOM</strong>”树。
+  数据变化时，生成一棵新树，和旧树比较（diff），只把<em>真正不同</em>的地方应用到真实 DOM 上。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="模板被编译成渲染函数，渲染函数生成虚拟 DOM，比较差异后更新真实 DOM">
+  <rect class="bx-g" x="20" y="30" width="160" height="90" rx="10"/>
+  <text class="ttl on-g" x="100" y="54" text-anchor="middle">模板</text>
+  <text class="mono sm" x="100" y="78" text-anchor="middle">&lt;ul class="movies"&gt;</text>
+  <text class="mono sm" x="100" y="96" text-anchor="middle">&lt;li v-for…&gt;</text>
+
+  <path class="ln" d="M182 75 H226" marker-end="url(#ar)"/>
+  <text class="halo sm" x="204" y="66" text-anchor="middle">编译</text>
+  <text class="sm" x="204" y="94" text-anchor="middle">（构建时）</text>
+
+  <rect class="bx-a" x="230" y="30" width="170" height="90" rx="10"/>
+  <text class="ttl on-a" x="315" y="54" text-anchor="middle">渲染函数</text>
+  <text class="mono sm" x="315" y="78" text-anchor="middle">() =&gt; h('ul', …,</text>
+  <text class="mono sm" x="315" y="96" text-anchor="middle">movies.map(…))</text>
+
+  <path class="ln" d="M402 75 H446" marker-end="url(#ar)"/>
+  <text class="halo sm" x="424" y="66" text-anchor="middle">执行</text>
+
+  <rect class="bx-p" x="450" y="20" width="140" height="110" rx="10"/>
+  <text class="ttl on-p" x="520" y="42" text-anchor="middle">新 VNode 树</text>
+  <rect class="bx" x="495" y="52" width="50" height="20" rx="4"/><text class="mono sm" x="520" y="66" text-anchor="middle">ul</text>
+  <path class="ln" d="M510 74 L485 92"/><path class="ln" d="M530 74 L555 92"/>
+  <rect class="bx" x="460" y="94" width="50" height="20" rx="4"/><text class="mono sm" x="485" y="108" text-anchor="middle">li</text>
+  <rect class="bx-a" x="530" y="94" width="50" height="20" rx="4"/><text class="mono sm on-a" x="555" y="108" text-anchor="middle">li*</text>
+
+  <rect class="bx" x="450" y="160" width="140" height="80" rx="10"/>
+  <text class="ttl" x="520" y="182" text-anchor="middle">旧 VNode 树</text>
+  <text class="sm" x="520" y="206" text-anchor="middle">上一次渲染的结果</text>
+  <text class="sm" x="520" y="224" text-anchor="middle">（保存在内存中）</text>
+
+  <path class="ln-p" d="M592 75 C640 75 640 130 650 140" marker-end="url(#ar)"/>
+  <path class="ln" d="M592 200 C630 200 640 170 650 160" marker-end="url(#ar)"/>
+  <rect class="bx-r" x="654" y="120" width="90" height="60" rx="10"/>
+  <text class="on-r ttl" x="699" y="146" text-anchor="middle">diff</text>
+  <text class="sm" x="699" y="166" text-anchor="middle">找出差异</text>
+
+  <path class="ln-a" d="M699 182 V246" marker-end="url(#ar-a)"/>
+  <rect class="bx-g" x="560" y="250" width="184" height="32" rx="8"/>
+  <text class="sm on-g" x="652" y="271" text-anchor="middle">真实 DOM：只改那一个 li</text>
+
+  <text class="lbl" x="20" y="170">你写模板，Vue 在构建时把它编译成渲染函数。</text>
+  <text class="lbl" x="20" y="190">Vue 3 的编译器还会做静态分析：标记哪些节点</text>
+  <text class="lbl" x="20" y="210">永远不变、哪些属性是动态的，diff 时直接跳过</text>
+  <text class="lbl" x="20" y="230">静态部分 —— 这是 Vue 3 比 Vue 2 快的重要原因。</text>
+</svg>
+<figcaption>图 4-4　模板 → 渲染函数 → 虚拟 DOM → 最小化的真实 DOM 更新</figcaption>
+</figure>
+
+<p>
+  <code>h</code> 是 hyperscript 的缩写（“用 JS 描述 HTML”），它创建一个虚拟节点（VNode）。它接收三个参数：
+</p>
+
+<ol>
+  <li><strong>类型</strong>：HTML 标签名（如 <code>'div'</code>）或组件对象；</li>
+  <li><strong>属性</strong>（可选）：class、style、props、事件监听器等；</li>
+  <li><strong>子节点</strong>（可选）：文本，或由 <code>h()</code> 创建的子节点数组。</li>
+</ol>
+
+<div class="code" data-lang="js"><pre>
+render: () =&gt; h('ul', { class: 'movies' }, [
+  h('li', { class: 'movie' }, 'Star Wars'),
+  h('li', { class: 'movie', onClick: () =&gt; alert('好片！') }, 'Blade Runner'),
+])
+</pre></div>
+
+<div class="code" data-lang="html" data-file="浏览器中的 DOM"><pre>
+&lt;ul class="movies"&gt;
+  &lt;li class="movie"&gt;Star Wars&lt;/li&gt;
+  &lt;li class="movie"&gt;Blade Runner&lt;/li&gt;
+&lt;/ul&gt;
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; Vue 3 的 h() 属性是“扁平”的</div>
+  <p>
+    Vue 2 里要写成 <code>{ attrs: {...}, on: { click }, props: {...} }</code> 这种嵌套结构；
+    Vue 3 统一扁平化：<code>{ id: 'x', class: 'a', onClick: fn }</code>，以 <code>on</code> 开头的就是事件。
+  </p>
+</div>
+
+<p>绝大多数时候你都会写模板，只有在需要 JS 的全部灵活性时才手写渲染函数。第 6 章会再见到它。</p>
+
+<h2 id="babel">Babel 和 polyfill 去哪了</h2>
+
+<p>
+  原书接下来花了不少篇幅配置 Babel（<code>.babelrc</code>、<code>babel-preset-vue</code>、<code>stage-3</code>）和 <code>babel-polyfill</code>。
+  在 Vite 项目里，这一节<strong>可以整个跳过</strong>：
+</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#9889;</span><h4>语法转换已内置</h4><p>Vite 内置了基于 esbuild 的转换，箭头函数、<code>async/await</code>、展开运算符等现代语法开箱即用，不需要 <code>.babelrc</code>。</p></div>
+  <div class="card"><span class="ic">&#127919;</span><h4>目标浏览器</h4><p>默认面向支持原生 ES 模块的现代浏览器。需要调整时改 <code>vite.config.js</code> 的 <code>build.target</code>。</p></div>
+  <div class="card"><span class="ic">&#128116;</span><h4>真要支持老浏览器</h4><p>官方插件 <code>@vitejs/plugin-legacy</code> 会自动生成兼容版本和所需的 polyfill。<code>babel-polyfill</code> 早已废弃。</p></div>
+  <div class="card"><span class="ic">&#129513;</span><h4>JSX</h4><p>需要 JSX 时装 <code>@vitejs/plugin-vue-jsx</code>（create-vue 里勾选“JSX 支持”即可）。</p></div>
+</div>
+
+<h2 id="deps">更新依赖</h2>
+
+<h3>手动更新</h3>
+
+<p>在项目根目录运行：</p>
+
+<div class="code" data-lang="bash"><pre>
+npm outdated
+</pre></div>
+
+<div class="code" data-lang="text" data-file="终端输出（示例）"><pre>
+Package   Current   Wanted   Latest
+vite        7.0.4    7.1.2    7.1.2
+vue        3.5.13   3.5.18   3.5.18
+</pre></div>
+
+<p>
+  <strong>Current</strong> 是已安装的版本，<strong>Wanted</strong> 是 <code>package.json</code> 里版本范围允许的最高版本，<strong>Latest</strong> 是 npm 上的最新版本。
+  版本号遵循<strong>语义化版本（SemVer）</strong>：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 170" role="img" aria-label="语义化版本号的三部分以及 ^ 和 ~ 范围的含义">
+  <text class="mono" x="200" y="62" text-anchor="middle" style="font-size:34px">3 . 5 . 18</text>
+  <path class="ln-r" d="M140 74 V96"/><text class="sm on-r" x="140" y="112" text-anchor="middle">主版本 MAJOR</text>
+  <text class="sm" x="140" y="128" text-anchor="middle">不兼容的改动</text>
+  <path class="ln-a" d="M200 74 V96"/><text class="sm on-a" x="200" y="146" text-anchor="middle">次版本 MINOR</text>
+  <text class="sm" x="200" y="162" text-anchor="middle">新增功能，向下兼容</text>
+  <path class="ln-g" d="M262 74 V96"/><text class="sm on-g" x="268" y="112" text-anchor="middle">修订号 PATCH</text>
+  <text class="sm" x="268" y="128" text-anchor="middle">bug 修复</text>
+
+  <rect class="bx" x="420" y="30" width="320" height="110" rx="10"/>
+  <text class="mono" x="440" y="62">"^3.5.0"</text>
+  <text class="sm" x="530" y="62">≥ 3.5.0 且 &lt; 4.0.0（最常见）</text>
+  <text class="mono" x="440" y="92">"~3.5.0"</text>
+  <text class="sm" x="530" y="92">≥ 3.5.0 且 &lt; 3.6.0</text>
+  <text class="mono" x="440" y="122">"3.5.0"</text>
+  <text class="sm" x="530" y="122">只能是 3.5.0</text>
+</svg>
+<figcaption>图 4-5　语义化版本与版本范围</figcaption>
+</figure>
+
+<p>要跨主版本升级，手动修改 <code>package.json</code> 里的版本范围，再运行 <code>npm install</code>；或者直接 <code>npm install vite@latest</code>。</p>
+
+<div class="box warn">
+  <div class="t">&#9888; 升级前读更新日志</div>
+  <p>主版本升级通常包含破坏性变更。看一眼 CHANGELOG 或迁移指南，能省下很多排查时间。</p>
+</div>
+
+<h3>自动更新</h3>
+
+<div class="code" data-lang="bash"><pre>
+npm update     # 只在 package.json 允许的范围内更新（即升到 Wanted）
+</pre></div>
+
+<h3>更新 Vue</h3>
+
+<div class="box tip">
+  <div class="t">&#10003; 不用再操心 vue-template-compiler</div>
+  <p>
+    原书提醒：升级 <code>vue</code> 时必须同时把 <code>vue-template-compiler</code> 升到<em>完全相同</em>的版本。
+    Vue 3 把模板编译器直接放进了 <code>vue</code> 包（<code>vue/compiler-sfc</code>），两者天然同步，这个坑不存在了。
+  </p>
+</div>
+
+<h2 id="build">构建生产版本</h2>
+
+<div class="code" data-lang="bash"><pre>
+npm run build     # 输出到 dist/
+npm run preview   # 在本地用一个静态服务器预览 dist/
+</pre></div>
+
+<div class="tree"><b>dist/</b>
+├── index.html
+├── favicon.ico
+└── assets/
+    ├── index-<b>BmT3xQk9</b>.js     <i># 文件名带内容哈希</i>
+    └── index-<b>D4fK2s1a</b>.css</div>
+
+<p>
+  把整个 <code>dist/</code> 文件夹上传到任何静态托管（GitHub Pages、Netlify、Vercel、Cloudflare Pages、自己的 Nginx）即可。
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; 文件名里的哈希有什么用</div>
+  <p>
+    文件内容变了，哈希就变，文件名也就变了。于是可以让浏览器对 <code>assets/</code> 里的文件<strong>永久缓存</strong>，
+    发布新版本时 <code>index.html</code> 引用的是新文件名，用户自然拿到新代码，不会被旧缓存卡住。
+  </p>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 部署到子路径</div>
+  <p>
+    如果网站不是部署在域名根目录（比如 GitHub Pages 的 <code>https://用户名.github.io/仓库名/</code>），要在 <code>vite.config.js</code> 里设置
+    <code>base: '/仓库名/'</code>，否则资源路径会 404。
+  </p>
+</div>
+
+<h2 id="sfc">单文件组件（SFC）</h2>
+
+<p>
+  现在进入本章的重点。Vue 有自己的文件格式：<strong>单文件组件</strong>（Single-File Component，扩展名 <code>.vue</code>）。
+  它把一个组件的<strong>模板、逻辑和样式</strong>放在同一个文件里，组件因此真正“自给自足”，好维护也好分享。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 320" role="img" aria-label="单文件组件的三个块以及它们被编译成什么">
+  <rect class="bx" x="20" y="20" width="300" height="280" rx="12"/>
+  <text class="ttl" x="170" y="44" text-anchor="middle">Test.vue</text>
+
+  <rect class="bx-g" x="36" y="56" width="268" height="72" rx="8"/>
+  <text class="mono sm on-g" x="50" y="76">&lt;template&gt;</text>
+  <text class="mono sm" x="64" y="96">&lt;p&gt;{{ message }}&lt;/p&gt;</text>
+  <text class="mono sm on-g" x="50" y="116">&lt;/template&gt;</text>
+
+  <rect class="bx-b" x="36" y="138" width="268" height="72" rx="8"/>
+  <text class="mono sm on-b" x="50" y="158">&lt;script setup&gt;</text>
+  <text class="mono sm" x="64" y="178">const message = ref('Hi')</text>
+  <text class="mono sm on-b" x="50" y="198">&lt;/script&gt;</text>
+
+  <rect class="bx-p" x="36" y="220" width="268" height="68" rx="8"/>
+  <text class="mono sm on-p" x="50" y="240">&lt;style scoped&gt;</text>
+  <text class="mono sm" x="64" y="260">p { color: grey; }</text>
+  <text class="mono sm on-p" x="50" y="278">&lt;/style&gt;</text>
+
+  <rect class="bx-a" x="370" y="128" width="120" height="70" rx="10"/>
+  <text class="ttl on-a" x="430" y="156" text-anchor="middle">@vitejs/</text>
+  <text class="ttl on-a" x="430" y="176" text-anchor="middle">plugin-vue</text>
+  <path class="ln" d="M306 92 C340 92 340 150 366 155" marker-end="url(#ar)"/>
+  <path class="ln" d="M306 174 H366" marker-end="url(#ar)"/>
+  <path class="ln" d="M306 254 C340 254 340 190 366 186" marker-end="url(#ar)"/>
+
+  <rect class="bx-g" x="540" y="40" width="200" height="60" rx="8"/>
+  <text class="on-g" x="640" y="64" text-anchor="middle">渲染函数</text>
+  <text class="sm" x="640" y="84" text-anchor="middle">模板在构建时预编译</text>
+  <rect class="bx-b" x="540" y="133" width="200" height="60" rx="8"/>
+  <text class="on-b" x="640" y="157" text-anchor="middle">组件对象（JS 模块）</text>
+  <text class="sm" x="640" y="177" text-anchor="middle">export default { setup, render }</text>
+  <rect class="bx-p" x="540" y="226" width="200" height="60" rx="8"/>
+  <text class="on-p" x="640" y="250" text-anchor="middle">CSS</text>
+  <text class="sm" x="640" y="270" text-anchor="middle">注入页面 / 抽成 .css 文件</text>
+  <path class="ln-a" d="M492 150 L536 74" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M492 163 H536" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M492 176 L536 252" marker-end="url(#ar-a)"/>
+</svg>
+<figcaption>图 4-6　一个 .vue 文件 = 模板 + 脚本 + 样式</figcaption>
+</figure>
+
+<p>新建 <code>src/Test.vue</code>：</p>
+
+<div class="code" data-lang="vue" data-file="src/Test.vue"><pre>
+&lt;script setup&gt;
+import { ref } from 'vue'
+
+const message = ref('Hello world')
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div&gt;
+    &lt;p&gt;{{ message }}&lt;/p&gt;
+    &lt;input v-model="message"&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+
+&lt;style&gt;
+p {
+  color: grey;
+}
+&lt;/style&gt;
+</pre></div>
+
+<p>然后在 <code>main.js</code> 里导入它作为根组件：</p>
+
+<div class="code" data-lang="js" data-file="src/main.js"><pre>
+import { createApp } from 'vue'
+import Test from './Test.vue'
+
+createApp(Test).mount('#app')
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 关于原书的 ...Test 展开写法</div>
+  <p>
+    原书用 <code>new Vue({ el: '#app', ...Test })</code> 把组件选项展开到根实例上，以免 DevTools 里多一层无用的根组件。
+    Vue 3 的 <code>createApp(Test)</code> 本身就把 Test 当作根组件，天然没有这个问题。
+  </p>
+</div>
+
+<h3>&lt;template&gt;</h3>
+
+<p>就是我们熟悉的模板语法，指令、插值、简写都一样：</p>
+
+<div class="code" data-lang="vue"><pre>
+&lt;template&gt;
+  &lt;ul class="movies"&gt;
+    &lt;li v-for="movie of movies" :key="movie.id" class="movie"&gt;
+      {{ movie.title }}
+    &lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; Vue 3：模板可以有多个根节点</div>
+  <p>
+    Vue 2 要求组件模板只能有一个根元素，所以经常要套一层无意义的 <code>&lt;div&gt;</code>。Vue 3 支持多根节点（称为 Fragment）。
+    不过要注意：多根组件不会自动透传 <code>class</code> 等属性，需要时用 <code>v-bind="$attrs"</code> 指定给某个元素。
+  </p>
+</div>
+
+<h4>使用 Pug</h4>
+
+<p>
+  如果你喜欢更简洁的 <a href="https://pugjs.org/">Pug</a> 语法，只需安装 <code>pug</code>（不再需要 <code>pug-loader</code>），然后给 template 加上 <code>lang="pug"</code>：
+</p>
+
+<div class="code" data-lang="bash"><pre>
+npm install -D pug
+</pre></div>
+
+<div class="code" data-lang="pug"><pre>
+&lt;template lang="pug"&gt;
+ul.movies
+  li.movie Star Wars
+  li.movie Blade Runner
+&lt;/template&gt;
+</pre></div>
+
+<h3>&lt;script setup&gt;：组合式 API 的最佳拍档</h3>
+
+<p>
+  这是 Vue 3 单文件组件里最重要的语法糖。在 <code>&lt;script setup&gt;</code> 里：
+</p>
+
+<ul>
+  <li>代码就是 <code>setup()</code> 函数的函数体，每创建一个组件实例执行一次；</li>
+  <li><strong>顶层声明的变量、函数、导入的组件都自动暴露给模板</strong>，不用再写 <code>return { ... }</code>；</li>
+  <li>用编译宏 <code>defineProps</code>、<code>defineEmits</code>、<code>defineModel</code> 声明 props、事件和 v-model（不需要 import）。</li>
+</ul>
+
+<div class="vs">
+  <div class="old"><div class="h">第 2、3 章的写法</div>
+<div class="code" data-lang="js"><pre>
+export default {
+  props: ['movie'],
+  emits: ['select'],
+  setup(props, { emit }) {
+    const count = ref(0)
+    function select() {
+      emit('select', props.movie)
+    }
+    return { count, select }
+  },
+}
+</pre></div></div>
+  <div class="new"><div class="h">&lt;script setup&gt;</div>
+<div class="code" data-lang="vue"><pre>
+&lt;script setup&gt;
+import { ref } from 'vue'
+
+const props = defineProps(['movie'])
+const emit = defineEmits(['select'])
+
+const count = ref(0)
+function select() {
+  emit('select', props.movie)
+}
+&lt;/script&gt;
+</pre></div></div>
+</div>
+
+<p>原书的选项式 <code>&lt;script&gt;</code> 写法在 Vue 3 中同样有效：</p>
+
+<div class="code" data-lang="vue" data-file="选项式 API 的 SFC"><pre>
+&lt;script&gt;
+export default {
+  data() {
+    return {
+      movies: [
+        { id: 0, title: 'Star Wars' },
+        { id: 1, title: 'Blade Runner' },
+      ],
+    }
+  },
+}
+&lt;/script&gt;
+</pre></div>
+
+<div class="box key">
+  <div class="t">&#9733; 本教程之后的约定</div>
+  <p>
+    从第 5 章起，所有组件都写成 <code>&lt;script setup&gt;</code> 单文件组件，块的顺序是 <code>script</code> → <code>template</code> → <code>style</code>
+    （官方 create-vue 模板的顺序；先看逻辑再看结构，两种顺序 Vue 都接受）。
+  </p>
+</div>
+
+<details class="box deep">
+<summary class="t" style="cursor:pointer">&#128269; 可选：加上 TypeScript（点击展开）</summary>
+<p>
+  只要在 create-vue 里勾选 TypeScript，并把 <code>&lt;script setup&gt;</code> 写成 <code>&lt;script setup lang="ts"&gt;</code>，就能获得完整的类型检查。
+  比如 props 可以用类型来声明：
+</p>
+<div class="code" data-lang="ts"><pre>
+const props = defineProps&lt;{
+  movie: { id: number; title: string }
+  highlighted?: boolean
+}&gt;()
+</pre></div>
+<p>本教程为了照顾初学者使用 JavaScript，但所有示例都能平滑迁移到 TypeScript。</p>
+</details>
+
+<h3>JSX</h3>
+
+<p>
+  JSX 是一种在 JS 里写类 HTML 标记的语法，本质上是渲染函数的语法糖。
+  在 create-vue 里勾选“JSX 支持”（或手动安装 <code>@vitejs/plugin-vue-jsx</code>）后，可以这样写：
+</p>
+
+<div class="code" data-lang="vue" data-file="MoviesJSX.vue"><pre>
+&lt;script lang="jsx"&gt;
+import { ref } from 'vue'
+
+export default {
+  setup() {
+    const movies = ref([
+      { id: 0, title: 'Star Wars' },
+      { id: 1, title: 'Blade Runner' },
+    ])
+    const itemClass = 'movie'
+
+    // setup 返回一个函数时，它就是渲染函数
+    return () =&gt; (
+      &lt;ul class="movies"&gt;
+        {movies.value.map(movie =&gt;
+          &lt;li key={movie.id} class={itemClass}&gt;{movie.title}&lt;/li&gt;
+        )}
+      &lt;/ul&gt;
+    )
+  },
+}
+&lt;/script&gt;
+</pre></div>
+
+<p>花括号 <code>{ }</code> 里可以写任意 JS 表达式。编译后，它会变成和手写 <code>h()</code> 几乎一样的代码：</p>
+
+<div class="code" data-lang="js"><pre>
+return () =&gt; h('ul', { class: 'movies' },
+  movies.value.map(movie =&gt;
+    h('li', { key: movie.id, class: itemClass }, movie.title)
+  )
+)
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 模板还是 JSX？</div>
+  <p>
+    Vue 社区绝大多数代码用模板：它更接近 HTML，而且编译器能对模板做静态优化（JSX 太灵活，很难分析）。
+    JSX 适合逻辑特别复杂、需要大量动态生成结构的场景。知道它存在、看得懂就够了。
+  </p>
+</div>
+
+<h3>&lt;style&gt;</h3>
+
+<p>一个 SFC 可以有多个 <code>&lt;style&gt;</code> 块：</p>
+
+<div class="code" data-lang="vue"><pre>
+&lt;style&gt;
+.movies {
+  list-style: none;
+  padding: 12px;
+  background: rgba(0, 0, 0, .1);
+  border-radius: 3px;
+}
+&lt;/style&gt;
+</pre></div>
+
+<h4>作用域样式 scoped</h4>
+
+<p>
+  加上 <code>scoped</code> 属性，样式就只作用于<strong>当前组件</strong>模板里的元素。你可以放心地用 <code>.title</code>、<code>.movie</code> 这种通用类名，不怕和别的组件冲突：
+</p>
+
+<div class="code" data-lang="vue"><pre>
+&lt;style scoped&gt;
+.movie:not(:last-child) {
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: solid 1px rgba(0, 0, 0, .1);
+}
+&lt;/style&gt;
+</pre></div>
+
+<p>原理是：编译器给组件模板里的每个元素加上一个唯一属性，同时给每条 CSS 选择器加上同样的属性选择器：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="scoped 样式的编译原理：给元素和选择器都加上 data-v 属性">
+  <rect class="bx" x="20" y="30" width="300" height="170" rx="12"/>
+  <text class="ttl" x="170" y="54" text-anchor="middle">你写的</text>
+  <text class="mono sm" x="40" y="84">&lt;h1 class="title"&gt;Hello&lt;/h1&gt;</text>
+  <text class="mono sm" x="40" y="120">&lt;style scoped&gt;</text>
+  <text class="mono sm" x="56" y="140">.title { color: blue; }</text>
+  <text class="mono sm" x="40" y="160">&lt;/style&gt;</text>
+
+  <path class="ln-a" d="M322 115 H436" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="379" y="106" text-anchor="middle">编译</text>
+
+  <rect class="bx-a" x="440" y="30" width="300" height="170" rx="12"/>
+  <text class="ttl on-a" x="590" y="54" text-anchor="middle">实际生成的</text>
+  <text class="mono sm" x="456" y="84">&lt;h1 class="title"</text>
+  <text class="mono sm on-a" x="472" y="102">data-v-7ba5bd90&gt;Hello&lt;/h1&gt;</text>
+  <text class="mono sm" x="456" y="140">.title<tspan class="on-a">[data-v-7ba5bd90]</tspan> {</text>
+  <text class="mono sm" x="472" y="160">color: blue;</text>
+  <text class="mono sm" x="456" y="180">}</text>
+
+  <text class="lbl" x="380" y="228" text-anchor="middle">每个组件一个唯一的哈希属性 → 选择器只能匹配本组件的元素</text>
+</svg>
+<figcaption>图 4-7　scoped 样式靠一个唯一的 data-v 属性实现隔离</figcaption>
+</figure>
+
+<div class="box tip">
+  <div class="t">&#10003; scoped 的三个常用技巧</div>
+  <ul>
+    <li><strong>修改子组件内部样式</strong>：scoped 默认管不到子组件里的元素，用 <code>:deep(.child-class) { ... }</code> 穿透（取代原来的 <code>/deep/</code> 和 <code>&gt;&gt;&gt;</code>）。</li>
+    <li><strong>在 CSS 里使用响应式数据</strong>（Vue 3 新增）：<code>color: v-bind(themeColor);</code>，数据变了样式自动更新。</li>
+    <li><strong>性能</strong>：尽量用类选择器。<code>li { }</code> 被加上属性选择器后，匹配效率会比 <code>.movie { }</code> 差很多。</li>
+  </ul>
+</div>
+
+<div class="code" data-lang="vue" data-file="CSS 里的 v-bind()"><pre>
+&lt;script setup&gt;
+import { ref } from 'vue'
+const themeColor = ref('#42b883')
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;h1 class="title" @click="themeColor = 'tomato'"&gt;点我变色&lt;/h1&gt;
+&lt;/template&gt;
+
+&lt;style scoped&gt;
+.title {
+  color: v-bind(themeColor);
+}
+&lt;/style&gt;
+</pre></div>
+
+<h4>CSS 预处理器</h4>
+
+<p>
+  在 <code>&lt;style&gt;</code> 上用 <code>lang</code> 属性指定预处理器语言。和原书相比，Vite 让这件事简单了很多：
+  <strong>只需安装预处理器本身，不需要任何 loader，也不需要改配置</strong>。
+</p>
+
+<p>以这个模板为例：</p>
+
+<div class="code" data-lang="vue"><pre>
+&lt;template&gt;
+  &lt;article class="article"&gt;
+    &lt;h3 class="title"&gt;标题&lt;/h3&gt;
+  &lt;/article&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="tw"><table>
+<thead><tr><th>语言</th><th>原书安装</th><th>现在安装</th><th>写法</th></tr></thead>
+<tbody>
+<tr><td>Sass / SCSS</td><td><code>node-sass sass-loader</code></td><td><code>npm i -D sass-embedded</code>（或 <code>sass</code>）</td><td><code>lang="scss"</code> / <code>lang="sass"</code></td></tr>
+<tr><td>Less</td><td><code>less less-loader</code></td><td><code>npm i -D less</code></td><td><code>lang="less"</code></td></tr>
+<tr><td>Stylus</td><td><code>stylus stylus-loader</code></td><td><code>npm i -D stylus</code></td><td><code>lang="stylus"</code></td></tr>
+</tbody>
+</table></div>
+
+<div class="code" data-lang="vue" data-file="SCSS"><pre>
+&lt;style lang="scss" scoped&gt;
+.article {
+  .title {
+    border-bottom: solid 3px rgba(red, .2);
+  }
+}
+&lt;/style&gt;
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="Less"><pre>
+&lt;style lang="less" scoped&gt;
+.article {
+  .title {
+    border-bottom: solid 3px fade(red, 20%);
+  }
+}
+&lt;/style&gt;
+</pre></div>
+
+<div class="code" data-lang="stylus" data-file="Stylus"><pre>
+&lt;style lang="stylus" scoped&gt;
+.article
+  .title
+    border-bottom solid 3px rgba(red, .2)
+&lt;/style&gt;
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; node-sass 已废弃</div>
+  <p>原书用的 <code>node-sass</code> 已停止维护，并且经常在新版 Node 上编译失败。请使用官方的 Dart Sass：<code>sass</code> 或更快的 <code>sass-embedded</code>。</p>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 原生 CSS 也越来越强了</div>
+  <p>
+    现代浏览器已经原生支持 CSS 嵌套（<code>.article { .title { } }</code>）、CSS 变量、<code>color-mix()</code> 等。
+    很多新项目已经不再需要预处理器 —— 本教程这套页面的样式就是纯原生 CSS 写的。后面的项目会沿用原书的 Stylus，你也可以换成原生 CSS。
+  </p>
+</div>
+
+<h2 id="compose">在组件里使用组件</h2>
+
+<p>会写单文件组件后，下一步是把它们组合起来。先写一个表示单部电影的 <code>Movie.vue</code>：</p>
+
+<div class="code" data-lang="vue" data-file="src/Movie.vue"><pre>
+&lt;script setup&gt;
+defineProps(['movie'])
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;li class="movie"&gt;
+    {{ movie.title }}
+  &lt;/li&gt;
+&lt;/template&gt;
+
+&lt;style scoped&gt;
+.movie:not(:last-child) {
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: solid 1px rgba(0, 0, 0, .1);
+}
+&lt;/style&gt;
+</pre></div>
+
+<p>然后在 <code>Movies.vue</code> 里导入并使用它。<strong>在 <code>&lt;script setup&gt;</code> 里，导入的组件可以直接在模板中使用</strong>，不需要原书的 <code>components: { Movie }</code> 注册：</p>
+
+<div class="code" data-lang="vue" data-file="src/Movies.vue"><pre>
+&lt;script setup&gt;
+import { ref } from 'vue'
+import Movie from './Movie.vue'
+
+const movies = ref([
+  { id: 0, title: 'Star Wars' },
+  { id: 1, title: 'Blade Runner' },
+])
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;ul class="movies"&gt;
+    &lt;Movie v-for="movie of movies" :key="movie.id" :movie="movie" /&gt;
+  &lt;/ul&gt;
+&lt;/template&gt;
+
+&lt;style scoped&gt;
+.movies {
+  list-style: none;
+  padding: 12px;
+  background: rgba(0, 0, 0, .1);
+  border-radius: 3px;
+}
+&lt;/style&gt;
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="局部注册与全局注册的对比">
+  <rect class="bx-a" x="20" y="30" width="340" height="150" rx="12"/>
+  <text class="ttl on-a" x="190" y="56" text-anchor="middle">局部使用（推荐）</text>
+  <text class="mono sm" x="40" y="86">import Movie from './Movie.vue'</text>
+  <text class="mono sm" x="40" y="110">&lt;Movie ... /&gt;</text>
+  <text class="sm" x="40" y="140">✓ 依赖关系一目了然</text>
+  <text class="sm" x="40" y="160">✓ 没用到的组件会被构建工具剔除（tree-shaking）</text>
+
+  <rect class="bx" x="400" y="30" width="340" height="150" rx="12"/>
+  <text class="ttl" x="570" y="56" text-anchor="middle">全局注册（第 3 章的方式）</text>
+  <text class="mono sm" x="420" y="86">app.component('Movie', Movie)</text>
+  <text class="mono sm" x="420" y="110">任何模板里都能写 &lt;Movie /&gt;</text>
+  <text class="sm" x="420" y="140">适合到处都要用的基础组件（按钮、图标）</text>
+  <text class="sm" x="420" y="160">缺点：看不出组件从哪来，无法剔除</text>
+</svg>
+<figcaption>图 4-8　两种让模板认识组件的方式</figcaption>
+</figure>
+
+<div class="box note">
+  <div class="t">&#9432; JSX 里也一样</div>
+  <p>在 JSX 中，以大写字母开头的标签会被当作组件变量：<code>import Movies from './Movies.vue'</code> 之后直接 <code>return () =&gt; &lt;Movies /&gt;</code>。</p>
+</div>
+
+<p>最后在 <code>main.js</code> 里把 <code>Movies</code> 作为根组件挂载，就能看到一个漂亮的电影列表了。</p>
+
+<h2 id="summary">小结</h2>
+
+<div class="tw"><table>
+<thead><tr><th>原书</th><th>现在</th></tr></thead>
+<tbody>
+<tr><td><code>npm i -g vue-cli</code> + <code>vue init webpack-simple</code></td><td><code>npm create vue@latest</code></td></tr>
+<tr><td><code>npm run dev</code>（webpack-dev-server）</td><td><code>npm run dev</code>（Vite，端口 5173）</td></tr>
+<tr><td>Vetur</td><td>Vue - Official 扩展</td></tr>
+<tr><td><code>render (h) { ... }</code></td><td><code>import { h } from 'vue'</code>，属性扁平化</td></tr>
+<tr><td>.babelrc + babel-polyfill</td><td>不需要（需要兼容老浏览器时用 plugin-legacy）</td></tr>
+<tr><td>vue 和 vue-template-compiler 版本要手动对齐</td><td>编译器内置在 vue 包里</td></tr>
+<tr><td><code>export default { data() {...} }</code></td><td><code>&lt;script setup&gt;</code>（选项式仍可用）</td></tr>
+<tr><td><code>components: { Movie }</code></td><td>导入即可使用</td></tr>
+<tr><td>node-sass + sass-loader 等</td><td>只装 <code>sass</code> / <code>less</code> / <code>stylus</code></td></tr>
+<tr><td>只能有一个根元素</td><td>支持多根节点</td></tr>
+</tbody>
+</table></div>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>用 <code>npm create vue@latest</code> 创建项目，这次勾选 Router 和 Pinia，对比生成的目录结构和刚才有什么不同。</li>
+    <li>把第 2 章的 Markdown 笔记本迁移到 Vite 项目：拆成 <code>NoteList.vue</code>、<code>NoteEditor.vue</code>、<code>NotePreview.vue</code> 三个组件，marked 和 DOMPurify 改用 <code>npm install</code> 安装后 <code>import</code>。</li>
+    <li>给 <code>Movie.vue</code> 加一个“收藏”按钮，点击时 <code>emit('favorite')</code>，在 <code>Movies.vue</code> 里统计收藏数。</li>
+    <li>运行 <code>npm run build</code>，观察 <code>dist/</code> 的内容；修改一个组件后再构建一次，看看哪些文件名变了。</li>
+    <li>试一试 CSS 里的 <code>v-bind()</code>：用一个 <code>&lt;input type="range"&gt;</code> 控制标题的字号。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

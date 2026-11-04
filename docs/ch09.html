@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>附录 · Vue 2 → Vue 3 速查 — Vue 3 项目实战教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="9">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">附录</span>
+<h1>Vue 2 → Vue 3 速查</h1>
+<p class="lede">
+  网上还有大量 Vue 2 时代的教程、博客和老项目代码。这份速查表把原书（以及其他 Vue 2 资料）里常见的每一种写法，
+  对应到 Vue 3 和今天的生态工具，并标注了本教程中详细讲解它的章节。
+</p>
+
+<div id="chapter-toc"></div>
+
+<h2 id="mindset">两种 API 的对应关系</h2>
+
+<p>Vue 3 同时支持选项式和组合式 API。读 Vue 2 代码时，可以按这张图在脑子里“翻译”：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 400" role="img" aria-label="选项式 API 的各个选项对应到组合式 API 的函数">
+  <text class="ttl" x="170" y="24" text-anchor="middle">选项式 API（Vue 2 写法）</text>
+  <text class="ttl on-a" x="590" y="24" text-anchor="middle">组合式 API（&lt;script setup&gt;）</text>
+
+  <g>
+    <rect class="bx" x="40" y="40" width="260" height="30" rx="6"/><text class="mono sm" x="56" y="60">data() { return { n: 0 } }</text>
+    <rect class="bx-a" x="460" y="40" width="260" height="30" rx="6"/><text class="mono sm on-a" x="476" y="60">const n = ref(0)</text>
+    <path class="ln" d="M302 55 H456" marker-end="url(#ar)"/>
+  </g>
+  <g>
+    <rect class="bx" x="40" y="78" width="260" height="30" rx="6"/><text class="mono sm" x="56" y="98">computed: { double() {…} }</text>
+    <rect class="bx-a" x="460" y="78" width="260" height="30" rx="6"/><text class="mono sm on-a" x="476" y="98">const double = computed(() =&gt; …)</text>
+    <path class="ln" d="M302 93 H456" marker-end="url(#ar)"/>
+  </g>
+  <g>
+    <rect class="bx" x="40" y="116" width="260" height="30" rx="6"/><text class="mono sm" x="56" y="136">methods: { inc() {…} }</text>
+    <rect class="bx-a" x="460" y="116" width="260" height="30" rx="6"/><text class="mono sm on-a" x="476" y="136">function inc() {…}</text>
+    <path class="ln" d="M302 131 H456" marker-end="url(#ar)"/>
+  </g>
+  <g>
+    <rect class="bx" x="40" y="154" width="260" height="30" rx="6"/><text class="mono sm" x="56" y="174">watch: { n(v) {…} }</text>
+    <rect class="bx-a" x="460" y="154" width="260" height="30" rx="6"/><text class="mono sm on-a" x="476" y="174">watch(n, (v) =&gt; {…})</text>
+    <path class="ln" d="M302 169 H456" marker-end="url(#ar)"/>
+  </g>
+  <g>
+    <rect class="bx" x="40" y="192" width="260" height="30" rx="6"/><text class="mono sm" x="56" y="212">created() / mounted()</text>
+    <rect class="bx-a" x="460" y="192" width="260" height="30" rx="6"/><text class="mono sm on-a" x="476" y="212">直接写 / onMounted(() =&gt; {…})</text>
+    <path class="ln" d="M302 207 H456" marker-end="url(#ar)"/>
+  </g>
+  <g>
+    <rect class="bx" x="40" y="230" width="260" height="30" rx="6"/><text class="mono sm" x="56" y="250">props: ['x']  /  this.$emit('e')</text>
+    <rect class="bx-a" x="460" y="230" width="260" height="30" rx="6"/><text class="mono sm on-a" x="476" y="250">defineProps / defineEmits</text>
+    <path class="ln" d="M302 245 H456" marker-end="url(#ar)"/>
+  </g>
+  <g>
+    <rect class="bx" x="40" y="268" width="260" height="30" rx="6"/><text class="mono sm" x="56" y="288">this.$refs.el</text>
+    <rect class="bx-a" x="460" y="268" width="260" height="30" rx="6"/><text class="mono sm on-a" x="476" y="288">const el = ref(null) / useTemplateRef</text>
+    <path class="ln" d="M302 283 H456" marker-end="url(#ar)"/>
+  </g>
+  <g>
+    <rect class="bx" x="40" y="306" width="260" height="30" rx="6"/><text class="mono sm" x="56" y="326">this.$router / this.$route / $store</text>
+    <rect class="bx-a" x="460" y="306" width="260" height="30" rx="6"/><text class="mono sm on-a" x="476" y="326">useRouter() / useRoute() / useXStore()</text>
+    <path class="ln" d="M302 321 H456" marker-end="url(#ar)"/>
+  </g>
+  <g>
+    <rect class="bx" x="40" y="344" width="260" height="30" rx="6"/><text class="mono sm" x="56" y="364">mixins: [M]</text>
+    <rect class="bx-a" x="460" y="344" width="260" height="30" rx="6"/><text class="mono sm on-a" x="476" y="364">const { … } = useM()</text>
+    <path class="ln" d="M302 359 H456" marker-end="url(#ar)"/>
+  </g>
+  <text class="lbl" x="380" y="394" text-anchor="middle">核心差别：选项式靠 this 访问一切；组合式里一切都是局部变量和函数</text>
+</svg>
+<figcaption>图 A-1　选项式 → 组合式的“翻译表”</figcaption>
+</figure>
+
+<h2 id="global">全局 API</h2>
+
+<div class="tw"><table>
+<thead><tr><th>Vue 2</th><th>Vue 3</th><th>章节</th></tr></thead>
+<tbody>
+<tr><td><code>new Vue({ el: '#app', ... })</code></td><td><code>createApp({ ... }).mount('#app')</code></td><td>1</td></tr>
+<tr><td><code>vm.$mount('#app')</code></td><td><code>app.mount('#app')</code></td><td>1</td></tr>
+<tr><td><code>render: h =&gt; h(App)</code></td><td><code>createApp(App)</code></td><td>4</td></tr>
+<tr><td><code>Vue.component(name, def)</code></td><td><code>app.component(name, def)</code></td><td>3</td></tr>
+<tr><td><code>Vue.directive</code> / <code>Vue.mixin</code></td><td><code>app.directive</code> / <code>app.mixin</code></td><td>—</td></tr>
+<tr><td><code>Vue.use(Plugin, opts)</code></td><td><code>app.use(Plugin, opts)</code></td><td>5</td></tr>
+<tr><td><code>Vue.prototype.$x = ...</code></td><td><code>app.config.globalProperties.$x = ...</code> 或 <code>app.provide</code></td><td>5</td></tr>
+<tr><td><code>Vue.filter(name, fn)</code></td><td>已移除，用函数 / 计算属性 / globalProperties</td><td>2</td></tr>
+<tr><td><code>Vue.set(obj, key, val)</code> / <code>Vue.delete</code></td><td>不再需要，直接赋值 / <code>delete</code></td><td>1、3</td></tr>
+<tr><td><code>Vue.nextTick</code></td><td><code>import { nextTick } from 'vue'</code></td><td>—</td></tr>
+<tr><td><code>Vue.extend</code></td><td>已移除，用 <code>defineComponent</code></td><td>—</td></tr>
+<tr><td><code>Vue.config.productionTip</code></td><td>已移除</td><td>—</td></tr>
+<tr><td><code>import Vue from 'vue'</code></td><td><code>import { createApp, ref, ... } from 'vue'</code>（按需导入，可摇树优化）</td><td>4</td></tr>
+</tbody>
+</table></div>
+
+<h2 id="template">模板语法</h2>
+
+<div class="tw"><table>
+<thead><tr><th>Vue 2</th><th>Vue 3</th><th>章节</th></tr></thead>
+<tbody>
+<tr><td><code>{{ date | format }}</code> 过滤器</td><td><code>{{ format(date) }}</code></td><td>2</td></tr>
+<tr><td>同一元素 <code>v-for</code> 优先于 <code>v-if</code></td><td><code>v-if</code> 优先；不要写在同一元素上</td><td>2</td></tr>
+<tr><td><code>&lt;template v-for&gt;</code> 的 key 写在子元素上</td><td>key 写在 <code>&lt;template&gt;</code> 上</td><td>—</td></tr>
+<tr><td>组件只能有一个根元素</td><td>支持多根节点（Fragment）</td><td>4</td></tr>
+<tr><td><code>slot="name"</code>、<code>slot-scope="props"</code></td><td><code>v-slot:name="props"</code>，简写 <code>#name="props"</code></td><td>5、6</td></tr>
+<tr><td><code>@click.native</code></td><td>移除；未声明在 <code>emits</code> 中的事件自动透传到根元素</td><td>3</td></tr>
+<tr><td><code>@keyup.13</code>（键码）</td><td><code>@keyup.enter</code>（键名）</td><td>6</td></tr>
+<tr><td><code>:title.sync="t"</code></td><td><code>v-model:title="t"</code></td><td>5</td></tr>
+<tr><td>组件 <code>v-model</code> = <code>value</code> + <code>input</code></td><td><code>modelValue</code> + <code>update:modelValue</code>；<code>defineModel()</code></td><td>5</td></tr>
+<tr><td><code>model: { prop, event }</code> 选项</td><td>移除，用 <code>v-model:参数</code></td><td>5</td></tr>
+<tr><td><code>&lt;div id="a" v-bind="{ id: 'b' }"&gt;</code> 单独属性总是胜出</td><td>按书写顺序，后写的覆盖先写的</td><td>—</td></tr>
+<tr><td>—</td><td>同名简写 <code>:title</code> ≡ <code>:title="title"</code>（3.4+）</td><td>2</td></tr>
+</tbody>
+</table></div>
+
+<h2 id="components">组件</h2>
+
+<div class="tw"><table>
+<thead><tr><th>Vue 2</th><th>Vue 3</th><th>章节</th></tr></thead>
+<tbody>
+<tr><td><code>beforeDestroy</code> / <code>destroyed</code></td><td><code>beforeUnmount</code> / <code>unmounted</code>（组合式：<code>onBeforeUnmount</code> / <code>onUnmounted</code>）</td><td>2</td></tr>
+<tr><td><code>this.$emit</code>（无需声明）</td><td>推荐用 <code>emits</code> / <code>defineEmits</code> 声明</td><td>3</td></tr>
+<tr><td><code>this.$on</code> / <code>$off</code> / <code>$once</code>、事件总线</td><td>已移除；用 props/emit、provide/inject、Pinia 或 mitt 之类的小库</td><td>3</td></tr>
+<tr><td><code>$listeners</code></td><td>合并进 <code>$attrs</code></td><td>5</td></tr>
+<tr><td><code>$attrs</code> 不含 class / style</td><td><code>$attrs</code> 包含 class 和 style</td><td>5</td></tr>
+<tr><td><code>$children</code></td><td>已移除，用模板引用</td><td>—</td></tr>
+<tr><td><code>this.$el</code></td><td>模板引用 <code>ref="root"</code>（多根组件没有单一的 $el）</td><td>3</td></tr>
+<tr><td><code>functional: true</code> / <code>&lt;template functional&gt;</code></td><td>函数式组件就是普通函数；性能优势已不明显</td><td>6</td></tr>
+<tr><td>异步组件 <code>() =&gt; import(...)</code></td><td><code>defineAsyncComponent(() =&gt; import(...))</code>（路由懒加载不需要）</td><td>5</td></tr>
+<tr><td><code>@hook:mounted</code></td><td><code>@vue:mounted</code></td><td>—</td></tr>
+<tr><td><code>mixins</code></td><td>仍可用，但推荐组合式函数</td><td>5</td></tr>
+<tr><td><code>components: { Movie }</code> 局部注册</td><td><code>&lt;script setup&gt;</code> 中导入即可使用</td><td>4</td></tr>
+</tbody>
+</table></div>
+
+<h2 id="render">渲染函数与 JSX</h2>
+
+<div class="tw"><table>
+<thead><tr><th>Vue 2</th><th>Vue 3</th><th>章节</th></tr></thead>
+<tbody>
+<tr><td><code>render(h) { return h(...) }</code></td><td><code>import { h } from 'vue'</code>；<code>render() { return h(...) }</code> 或 setup 返回函数</td><td>4、6</td></tr>
+<tr><td><code>{ attrs, props, domProps, on, nativeOn }</code></td><td>扁平：<code>{ id, value, onClick }</code></td><td>6</td></tr>
+<tr><td><code>this.$slots.default</code>（数组）</td><td><code>slots.default()</code>（函数）</td><td>6</td></tr>
+<tr><td><code>this.$scopedSlots</code></td><td>合并进 <code>$slots</code></td><td>6</td></tr>
+<tr><td><code>babel-plugin-transform-vue-jsx</code></td><td><code>@vitejs/plugin-vue-jsx</code></td><td>4</td></tr>
+</tbody>
+</table></div>
+
+<h2 id="transition">过渡动画</h2>
+
+<div class="tw"><table>
+<thead><tr><th>Vue 2</th><th>Vue 3</th><th>章节</th></tr></thead>
+<tbody>
+<tr><td><code>.v-enter</code> / <code>.v-leave</code></td><td><code>.v-enter-from</code> / <code>.v-leave-from</code></td><td>3</td></tr>
+<tr><td><code>&lt;transition-group&gt;</code> 默认渲染 <code>&lt;span&gt;</code></td><td>默认不渲染包裹元素，需要时用 <code>tag</code></td><td>3</td></tr>
+<tr><td><code>&lt;transition&gt;&lt;router-view /&gt;&lt;/transition&gt;</code></td><td><code>&lt;RouterView v-slot="{ Component }"&gt;&lt;Transition&gt;&lt;component :is="Component"/&gt;…</code></td><td>5</td></tr>
+</tbody>
+</table></div>
+
+<h2 id="reactivity">响应式</h2>
+
+<div class="tw"><table>
+<thead><tr><th>Vue 2</th><th>Vue 3</th><th>章节</th></tr></thead>
+<tbody>
+<tr><td><code>Object.defineProperty</code>，新增属性/数组下标赋值检测不到</td><td><code>Proxy</code>，全部可检测</td><td>1</td></tr>
+<tr><td>支持 IE9+</td><td>不支持任何 IE</td><td>1</td></tr>
+<tr><td><code>data</code> 可以是对象</td><td><code>data</code> 必须是函数（或改用 <code>ref</code>/<code>reactive</code>）</td><td>1</td></tr>
+<tr><td>侦听数组时 push 默认能触发</td><td>侦听 <code>ref</code> 数组时 push 需要 <code>deep: true</code></td><td>2</td></tr>
+<tr><td><code>this.$watch(fn, cb)</code></td><td><code>watch(getter, cb)</code> / <code>watchEffect</code></td><td>2、5</td></tr>
+<tr><td>—</td><td>第三方库实例用 <code>shallowRef</code> / <code>markRaw</code></td><td>6</td></tr>
+</tbody>
+</table></div>
+
+<h2 id="router">Vue Router 3 → 4</h2>
+
+<div class="tw"><table>
+<thead><tr><th>Vue Router 3</th><th>Vue Router 4</th></tr></thead>
+<tbody>
+<tr><td><code>new VueRouter({ mode: 'history' })</code></td><td><code>createRouter({ history: createWebHistory() })</code></td></tr>
+<tr><td><code>mode: 'hash'</code> / <code>'abstract'</code></td><td><code>createWebHashHistory()</code> / <code>createMemoryHistory()</code></td></tr>
+<tr><td><code>base: '/app/'</code></td><td><code>createWebHistory('/app/')</code></td></tr>
+<tr><td><code>{ path: '*' }</code></td><td><code>{ path: '/:pathMatch(.*)*' }</code></td></tr>
+<tr><td><code>&lt;router-link tag="button"&gt;</code></td><td><code>custom</code> + <code>v-slot="{ navigate }"</code></td></tr>
+<tr><td><code>&lt;router-link exact&gt;</code></td><td>移除；按路由记录匹配，用 <code>.router-link-exact-active</code></td></tr>
+<tr><td><code>beforeEach((to, from, next) =&gt; next(...))</code></td><td>返回值：<code>return false</code> / 路由位置 / 不返回</td></tr>
+<tr><td>跳转时传非路径 params</td><td>会被丢弃；改用 query 或 state</td></tr>
+<tr><td><code>to.matched.some(r =&gt; r.meta.x)</code></td><td><code>to.meta.x</code>（已合并父级）</td></tr>
+<tr><td><code>router.currentRoute</code></td><td><code>router.currentRoute.value</code>（是 ref）</td></tr>
+<tr><td><code>router.onReady(cb)</code></td><td><code>await router.isReady()</code></td></tr>
+<tr><td><code>router.getMatchedComponents()</code></td><td><code>router.currentRoute.value.matched.flatMap(r =&gt; Object.values(r.components))</code></td></tr>
+<tr><td><code>scrollBehavior</code> 返回 <code>{ x, y }</code> / <code>{ selector }</code></td><td><code>{ left, top }</code> / <code>{ el }</code></td></tr>
+<tr><td><code>this.$router</code> / <code>this.$route</code></td><td><code>useRouter()</code> / <code>useRoute()</code></td></tr>
+</tbody>
+</table></div>
+
+<h2 id="store">Vuex → Pinia</h2>
+
+<div class="tw"><table>
+<thead><tr><th>Vuex</th><th>Pinia</th></tr></thead>
+<tbody>
+<tr><td><code>new Vuex.Store({ modules })</code></td><td><code>createPinia()</code> + 多个 <code>defineStore()</code></td></tr>
+<tr><td><code>state</code></td><td><code>state</code> / <code>ref</code></td></tr>
+<tr><td><code>getters</code></td><td><code>getters</code> / <code>computed</code></td></tr>
+<tr><td><code>mutations</code> + <code>commit</code></td><td>没有；action 直接修改，或组件里直接改 state</td></tr>
+<tr><td><code>actions</code> + <code>dispatch('ns/type', payload)</code></td><td><code>store.type(payload)</code></td></tr>
+<tr><td><code>namespaced: true</code></td><td>每个 store 天然独立</td></tr>
+<tr><td><code>rootState</code> / <code>rootGetters</code> / <code>{ root: true }</code></td><td>在 action 里调用另一个 <code>useXStore()</code></td></tr>
+<tr><td><code>mapState</code> / <code>mapGetters</code> / <code>mapActions</code></td><td><code>storeToRefs(store)</code> / 直接 <code>store.x</code></td></tr>
+<tr><td><code>store.replaceState(s)</code>（SSR）</td><td><code>pinia.state.value = s</code></td></tr>
+<tr><td><code>strict: true</code></td><td>不需要</td></tr>
+<tr><td>vuex-router-sync</td><td>不需要</td></tr>
+</tbody>
+</table></div>
+
+<h2 id="tooling">工具链与生态</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 330" role="img" aria-label="Vue 2 时代工具与 Vue 3 时代工具的对应">
+  <text class="ttl" x="170" y="22" text-anchor="middle">原书 / Vue 2 时代</text>
+  <text class="ttl on-a" x="590" y="22" text-anchor="middle">今天 / Vue 3 生态</text>
+  <g>
+    <rect class="bx-d" x="40" y="34" width="260" height="28" rx="6"/><text class="sm" x="170" y="53" text-anchor="middle">vue-cli + webpack + Babel</text>
+    <rect class="bx-a" x="460" y="34" width="260" height="28" rx="6"/><text class="sm on-a" x="590" y="53" text-anchor="middle">create-vue + Vite</text>
+    <path class="ln" d="M302 48 H456" marker-end="url(#ar)"/>
+  </g>
+  <g>
+    <rect class="bx-d" x="40" y="68" width="260" height="28" rx="6"/><text class="sm" x="170" y="87" text-anchor="middle">Vetur</text>
+    <rect class="bx-a" x="460" y="68" width="260" height="28" rx="6"/><text class="sm on-a" x="590" y="87" text-anchor="middle">Vue - Official（Volar）</text>
+    <path class="ln" d="M302 82 H456" marker-end="url(#ar)"/>
+  </g>
+  <g>
+    <rect class="bx-d" x="40" y="102" width="260" height="28" rx="6"/><text class="sm" x="170" y="121" text-anchor="middle">vue-router 2/3</text>
+    <rect class="bx-a" x="460" y="102" width="260" height="28" rx="6"/><text class="sm on-a" x="590" y="121" text-anchor="middle">Vue Router 4</text>
+    <path class="ln" d="M302 116 H456" marker-end="url(#ar)"/>
+  </g>
+  <g>
+    <rect class="bx-d" x="40" y="136" width="260" height="28" rx="6"/><text class="sm" x="170" y="155" text-anchor="middle">Vuex</text>
+    <rect class="bx-a" x="460" y="136" width="260" height="28" rx="6"/><text class="sm on-a" x="590" y="155" text-anchor="middle">Pinia</text>
+    <path class="ln" d="M302 150 H456" marker-end="url(#ar)"/>
+  </g>
+  <g>
+    <rect class="bx-d" x="40" y="170" width="260" height="28" rx="6"/><text class="sm" x="170" y="189" text-anchor="middle">Jest + vue-jest + vue-test-utils 1</text>
+    <rect class="bx-a" x="460" y="170" width="260" height="28" rx="6"/><text class="sm on-a" x="590" y="189" text-anchor="middle">Vitest + @vue/test-utils 2</text>
+    <path class="ln" d="M302 184 H456" marker-end="url(#ar)"/>
+  </g>
+  <g>
+    <rect class="bx-d" x="40" y="204" width="260" height="28" rx="6"/><text class="sm" x="170" y="223" text-anchor="middle">.eslintrc + babel-eslint</text>
+    <rect class="bx-a" x="460" y="204" width="260" height="28" rx="6"/><text class="sm on-a" x="590" y="223" text-anchor="middle">eslint.config.js 扁平配置</text>
+    <path class="ln" d="M302 218 H456" marker-end="url(#ar)"/>
+  </g>
+  <g>
+    <rect class="bx-d" x="40" y="238" width="260" height="28" rx="6"/><text class="sm" x="170" y="257" text-anchor="middle">vue-server-renderer + 手写 webpack</text>
+    <rect class="bx-a" x="460" y="238" width="260" height="28" rx="6"/><text class="sm on-a" x="590" y="257" text-anchor="middle">Nuxt / vue/server-renderer + Vite</text>
+    <path class="ln" d="M302 252 H456" marker-end="url(#ar)"/>
+  </g>
+  <g>
+    <rect class="bx-d" x="40" y="272" width="260" height="28" rx="6"/><text class="sm" x="170" y="291" text-anchor="middle">moment.js / mixins / 事件总线</text>
+    <rect class="bx-a" x="460" y="272" width="260" height="28" rx="6"/><text class="sm on-a" x="590" y="291" text-anchor="middle">Intl / 组合式函数 / Pinia</text>
+    <path class="ln" d="M302 286 H456" marker-end="url(#ar)"/>
+  </g>
+  <text class="lbl" x="380" y="322" text-anchor="middle">另外值得了解：VueUse（组合式函数工具库）、Vue DevTools 7、TanStack Query、Vapor Mode（无虚拟 DOM 的编译模式）</text>
+</svg>
+<figcaption>图 A-2　工具链对照</figcaption>
+</figure>
+
+<div class="tw"><table>
+<thead><tr><th>原书使用</th><th>现在推荐</th><th>章节</th></tr></thead>
+<tbody>
+<tr><td><code>npm i -g vue-cli</code>，<code>vue init webpack-simple</code></td><td><code>npm create vue@latest</code></td><td>4</td></tr>
+<tr><td><code>vue-template-compiler</code> 版本需手动对齐</td><td>编译器内置于 <code>vue</code> 包</td><td>4</td></tr>
+<tr><td><code>babel-polyfill</code></td><td>不需要；必要时 <code>@vitejs/plugin-legacy</code></td><td>4</td></tr>
+<tr><td><code>node-sass</code> + <code>sass-loader</code></td><td><code>sass-embedded</code> / <code>sass</code>（无需 loader）</td><td>4</td></tr>
+<tr><td><code>&gt;&gt;&gt;</code> / <code>/deep/</code></td><td><code>:deep()</code></td><td>5</td></tr>
+<tr><td>moment.js</td><td><code>Intl.DateTimeFormat</code>（或 date-fns / Day.js）</td><td>2、5</td></tr>
+<tr><td>marked（直接 v-html）</td><td>marked + DOMPurify</td><td>2</td></tr>
+<tr><td>TWEEN.js</td><td>自写 rAF 补间 / VueUse <code>useTransition</code> / <code>@tweenjs/tween.js</code></td><td>3</td></tr>
+<tr><td>vue-googlemaps</td><td>Leaflet / vue3-google-map / <code>@googlemaps/js-api-loader</code></td><td>6</td></tr>
+<tr><td>Google+ API</td><td>OAuth 2.0 / OpenID Connect 作用域</td><td>6</td></tr>
+<tr><td>vue-i18n 7（<code>new VueI18n</code>）</td><td>vue-i18n 11（<code>createI18n</code>、<code>useI18n</code>）</td><td>7</td></tr>
+<tr><td>eslint-loader、friendly-errors-webpack-plugin</td><td>编辑器扩展 + lint-staged + CI；Vite 自带错误浮层</td><td>7</td></tr>
+<tr><td>extract-text-webpack-plugin、rimraf、cross-env</td><td><code>vite build</code> 默认行为</td><td>7</td></tr>
+<tr><td>lorempixel.com 占位图</td><td>picsum.photos</td><td>7</td></tr>
+<tr><td>Meteor 1.x + <code>akryum:vue-component</code></td><td>Meteor 3 + <code>meteor create --vue</code></td><td>8</td></tr>
+<tr><td>vue-progress-path</td><td>自写 SVG 组件</td><td>8</td></tr>
+</tbody>
+</table></div>
+
+<h2 id="migrate">迁移一个老项目</h2>
+
+<p>如果你手上有一个真实的 Vue 2 项目要升级，大致路线如下：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="Vue 2 项目迁移到 Vue 3 的步骤">
+  <rect class="bx" x="20" y="30" width="135" height="80" rx="10"/>
+  <text class="ttl" x="87" y="58" text-anchor="middle">① 盘点依赖</text>
+  <text class="sm" x="87" y="80" text-anchor="middle">哪些库有 Vue 3 版本？</text>
+  <text class="sm" x="87" y="96" text-anchor="middle">哪些要换？</text>
+  <path class="ln" d="M157 70 H175" marker-end="url(#ar)"/>
+  <rect class="bx-b" x="178" y="30" width="135" height="80" rx="10"/>
+  <text class="ttl on-b" x="245" y="58" text-anchor="middle">② 换构建工具</text>
+  <text class="sm" x="245" y="80" text-anchor="middle">vue-cli/webpack</text>
+  <text class="sm" x="245" y="96" text-anchor="middle">→ Vite（可选但推荐）</text>
+  <path class="ln" d="M315 70 H333" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="336" y="30" width="135" height="80" rx="10"/>
+  <text class="ttl on-a" x="403" y="58" text-anchor="middle">③ 兼容构建</text>
+  <text class="sm" x="403" y="80" text-anchor="middle">@vue/compat 运行，</text>
+  <text class="sm" x="403" y="96" text-anchor="middle">按警告逐个修复</text>
+  <path class="ln" d="M473 70 H491" marker-end="url(#ar)"/>
+  <rect class="bx-p" x="494" y="30" width="120" height="80" rx="10"/>
+  <text class="ttl on-p" x="554" y="58" text-anchor="middle">④ 换生态库</text>
+  <text class="sm" x="554" y="80" text-anchor="middle">Router 4、Pinia、</text>
+  <text class="sm" x="554" y="96" text-anchor="middle">i18n、UI 库</text>
+  <path class="ln" d="M616 70 H634" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="637" y="30" width="103" height="80" rx="10"/>
+  <text class="ttl on-g" x="688" y="58" text-anchor="middle">⑤ 移除</text>
+  <text class="ttl on-g" x="688" y="78" text-anchor="middle">compat</text>
+  <text class="sm" x="688" y="98" text-anchor="middle">纯 Vue 3</text>
+
+  <rect class="bx-d" x="20" y="140" width="720" height="90" rx="10"/>
+  <text class="ttl" x="380" y="166" text-anchor="middle">之后（不着急）</text>
+  <text class="sm" x="380" y="190" text-anchor="middle">选项式 API 在 Vue 3 中完全受支持，不必一次性全部改写成组合式 API。</text>
+  <text class="sm" x="380" y="210" text-anchor="middle">新代码用 &lt;script setup&gt;，老组件在需要修改时顺手重构；mixins 逐步替换成组合式函数。</text>
+</svg>
+<figcaption>图 A-3　渐进式迁移路线</figcaption>
+</figure>
+
+<div class="box note">
+  <div class="t">&#9432; 迁移构建（@vue/compat）</div>
+  <p>
+    Vue 官方提供了一个“兼容模式”的构建版本 <code>@vue/compat</code>：它的行为默认和 Vue 2 一致，同时对每一处用到已变更 API 的地方给出运行时警告，
+    可以逐项开关兼容特性。它让大型项目可以先跑起来、再一点点修。详见官方的 <a href="https://v3-migration.vuejs.org/zh/">Vue 3 迁移指南</a>。
+  </p>
+</div>
+
+<div class="box warn">
+  <div class="t">&#9888; 最大的拦路虎通常是第三方库</div>
+  <p>
+    Vue 本身的迁移工作量往往不大，真正花时间的是 UI 组件库和各种插件：Element UI → Element Plus、Vuetify 2 → 3、BootstrapVue → BootstrapVueNext 等，
+    它们的 API 可能有不小的变化。先确认每个依赖都有可用的 Vue 3 版本或替代品，再开始迁移。
+  </p>
+</div>
+
+<h2 id="resources">延伸资源</h2>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#128218;</span><h4>Vue 官方文档</h4><p><a href="https://cn.vuejs.org/">cn.vuejs.org</a>：中文版，选项式 / 组合式可切换。</p></div>
+  <div class="card"><span class="ic">&#128260;</span><h4>迁移指南</h4><p><a href="https://v3-migration.vuejs.org/zh/">v3-migration.vuejs.org</a>：每一项破坏性变更的详细说明。</p></div>
+  <div class="card"><span class="ic">&#128739;</span><h4>Vue Router</h4><p><a href="https://router.vuejs.org/zh/">router.vuejs.org</a></p></div>
+  <div class="card"><span class="ic">&#127821;</span><h4>Pinia</h4><p><a href="https://pinia.vuejs.org/zh/">pinia.vuejs.org</a></p></div>
+  <div class="card"><span class="ic">&#9889;</span><h4>Vite / Vitest</h4><p><a href="https://cn.vite.dev/">cn.vite.dev</a> · <a href="https://cn.vitest.dev/">cn.vitest.dev</a></p></div>
+  <div class="card"><span class="ic">&#128736;</span><h4>VueUse</h4><p><a href="https://vueuse.org/">vueuse.org</a>：两百多个组合式函数，也是学习写组合式函数的范本。</p></div>
+  <div class="card"><span class="ic">&#9968;</span><h4>Nuxt</h4><p><a href="https://nuxt.com/">nuxt.com</a>：Vue 的全栈框架。</p></div>
+  <div class="card"><span class="ic">&#127918;</span><h4>Vue Playground</h4><p><a href="https://play.vuejs.org/">play.vuejs.org</a>：在浏览器里直接写 SFC，适合快速试验。</p></div>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

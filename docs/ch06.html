@@ -1,0 +1,1759 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 6 章 · 项目四：地理定位博客 — Vue 3 项目实战教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="6">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 6 章 · 项目四</span>
+<h1>地理定位博客</h1>
+<p class="lede">
+  一个以地图为中心的博客：用户用 Google 账号登录，在地图上点一下就能在那个位置发一篇帖子，点击标记查看帖子和评论。
+  这一章的主角是<strong>状态管理</strong> —— 我们用 Vue 官方推荐的 <strong>Pinia</strong> 取代原书的 Vuex，
+  还会学习集成第三方库、作用域插槽、渲染函数和函数式组件。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>理解为什么需要集中式状态管理，掌握 Pinia 的 state / getters / actions</li>
+    <li>知道 Vuex 的概念如何对应到 Pinia，以及为什么 mutations 消失了</li>
+    <li>用 OAuth 弹窗 + <code>postMessage</code> 实现第三方登录</li>
+    <li>在 Vue 组件里集成命令式的地图库（Leaflet），理解 <code>markRaw</code> / 非响应式变量的必要性</li>
+    <li>自己实现一个带<strong>作用域插槽</strong>的组件</li>
+    <li>在 Vue 3 中写渲染函数、JSX 和函数式组件</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="overview">应用全貌</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="地理定位博客界面：顶部菜单栏，左侧大地图，右侧内容面板">
+  <rect class="bx" x="20" y="14" width="720" height="262" rx="12"/>
+  <rect class="bx-a" x="34" y="26" width="692" height="38" rx="8"/>
+  <text class="ttl on-a" x="60" y="50">📍 GeoBlog</text>
+  <circle class="bx" cx="530" cy="45" r="11"/>
+  <text class="sm" x="550" y="50">张三</text>
+  <text class="sm" x="620" y="50">◎ 定位</text>
+  <text class="sm" x="680" y="50">⏻</text>
+  <text class="sm" x="300" y="50">AppMenu：头像、名字、回到我的位置、登出</text>
+
+  <rect class="bx-g" x="34" y="74" width="452" height="190" rx="8"/>
+  <text class="ttl on-g" x="260" y="96" text-anchor="middle">BlogMap：地图</text>
+  <circle cx="120" cy="150" r="10" style="fill:var(--panel);stroke:var(--fg-soft);stroke-width:1.5"/>
+  <circle cx="230" cy="190" r="10" style="fill:var(--accent);stroke:var(--accent-2);stroke-width:1.5"/>
+  <circle cx="340" cy="140" r="10" style="fill:var(--panel);stroke:var(--fg-soft);stroke-width:1.5"/>
+  <circle cx="400" cy="220" r="10" style="fill:var(--panel);stroke:var(--fg-soft);stroke-width:1.5;stroke-dasharray:3 2;opacity:.7"/>
+  <circle cx="180" cy="230" r="6" style="fill:var(--blue)"/>
+  <text class="sm" x="196" y="234">我的位置</text>
+  <text class="sm" x="246" y="194">选中的帖子</text>
+  <text class="sm" x="416" y="224">草稿（虚影）</text>
+  <text class="sm" x="260" y="120" text-anchor="middle">点击空白处 → 在这里发帖</text>
+
+  <rect class="bx-b" x="496" y="74" width="230" height="190" rx="8"/>
+  <text class="ttl on-b" x="611" y="96" text-anchor="middle">BlogContent：内容面板</text>
+  <rect class="bx" x="510" y="106" width="202" height="34" rx="6"/>
+  <text class="sm" x="611" y="128" text-anchor="middle">LocationInfo：地点名称和地址</text>
+  <rect class="bx" x="510" y="148" width="202" height="104" rx="6"/>
+  <text class="sm" x="611" y="172" text-anchor="middle">三选一：</text>
+  <text class="sm" x="611" y="194" text-anchor="middle">NoContent（提示点地图）</text>
+  <text class="sm" x="611" y="214" text-anchor="middle">CreatePost（发帖表单）</text>
+  <text class="sm" x="611" y="234" text-anchor="middle">PostContent（帖子 + 评论）</text>
+</svg>
+<figcaption>图 6-1　地理定位博客的界面结构</figcaption>
+</figure>
+
+<ul>
+  <li>登录页要求用户用 Google 账号登录；</li>
+  <li>主页面是一张大地图，每篇帖子是一个标记；</li>
+  <li>点击标记，右侧面板显示地点、帖子内容、评论；</li>
+  <li>点击地图空白处，右侧面板变成发帖表单，帖子就发在点击的位置；</li>
+  <li>顶部栏显示当前用户的头像和名字，以及“回到我的位置”和“登出”按钮。</li>
+</ul>
+
+<div class="box key">
+  <div class="t">&#9733; 和原书相比，本章换掉了三样东西</div>
+  <div class="tw" style="margin:6px 0 0"><table>
+  <thead><tr><th>原书</th><th>现状</th><th>本教程</th></tr></thead>
+  <tbody>
+  <tr><td>Vuex 3</td><td>官方已推荐 Pinia 作为新项目的状态管理</td><td><strong>Pinia</strong></td></tr>
+  <tr><td>Google+ API 获取用户资料</td><td>Google+ 已于 2019 年关闭</td><td>OAuth 2.0 / OpenID Connect（<code>openid profile email</code>）</td></tr>
+  <tr><td>vue-googlemaps</td><td>只支持 Vue 2，已停止维护</td><td><strong>Leaflet + OpenStreetMap</strong>（免 API Key），并说明 Google Maps 的替代方案</td></tr>
+  </tbody>
+  </table></div>
+</div>
+
+<h2 id="setup">项目搭建</h2>
+
+<div class="code" data-lang="bash" data-file="终端"><pre>
+npm create vue@latest geoblog     # 勾选 Router 和 Pinia
+cd geoblog
+npm install
+npm install -D stylus
+npm install leaflet               # 地图库
+</pre></div>
+
+<p>
+  清空 <code>src</code>，从上一章复制 <code>plugins/fetch.js</code>（我们的 <code>$fetch</code>）、<code>utils/format.js</code>（日期格式化）和 <code>NotFound.vue</code>，
+  从仓库 <code>Chapter06/chapter6-full/client/src/styles</code> 复制样式文件到 <code>src/styles</code>。别忘了上一章的 Vite 代理配置。
+</p>
+
+<div class="tree"><b>src/</b>
+├── main.js
+├── router.js
+├── <b>stores/</b>              <i># Pinia stores（取代原书的 store/ 目录）</i>
+│   ├── user.js
+│   ├── map.js
+│   └── posts.js
+├── components/
+│   ├── App.vue  GeoBlog.vue  Login.vue  AppMenu.vue  BlogMap.vue  NotFound.vue
+│   └── content/         <i># 右侧面板里的组件</i>
+├── plugins/fetch.js
+├── utils/format.js
+└── styles/</div>
+
+<h3>三个页面</h3>
+
+<div class="code" data-lang="vue" data-file="src/components/App.vue"><pre>
+&lt;template&gt;
+  &lt;div class="app"&gt;
+    &lt;RouterView /&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+
+&lt;style lang="stylus"&gt;
+@import '../styles/main';
+&lt;/style&gt;
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/router.js（初版）"><pre>
+import { createRouter, createWebHistory } from 'vue-router'
+import GeoBlog from './components/GeoBlog.vue'
+import Login from './components/Login.vue'
+import NotFound from './components/NotFound.vue'
+
+const routes = [
+  { path: '/', name: 'home', component: GeoBlog, meta: { private: true } },
+  { path: '/login', name: 'login', component: Login, meta: { guest: true } },
+  { path: '/:pathMatch(.*)*', component: NotFound },
+]
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes,
+})
+
+// 导航守卫稍后添加
+
+export default router
+</pre></div>
+
+<h2 id="why-store">为什么需要状态管理</h2>
+
+<p>
+  前两个项目里，我们用一个 <code>reactive()</code> 对象当全局状态。这在小项目里够用，但应用变大后会遇到问题。
+  想象一个按钮埋在组件树深处，它要打开树另一侧的一个侧边栏：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 312" role="img" aria-label="没有 store 时需要层层传递 props 和事件，有 store 时组件直接读写 store">
+  <text class="ttl on-r" x="190" y="22" text-anchor="middle">没有 store：层层转发</text>
+  <rect class="bx" x="150" y="34" width="80" height="28" rx="6"/><text class="sm" x="190" y="53" text-anchor="middle">App</text>
+  <rect class="bx" x="60" y="86" width="80" height="28" rx="6"/><text class="sm" x="100" y="105" text-anchor="middle">Main</text>
+  <rect class="bx" x="240" y="86" width="80" height="28" rx="6"/><text class="sm" x="280" y="105" text-anchor="middle">Aside</text>
+  <rect class="bx" x="60" y="138" width="80" height="28" rx="6"/><text class="sm" x="100" y="157" text-anchor="middle">List</text>
+  <rect class="bx" x="60" y="190" width="80" height="28" rx="6"/><text class="sm" x="100" y="209" text-anchor="middle">Item</text>
+  <rect class="bx-r" x="60" y="242" width="80" height="28" rx="6"/><text class="sm on-r" x="100" y="261" text-anchor="middle">按钮</text>
+  <rect class="bx-r" x="240" y="138" width="80" height="28" rx="6"/><text class="sm on-r" x="280" y="157" text-anchor="middle">侧边栏</text>
+  <path class="ln" d="M190 64 L110 84"/><path class="ln" d="M190 64 L270 84"/>
+  <path class="ln" d="M100 116 V136"/><path class="ln" d="M100 168 V188"/><path class="ln" d="M100 220 V240"/>
+  <path class="ln" d="M280 116 V136"/>
+  <path class="ln-r" d="M44 256 V76 H150" marker-end="url(#ar)"/>
+  <text class="halo sm on-r" x="20" y="170">emit ×4</text>
+  <path class="ln-r" d="M232 48 C330 48 340 120 322 150" marker-end="url(#ar)"/>
+  <text class="halo sm on-r" x="330" y="96">props ×2</text>
+  <text class="sm" x="190" y="292" text-anchor="middle">中间每一层都要帮忙传，却根本不关心这个数据</text>
+
+  <path class="ln-d" d="M380 14 V280"/>
+
+  <text class="ttl on-a" x="570" y="22" text-anchor="middle">有 store：直接读写</text>
+  <rect class="bx-a" x="510" y="34" width="120" height="44" rx="10"/>
+  <text class="ttl on-a" x="570" y="54" text-anchor="middle">Store</text>
+  <text class="mono sm" x="570" y="70" text-anchor="middle">panelOpen</text>
+  <rect class="bx" x="530" y="110" width="80" height="28" rx="6"/><text class="sm" x="570" y="129" text-anchor="middle">App</text>
+  <rect class="bx" x="440" y="160" width="80" height="28" rx="6"/><text class="sm" x="480" y="179" text-anchor="middle">Main</text>
+  <rect class="bx" x="620" y="160" width="80" height="28" rx="6"/><text class="sm" x="660" y="179" text-anchor="middle">Aside</text>
+  <rect class="bx" x="440" y="206" width="80" height="28" rx="6"/><text class="sm" x="480" y="225" text-anchor="middle">…</text>
+  <rect class="bx-r" x="440" y="252" width="80" height="28" rx="6"/><text class="sm on-r" x="480" y="271" text-anchor="middle">按钮</text>
+  <rect class="bx-r" x="620" y="206" width="80" height="28" rx="6"/><text class="sm on-r" x="660" y="225" text-anchor="middle">侧边栏</text>
+  <path class="ln" d="M570 140 L490 158"/><path class="ln" d="M570 140 L650 158"/>
+  <path class="ln" d="M480 190 V204"/><path class="ln" d="M480 236 V250"/><path class="ln" d="M660 190 V204"/>
+  <path class="ln-a" d="M430 266 C400 266 400 56 506 56" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="410" y="140">action</text>
+  <path class="ln-a" d="M632 56 C730 56 740 200 702 220" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="712" y="120">读 state</text>
+  <text class="sm" x="570" y="298" text-anchor="middle">唯一数据源，组件之间互不知道对方</text>
+</svg>
+<figcaption>图 6-2　“props 逐层传递”与“集中式 store”</figcaption>
+</figure>
+
+<p>
+  问题不只是麻烦：当两个组件各自持有一份需要同步的数据时，就有了<strong>两个真相来源</strong>，一旦不同步，没人知道谁是对的。
+  集中式状态管理的思想来自 Facebook 的 Flux 架构（React 社区的 Redux 也源于此）：<strong>共享数据只放在一个地方（store），并且用规定好的方式修改它</strong>。
+</p>
+
+<div class="box note">
+  <div class="t">&#9432; 不是每个项目都需要</div>
+  <p>原型、小组件、只有几个页面的应用，用第 3、5 章那种 <code>reactive()</code> 对象或组合式函数就够了。当多个页面/组件开始共享复杂的数据和逻辑时，再引入 store。</p>
+</div>
+
+<h2 id="pinia">从 Vuex 到 Pinia</h2>
+
+<p>
+  原书使用 Vuex。Pinia 最初是 Vue 核心团队成员 Eduardo（也就是本书的技术审校）为探索 Vuex 5 而写的实验，后来成为 Vue 官方推荐的状态管理库。
+  Vuex 目前处于维护模式，新项目应使用 Pinia。先看两者的结构差异：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 330" role="img" aria-label="Vuex 的 state getters mutations actions 循环对比 Pinia 的 state getters actions">
+  <text class="ttl" x="190" y="22" text-anchor="middle">Vuex（原书）</text>
+  <rect class="bx-g" x="120" y="40" width="140" height="44" rx="10"/>
+  <text class="on-g ttl" x="190" y="67" text-anchor="middle">组件</text>
+  <rect class="bx-p" x="20" y="130" width="130" height="44" rx="10"/>
+  <text class="on-p ttl" x="85" y="157" text-anchor="middle">Actions</text>
+  <rect class="bx-r" x="120" y="220" width="140" height="44" rx="10"/>
+  <text class="on-r ttl" x="190" y="247" text-anchor="middle">Mutations</text>
+  <rect class="bx-b" x="230" y="130" width="130" height="44" rx="10"/>
+  <text class="on-b ttl" x="295" y="157" text-anchor="middle">State</text>
+  <path class="ln-p" d="M140 86 L95 126" marker-end="url(#ar)"/>
+  <text class="halo mono sm" x="68" y="104">dispatch</text>
+  <path class="ln-r" d="M95 176 L150 216" marker-end="url(#ar)"/>
+  <text class="halo mono sm" x="60" y="206">commit</text>
+  <path class="ln-b" d="M240 218 L285 178" marker-end="url(#ar)"/>
+  <text class="halo mono sm" x="270" y="206">mutate</text>
+  <path class="ln-g" d="M290 128 L245 88" marker-end="url(#ar)"/>
+  <text class="halo mono sm" x="300" y="104">render</text>
+  <text class="sm" x="190" y="290" text-anchor="middle">修改状态必须经过同步的 mutation</text>
+  <text class="sm" x="190" y="308" text-anchor="middle">字符串类型名 'posts/fetchPosts'，难以类型推导</text>
+
+  <path class="ln-d" d="M380 14 V320"/>
+
+  <text class="ttl on-a" x="570" y="22" text-anchor="middle">Pinia（本教程）</text>
+  <rect class="bx-g" x="500" y="40" width="140" height="44" rx="10"/>
+  <text class="on-g ttl" x="570" y="67" text-anchor="middle">组件</text>
+  <rect class="bx-p" x="410" y="160" width="130" height="44" rx="10"/>
+  <text class="on-p ttl" x="475" y="187" text-anchor="middle">Actions</text>
+  <rect class="bx-b" x="610" y="160" width="130" height="44" rx="10"/>
+  <text class="on-b ttl" x="675" y="187" text-anchor="middle">State</text>
+  <path class="ln-p" d="M530 86 L485 156" marker-end="url(#ar)"/>
+  <text class="halo mono sm" x="452" y="118">store.fetchPosts()</text>
+  <path class="ln-b" d="M542 182 H606" marker-end="url(#ar)"/>
+  <text class="halo sm" x="574" y="174" text-anchor="middle">直接改</text>
+  <path class="ln-g" d="M670 158 L620 88" marker-end="url(#ar)"/>
+  <text class="halo mono sm" x="672" y="118">render</text>
+  <text class="sm" x="570" y="250" text-anchor="middle">没有 mutations：action 直接修改 state</text>
+  <text class="sm" x="570" y="270" text-anchor="middle">action 可以是 async，像普通方法一样调用</text>
+  <text class="sm" x="570" y="290" text-anchor="middle">DevTools 照样能追踪每一次修改、时间旅行</text>
+  <text class="sm" x="570" y="308" text-anchor="middle">多个独立的小 store 取代嵌套模块</text>
+</svg>
+<figcaption>图 6-3　Vuex 的四件套 vs. Pinia 的三件套</figcaption>
+</figure>
+
+<div class="tw"><table>
+<thead><tr><th>Vuex 概念</th><th>Pinia 对应</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td><code>new Vuex.Store()</code></td><td><code>createPinia()</code> + <code>defineStore()</code></td><td>Pinia 是“很多个小 store”，每个独立定义</td></tr>
+<tr><td><code>state</code></td><td><code>state</code>（或 setup 写法中的 <code>ref</code>）</td><td>一样</td></tr>
+<tr><td><code>getters</code></td><td><code>getters</code>（或 <code>computed</code>）</td><td>一样</td></tr>
+<tr><td><code>mutations</code></td><td><strong>没有了</strong></td><td>action 里直接改 state</td></tr>
+<tr><td><code>actions</code> + <code>dispatch('type')</code></td><td><code>actions</code>，直接调用 <code>store.action()</code></td><td>就是普通函数</td></tr>
+<tr><td>模块 <code>modules</code> + <code>namespaced</code></td><td>每个 store 天然独立</td><td>store 之间直接 import 互相调用</td></tr>
+<tr><td><code>mapGetters</code> / <code>mapActions</code></td><td><code>storeToRefs()</code> 或直接 <code>store.xxx</code></td><td>组合式 API 下基本不需要辅助函数</td></tr>
+<tr><td><code>strict</code> 模式</td><td>不需要</td><td>没有“必须通过 mutation”的规则</td></tr>
+<tr><td>vuex-router-sync</td><td>不需要</td><td><code>useRoute()</code> 本身就是响应式的</td></tr>
+</tbody>
+</table></div>
+
+<div class="box deep">
+  <div class="t">&#128269; mutations 为什么可以去掉</div>
+  <p>
+    Vuex 要求“只能在同步的 mutation 里改状态”，原因是 DevTools 需要在每次 mutation 前后给状态拍快照，以实现时间旅行调试。
+    Pinia 借助 Vue 3 的响应式系统直接追踪 state 的每一次变化，并把它们归属到触发它的 action 上，
+    所以既保留了可追踪性，又省掉了“为每个字段写一个 mutation”的样板代码。
+  </p>
+</div>
+
+<h3>安装 Pinia</h3>
+
+<div class="code" data-lang="js" data-file="src/main.js"><pre>
+import { createApp } from 'vue'
+import { createPinia } from 'pinia'
+import App from './components/App.vue'
+import router from './router'
+import VueFetch from './plugins/fetch'
+
+const app = createApp(App)
+app.use(createPinia())
+app.use(router)
+app.use(VueFetch, { baseUrl: '/api/' })
+app.mount('#app')
+</pre></div>
+
+<h3>第一个 store：当前用户</h3>
+
+<p>Pinia 有两种定义 store 的写法。<strong>选项式</strong>写法和 Vuex 很像，方便迁移：</p>
+
+<div class="code" data-lang="js" data-file="src/stores/user.js（选项式写法）"><pre>
+import { defineStore } from 'pinia'
+
+export const useUserStore = defineStore('user', {
+  state: () =&gt; ({
+    user: null,
+  }),
+  getters: {
+    userPicture: (state) =&gt; state.user?.profile.photos?.[0]?.value ?? null,
+  },
+  actions: {
+    login() { /* ... */ },
+    logout() {
+      this.user = null      // 直接修改 state，this 指向 store
+    },
+  },
+})
+</pre></div>
+
+<p><strong>setup 写法</strong>则和组件的 <code>&lt;script setup&gt;</code> 一模一样：<code>ref</code> 就是 state，<code>computed</code> 就是 getter，函数就是 action。本教程使用这种写法：</p>
+
+<div class="code" data-lang="js" data-file="src/stores/user.js（setup 写法）"><pre>
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
+
+export const useUserStore = defineStore('user', () =&gt; {
+  // state
+  const user = ref(null)
+
+  // getters
+  const userPicture = computed(() =&gt; user.value?.profile.photos?.[0]?.value ?? null)
+
+  // actions
+  function logout() {
+    user.value = null
+  }
+
+  // 必须把所有 state 都返回，DevTools 和 SSR 才能正确处理
+  return { user, userPicture, logout }
+})
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 命名约定</div>
+  <p>
+    <code>defineStore</code> 的第一个参数是 store 的唯一 id（DevTools 里显示的名字）。返回值是一个函数，约定命名为 <code>useXxxStore</code>，
+    在组件里调用它就能拿到 store 实例 —— 和组合式函数的用法一致。
+  </p>
+</div>
+
+<h3>在组件里使用 store</h3>
+
+<p>做一个顶部菜单组件，显示用户信息：</p>
+
+<div class="code" data-lang="vue" data-file="src/components/AppMenu.vue"><pre>
+&lt;script setup&gt;
+import { useUserStore } from '../stores/user'
+import { useMapStore } from '../stores/map'
+
+const userStore = useUserStore()
+const mapStore = useMapStore()
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="app-menu"&gt;
+    &lt;div class="header"&gt;
+      &lt;i class="material-icons"&gt;place&lt;/i&gt;
+      GeoBlog
+    &lt;/div&gt;
+    &lt;div class="user"&gt;
+      &lt;div class="info" v-if="userStore.user"&gt;
+        &lt;span class="picture" v-if="userStore.userPicture"&gt;
+          &lt;img :src="userStore.userPicture"&gt;
+        &lt;/span&gt;
+        &lt;span class="username"&gt;{{ userStore.user.profile.displayName }}&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;a @click="mapStore.centerOnUser()"&gt;&lt;i class="material-icons"&gt;my_location&lt;/i&gt;&lt;/a&gt;
+      &lt;a @click="userStore.logout()"&gt;&lt;i class="material-icons"&gt;power_settings_new&lt;/i&gt;&lt;/a&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="vs">
+  <div class="old"><div class="h">原书 · Vuex + 辅助函数</div>
+<div class="code" data-lang="js"><pre>
+import { mapGetters, mapActions } from 'vuex'
+
+export default {
+  computed: mapGetters(['user', 'userPicture']),
+  methods: mapActions({
+    logout: 'logout',
+    centerOnUser: 'maps/centerOnUser',
+  }),
+}
+</pre></div></div>
+  <div class="new"><div class="h">Pinia</div>
+<div class="code" data-lang="js"><pre>
+import { useUserStore } from '../stores/user'
+import { useMapStore } from '../stores/map'
+
+const userStore = useUserStore()
+const mapStore = useMapStore()
+// userStore.user、userStore.logout()、
+// mapStore.centerOnUser() 直接用
+</pre></div></div>
+</div>
+
+<h3>解构 store：storeToRefs</h3>
+
+<p>store 是一个 <code>reactive</code> 对象，直接解构会丢失响应性。要解构 state 和 getter，用 <code>storeToRefs</code>；action 则可以直接解构：</p>
+
+<div class="code" data-lang="js"><pre>
+import { storeToRefs } from 'pinia'
+
+const userStore = useUserStore()
+const { user, userPicture } = storeToRefs(userStore)   // ✓ 得到 ref，保持响应性
+const { logout } = userStore                           // ✓ action 是普通函数，直接取
+
+// const { user } = userStore                         // ✗ 得到的是当时的值，不会更新
+</pre></div>
+
+<h3>调试：DevTools 中的 Pinia</h3>
+
+<p>
+  Vue DevTools 内置了 Pinia 面板：能看到每个 store 的 state 和 getters、可以直接编辑 state；Timeline 面板会记录每一次 action 调用和 state 变化，
+  原书介绍的“时间旅行调试”在这里同样可用。
+</p>
+
+<h2 id="auth">用户登录：Google OAuth</h2>
+
+<h3>在 Google Cloud 控制台配置</h3>
+
+<div class="box warn">
+  <div class="t">&#9888; 原书的步骤已经失效</div>
+  <p>
+    原书第一步是启用“Google+ API”来获取用户资料。Google+ 已在 2019 年关闭，相关 API 不复存在。
+    现在获取用户的名字和头像，使用的是标准的 <strong>OpenID Connect</strong> 作用域 <code>openid profile email</code>，不需要单独启用任何 API。
+  </p>
+</div>
+
+<ol class="steps">
+  <li>打开 <a href="https://console.cloud.google.com/">Google Cloud 控制台</a>，新建一个项目。</li>
+  <li>进入 <strong>API 和服务 → OAuth 同意屏幕</strong>（新版界面叫 Google Auth Platform），填写应用名称、支持邮箱，用户类型选“外部”，测试阶段把自己的账号加为测试用户。</li>
+  <li>进入<strong>凭据 → 创建凭据 → OAuth 客户端 ID</strong>，类型选“Web 应用”：
+    <ul>
+      <li>已获授权的 JavaScript 来源：<code>http://localhost:3000</code></li>
+      <li>已获授权的重定向 URI：<code>http://localhost:3000/auth/google/callback</code>（服务器上的回调路由）</li>
+    </ul>
+  </li>
+  <li>保存后得到<strong>客户端 ID</strong>和<strong>客户端密钥</strong>。密钥不要提交到 Git，也不要放进前端代码。</li>
+</ol>
+
+<h3>服务端</h3>
+
+<p>
+  仓库 <code>Chapter06/chapter6-full/server</code> 是配套的 API 服务器。它和上一章一样基于 2017 年的依赖，要在今天跑起来，需要做两处修改（以及上一章提到的 Babel/bcrypt 问题）：
+</p>
+
+<div class="code" data-lang="js" data-file="server/src/routes.js（需要修改的地方）"><pre>
+app.get('/auth/google', passport.authenticate('google', {
+  // 原来是 ['https://www.googleapis.com/auth/plus.login']，已失效
+  scope: ['openid', 'profile', 'email'],
+  prompt: 'select_account',
+}))
+</pre></div>
+
+<p>并把 <code>passport-google-oauth</code> 换成仍在维护的 <code>passport-google-oauth20</code>（<code>import { Strategy as GoogleStrategy } from 'passport-google-oauth20'</code>）。然后用环境变量提供凭据并启动：</p>
+
+<div class="code" data-lang="bash" data-file="终端（服务器目录）"><pre>
+export GOOGLE_CLIENT_ID=xxx
+export GOOGLE_CLIENT_SECRET=xxx
+export CLIENT_ORIGIN=http://localhost:5173
+npm start
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 用 .env 文件</div>
+  <p>每次开终端都要 export 很麻烦。新版 Node 支持 <code>node --env-file=.env src/index.js</code> 直接读取 <code>.env</code> 文件（记得把 <code>.env</code> 加进 <code>.gitignore</code>）。</p>
+</div>
+
+<h3>登录流程：弹窗 + postMessage</h3>
+
+<p>登录按钮会打开一个弹窗，整个流程如下：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 360" role="img" aria-label="OAuth 弹窗登录时序图">
+  <rect class="bx-g" x="20" y="14" width="150" height="34" rx="8"/><text class="on-g ttl" x="95" y="36" text-anchor="middle">Vue 应用（主窗口）</text>
+  <rect class="bx-p" x="220" y="14" width="140" height="34" rx="8"/><text class="on-p ttl" x="290" y="36" text-anchor="middle">弹窗</text>
+  <rect class="bx-a" x="410" y="14" width="150" height="34" rx="8"/><text class="on-a ttl" x="485" y="36" text-anchor="middle">我们的服务器</text>
+  <rect class="bx-b" x="610" y="14" width="130" height="34" rx="8"/><text class="on-b ttl" x="675" y="36" text-anchor="middle">Google</text>
+  <path class="ln-d" d="M95 50 V350"/><path class="ln-d" d="M290 50 V350"/><path class="ln-d" d="M485 50 V350"/><path class="ln-d" d="M675 50 V350"/>
+
+  <path class="ln" d="M95 78 H286" marker-end="url(#ar)"/>
+  <text class="halo sm" x="190" y="72" text-anchor="middle">① window.open('/auth/google')</text>
+  <path class="ln" d="M290 104 H481" marker-end="url(#ar)"/>
+  <text class="halo sm" x="386" y="98" text-anchor="middle">② GET /auth/google</text>
+  <path class="ln" d="M485 130 H294" marker-end="url(#ar)"/>
+  <text class="halo sm" x="390" y="124" text-anchor="middle">③ 302 重定向到 Google</text>
+  <path class="ln" d="M290 156 H671" marker-end="url(#ar)"/>
+  <text class="halo sm" x="480" y="150" text-anchor="middle">④ 用户在 Google 页面登录并授权</text>
+  <path class="ln" d="M675 182 H294" marker-end="url(#ar)"/>
+  <text class="halo sm" x="480" y="176" text-anchor="middle">⑤ 带着授权码重定向到 /auth/google/callback</text>
+  <path class="ln" d="M290 208 H481" marker-end="url(#ar)"/>
+  <path class="ln" d="M485 222 H671" marker-end="url(#ar)"/>
+  <text class="halo sm" x="580" y="216" text-anchor="middle">⑥ 用授权码换取用户资料</text>
+  <path class="ln" d="M675 236 H489" marker-end="url(#ar)"/>
+  <path class="ln-a" d="M485 262 H294" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="390" y="256" text-anchor="middle">⑦ 建立会话（Cookie），返回一小段 HTML</text>
+  <path class="ln-a" d="M290 290 H99" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="190" y="284" text-anchor="middle">⑧ postMessage('success') 后关闭</text>
+  <path class="ln-g" d="M95 316 H481" marker-end="url(#ar)"/>
+  <text class="halo sm on-g" x="290" y="310" text-anchor="middle">⑨ userStore.login()：GET /user 拿到用户资料</text>
+  <text class="sm" x="380" y="344" text-anchor="middle">客户端密钥只存在于服务器（⑥），浏览器永远看不到它</text>
+</svg>
+<figcaption>图 6-4　OAuth 弹窗登录的完整时序</figcaption>
+</figure>
+
+<div class="code" data-lang="vue" data-file="src/components/Login.vue"><pre>
+&lt;script setup&gt;
+import { onMounted, onBeforeUnmount } from 'vue'
+import { useUserStore } from '../stores/user'
+
+const SERVER_ORIGIN = 'http://localhost:3000'
+const userStore = useUserStore()
+
+function openGoogleSignin() {
+  window.open(`${SERVER_ORIGIN}/auth/google`, 'google_login', 'width=500,height=600')
+}
+
+function handleMessage({ data, origin }) {
+  // 安全：只接受来自我们服务器的消息
+  if (origin !== SERVER_ORIGIN) return
+  if (data === 'success') {
+    userStore.login()
+  }
+}
+
+onMounted(() =&gt; window.addEventListener('message', handleMessage))
+onBeforeUnmount(() =&gt; window.removeEventListener('message', handleMessage))
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="welcome"&gt;
+    &lt;h1&gt;欢迎&lt;/h1&gt;
+    &lt;div class="actions"&gt;
+      &lt;button @click="openGoogleSignin"&gt;使用 Google 登录&lt;/button&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; 永远检查 postMessage 的 origin</div>
+  <p>任何网页都能向你的窗口 <code>postMessage</code>。不检查 <code>origin</code>，恶意页面就能伪造“登录成功”之类的消息。</p>
+</div>
+
+<div class="box tip">
+  <div class="t">&#10003; 别忘了清理</div>
+  <p>
+    在 <code>onMounted</code> 里加到 <code>window</code> 上的监听器，一定要在 <code>onBeforeUnmount</code> 里移除，否则组件销毁后监听器还在，会造成内存泄漏和重复执行。
+    VueUse 的 <code>useEventListener(window, 'message', handleMessage)</code> 会自动帮你清理。
+  </p>
+</div>
+
+<h3>完整的用户 store</h3>
+
+<div class="code" data-lang="js" data-file="src/stores/user.js"><pre>
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
+import { $fetch } from '../plugins/fetch'
+import router from '../router'
+import { usePostsStore } from './posts'
+
+export const useUserStore = defineStore('user', () =&gt; {
+  const user = ref(null)
+
+  const userPicture = computed(() =&gt; user.value?.profile.photos?.[0]?.value ?? null)
+
+  async function login() {
+    try {
+      user.value = await $fetch('user')
+      if (user.value) {
+        // 跳回原本想去的页面
+        router.replace(router.currentRoute.value.query.redirect || { name: 'home' })
+        // 通知帖子 store：用户登录了
+        usePostsStore().onLoggedIn()
+      }
+    } catch (e) {
+      console.warn(e)
+    }
+  }
+
+  function logout() {
+    user.value = null
+    $fetch('logout')
+    usePostsStore().reset()     // 清空帖子数据
+    const current = router.currentRoute.value
+    if (current.meta.private) {
+      router.replace({ name: 'login', query: { redirect: current.fullPath } })
+    }
+  }
+
+  // 应用启动时调用：检查是否已有会话
+  async function init() {
+    await login()
+  }
+
+  return { user, userPicture, login, logout, init }
+})
+</pre></div>
+
+<div class="box key">
+  <div class="t">&#9733; store 之间互相调用</div>
+  <p>
+    原书用 Vuex 的“根级 action”技巧：在 posts 模块里声明 <code>logout: { root: true, handler }</code>，这样 dispatch 全局的 <code>'logout'</code> 时它也会被调用。
+    Pinia 里不需要这种隐式机制 —— 在 action 里调用 <code>usePostsStore()</code> 拿到另一个 store，直接调用它的方法，调用关系一目了然。
+  </p>
+</div>
+
+<h3>守卫、$fetch 与启动</h3>
+
+<p>在组件外（路由守卫、插件）也能使用 store，只要在 <code>app.use(pinia)</code> 之后调用 <code>useXxxStore()</code>：</p>
+
+<div class="code" data-lang="js" data-file="src/router.js"><pre>
+import { useUserStore } from './stores/user'
+
+router.beforeEach((to) =&gt; {
+  const userStore = useUserStore()     // 在守卫函数内部调用，此时 Pinia 已安装
+  if (to.meta.private &amp;&amp; !userStore.user) {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
+  if (to.meta.guest &amp;&amp; userStore.user) {
+    return { name: 'home' }
+  }
+})
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/plugins/fetch.js（403 处理）"><pre>
+import { useUserStore } from '../stores/user'
+
+// ...
+} else if (response.status === 403) {
+  useUserStore().logout()   // 会话失效：交给 store 统一处理
+  throw new Error('会话已过期')
+}
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/main.js"><pre>
+import { useUserStore } from './stores/user'
+
+async function main() {
+  const app = createApp(App)
+  app.use(createPinia())
+  app.use(VueFetch, { baseUrl: '/api/' })
+
+  // 先检查会话，再安装路由（这样首次导航时守卫已经知道用户是谁）
+  await useUserStore().init()
+
+  app.use(router)
+  app.mount('#app')
+}
+
+main()
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; 不要在模块顶层调用 useXxxStore()</div>
+  <p>
+    如果在 <code>router.js</code> 文件的最外层写 <code>const userStore = useUserStore()</code>，它会在 <code>app.use(pinia)</code> 之前执行，报错
+    “getActivePinia was called with no active Pinia”。要在函数（守卫、action、组件 setup）内部调用。
+  </p>
+</div>
+
+<h2 id="map">嵌入地图</h2>
+
+<h3>为什么选 Leaflet</h3>
+
+<p>
+  原书使用的 vue-googlemaps 是作者自己写的 Vue 2 封装库，不支持 Vue 3。我们换成 <a href="https://leafletjs.com/">Leaflet</a> + <a href="https://www.openstreetmap.org/">OpenStreetMap</a>：
+</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#128273;</span><h4>不需要 API Key</h4><p>Google Maps 需要创建 API Key 并绑定信用卡；OSM 的地图瓦片可以直接用（遵守使用政策）。</p></div>
+  <div class="card"><span class="ic">&#129521;</span><h4>学会集成任意库</h4><p>直接使用 Leaflet 的原生 API，正好学习“在 Vue 组件里集成命令式第三方库”这个通用技能。</p></div>
+  <div class="card"><span class="ic">&#128279;</span><h4>Google Maps 也可以</h4><p>如果项目必须用 Google Maps，可以用社区的 <code>vue3-google-map</code> 组件库，或 Google 官方的 <code>@googlemaps/js-api-loader</code>。store 的设计完全不变。</p></div>
+</div>
+
+<h3>命令式库 vs. 声明式 Vue</h3>
+
+<p>
+  Leaflet 是<strong>命令式</strong>的：你调用 <code>map.setView()</code>、<code>marker.addTo(map)</code> 来改变地图。Vue 是<strong>声明式</strong>的：你修改数据，界面自己更新。
+  集成的关键就是在两者之间搭一座双向的桥：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="Vue store 与 Leaflet 地图之间的双向同步">
+  <rect class="bx-a" x="20" y="60" width="220" height="170" rx="12"/>
+  <text class="ttl on-a" x="130" y="86" text-anchor="middle">Pinia store（声明式）</text>
+  <text class="mono sm" x="40" y="114">map.center / zoom</text>
+  <text class="mono sm" x="40" y="136">map.userPosition</text>
+  <text class="mono sm" x="40" y="158">posts.posts</text>
+  <text class="mono sm" x="40" y="180">posts.draft</text>
+  <text class="mono sm" x="40" y="202">posts.currentPost</text>
+
+  <rect class="bx-g" x="520" y="60" width="220" height="170" rx="12"/>
+  <text class="ttl on-g" x="630" y="86" text-anchor="middle">Leaflet 地图（命令式）</text>
+  <text class="mono sm" x="540" y="114">map.setView()</text>
+  <text class="mono sm" x="540" y="136">L.marker().addTo()</text>
+  <text class="mono sm" x="540" y="158">map.on('click')</text>
+  <text class="mono sm" x="540" y="180">map.on('moveend')</text>
+  <text class="mono sm" x="540" y="202">map.on('locationfound')</text>
+
+  <rect class="bx-b" x="280" y="20" width="200" height="250" rx="12"/>
+  <text class="ttl on-b" x="380" y="44" text-anchor="middle">BlogMap.vue（桥）</text>
+  <path class="ln-a" d="M242 110 H516" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="380" y="104" text-anchor="middle">watch(store) → 调用地图 API</text>
+  <path class="ln-a" d="M242 160 H516" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="380" y="154" text-anchor="middle">watch(posts) → 重画标记</text>
+  <path class="ln-g" d="M516 200 H244" marker-end="url(#ar)"/>
+  <text class="halo sm on-g" x="380" y="194" text-anchor="middle">地图事件 → 调用 store action</text>
+  <text class="sm" x="380" y="236" text-anchor="middle">onMounted：创建地图</text>
+  <text class="sm" x="380" y="254" text-anchor="middle">onBeforeUnmount：map.remove()</text>
+</svg>
+<figcaption>图 6-5　集成第三方库：数据 → API（watch），事件 → 数据（action）</figcaption>
+</figure>
+
+<h3>地图 store</h3>
+
+<div class="code" data-lang="js" data-file="src/stores/map.js"><pre>
+import { defineStore } from 'pinia'
+import { ref } from 'vue'
+import { usePostsStore } from './posts'
+
+export const useMapStore = defineStore('map', () =&gt; {
+  // 注意：只存普通的 { lat, lng } 对象，不存 Leaflet 的类实例
+  const center = ref({ lat: 48.8538302, lng: 2.2982161 })   // 巴黎埃菲尔铁塔
+  const zoom = ref(15)
+  const userPosition = ref(null)
+
+  function setCenter(value) { center.value = value }
+  function setZoom(value) { zoom.value = value }
+
+  function setUserPosition(value) {
+    const first = !userPosition.value
+    userPosition.value = value
+    if (first) centerOnUser()          // 第一次拿到位置时，自动居中
+  }
+
+  function centerOnUser() {
+    if (userPosition.value) setCenter({ ...userPosition.value })
+  }
+
+  // 地图移动结束：让帖子 store 去加载可见范围内的帖子
+  function setBounds(bounds) {
+    usePostsStore().fetchPosts({ mapBounds: bounds })
+  }
+
+  return { center, zoom, userPosition, setCenter, setZoom, setUserPosition, centerOnUser, setBounds }
+})
+</pre></div>
+
+<h3>地图组件</h3>
+
+<div class="code" data-lang="vue" data-file="src/components/BlogMap.vue"><pre>
+&lt;script setup&gt;
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
+import { useMapStore } from '../stores/map'
+import { usePostsStore } from '../stores/posts'
+
+const mapStore = useMapStore()
+const postsStore = usePostsStore()
+
+const el = ref(null)   // 模板引用：地图容器
+let map = null         // ⚠ 普通变量，不要放进 ref/reactive（原因见下文）
+let postsLayer = null
+let draftMarker = null
+
+// Leaflet 对象 → 普通对象
+const toLatLng = ({ lat, lng }) =&gt; ({ lat, lng })
+const toBounds = (b) =&gt; ({ ne: toLatLng(b.getNorthEast()), sw: toLatLng(b.getSouthWest()) })
+
+// 用 Material Icons 做标记图标（也顺便绕开了 Leaflet 默认图标在打包工具里的路径问题）
+const icon = (name, cls = '') =&gt; L.divIcon({
+  className: `map-marker ${cls}`,
+  html: `&lt;i class="material-icons"&gt;${name}&lt;/i&gt;`,
+  iconSize: [32, 32],
+  iconAnchor: [16, 32],
+})
+
+onMounted(() =&gt; {
+  // ① 创建地图
+  map = L.map(el.value, { zoomControl: false })
+    .setView(mapStore.center, mapStore.zoom)
+
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&amp;copy; OpenStreetMap contributors',
+  }).addTo(map)
+
+  postsLayer = L.layerGroup().addTo(map)
+
+  // ② 地图事件 → store
+  map.on('moveend', () =&gt; {
+    mapStore.setCenter(toLatLng(map.getCenter()))
+    mapStore.setZoom(map.getZoom())
+    mapStore.setBounds(toBounds(map.getBounds()))
+  })
+  map.on('click', (e) =&gt; {
+    postsStore.setDraftLocation({ position: toLatLng(e.latlng) })
+  })
+
+  // 用户位置（浏览器会请求定位权限）
+  map.on('locationfound', (e) =&gt; mapStore.setUserPosition(toLatLng(e.latlng)))
+  map.locate({ watch: true })
+
+  mapStore.setBounds(toBounds(map.getBounds()))
+  renderPosts()
+})
+
+// ③ store → 地图
+watch(() =&gt; mapStore.center, (c) =&gt; {
+  if (!map) return
+  const cur = map.getCenter()
+  if (cur.lat !== c.lat || cur.lng !== c.lng) map.setView(c)   // 避免和 moveend 互相触发
+})
+
+function renderPosts() {
+  postsLayer.clearLayers()
+  for (const post of postsStore.posts) {
+    const selected = post._id === postsStore.currentPost?._id
+    L.marker(post.position, { icon: icon('face', selected ? 'selected' : ''), zIndexOffset: 5 })
+      .on('click', () =&gt; postsStore.selectPost(post._id))
+      .addTo(postsLayer)
+  }
+}
+// 列表被替换、新增一项、或选中项变化时重画（length 让 push 也能触发）
+watch(() =&gt; [postsStore.posts, postsStore.posts.length, postsStore.currentPost], renderPosts)
+
+// 草稿的“虚影”标记
+watch(() =&gt; postsStore.draft?.position, (pos) =&gt; {
+  draftMarker?.remove()
+  draftMarker = pos
+    ? L.marker(pos, { icon: icon('add_circle', 'draft'), opacity: 0.75, interactive: false }).addTo(map)
+    : null
+})
+
+// ④ 清理
+onBeforeUnmount(() =&gt; {
+  map.remove()
+  map = null
+})
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="blog-map" ref="el"&gt;&lt;/div&gt;
+&lt;/template&gt;
+
+&lt;style scoped&gt;
+.blog-map { flex: 1; height: 100%; }
+:deep(.map-marker) { color: #333; text-shadow: 0 1px 3px #fff; }
+:deep(.map-marker.selected) { color: #fff; text-shadow: 0 1px 3px #000; }
+:deep(.map-marker.draft) { color: #42b883; }
+&lt;/style&gt;
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; 为什么地图实例不能放进 ref()</div>
+  <p>
+    <code>ref()</code> / <code>reactive()</code> 会把对象<strong>深度</strong>包装成 Proxy。Leaflet 的地图对象内部有成千上万个属性和 DOM 引用，
+    被代理后不仅性能很差，库内部 <code>this === map</code> 之类的身份比较还可能失败，导致各种诡异 bug。第三方库的实例要么用普通变量保存，
+    要么用 <code>shallowRef()</code>（只追踪 <code>.value</code> 的替换）或 <code>markRaw(obj)</code>（标记为永不代理）。
+    同理，store 里只存 <code>{ lat, lng }</code> 这样的普通数据。
+  </p>
+</div>
+
+<p>把地图和菜单放进主页面：</p>
+
+<div class="code" data-lang="vue" data-file="src/components/GeoBlog.vue"><pre>
+&lt;script setup&gt;
+import AppMenu from './AppMenu.vue'
+import BlogMap from './BlogMap.vue'
+import BlogContent from './content/BlogContent.vue'
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="geo-blog"&gt;
+    &lt;AppMenu /&gt;
+    &lt;div class="panes"&gt;
+      &lt;BlogMap /&gt;
+      &lt;BlogContent /&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 关于 OSM 瓦片和地理编码的使用政策</div>
+  <p>
+    OpenStreetMap 官方的瓦片服务器和 Nominatim 地理编码服务由志愿者维护，适合学习和小流量使用，但禁止大规模商用。
+    正式上线的产品请使用商业瓦片服务（MapTiler、Stadia Maps 等，同样兼容 Leaflet）或自建服务，并保留版权署名。
+  </p>
+</div>
+
+<h2 id="posts">帖子与评论</h2>
+
+<h3>帖子 store</h3>
+
+<div class="code" data-lang="js" data-file="src/stores/posts.js（state 与 getters）"><pre>
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
+import { $fetch } from '../plugins/fetch'
+import { useUserStore } from './user'
+
+let fetchPostsUid = 0
+
+export const usePostsStore = defineStore('posts', () =&gt; {
+  const draft = ref(null)                 // 正在创建的帖子
+  const mapBounds = ref(null)             // 上次加载时的地图范围（避免重复加载）
+  const posts = ref([])                   // 该范围内的帖子
+  const selectedPostId = ref(null)        // 选中的帖子 id
+  const selectedPostDetails = ref(null)   // 选中帖子的详情（含评论）
+
+  const selectedPost = computed(() =&gt;
+    posts.value.find(p =&gt; p._id === selectedPostId.value))
+
+  // 草稿优先于选中的帖子
+  const currentPost = computed(() =&gt; draft.value || selectedPost.value)
+
+  // ...actions 见下文
+
+  return {
+    draft, mapBounds, posts, selectedPostId, selectedPostDetails,
+    selectedPost, currentPost,
+    // actions...
+  }
+})
+</pre></div>
+
+<h3>右侧面板：根据状态切换组件</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="内容面板的三种状态及其切换">
+  <rect class="bx" x="20" y="90" width="180" height="70" rx="12"/>
+  <text class="ttl" x="110" y="118" text-anchor="middle">NoContent</text>
+  <text class="sm" x="110" y="140" text-anchor="middle">currentPost 为空</text>
+
+  <rect class="bx-a" x="290" y="20" width="180" height="70" rx="12"/>
+  <text class="ttl on-a" x="380" y="48" text-anchor="middle">CreatePost</text>
+  <text class="sm" x="380" y="70" text-anchor="middle">有 draft</text>
+
+  <rect class="bx-b" x="290" y="160" width="180" height="70" rx="12"/>
+  <text class="ttl on-b" x="380" y="188" text-anchor="middle">PostContent</text>
+  <text class="sm" x="380" y="210" text-anchor="middle">有 selectedPost</text>
+
+  <path class="ln-a" d="M202 110 L286 66" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="220" y="76">点击地图空白处</text>
+  <path class="ln-b" d="M202 140 L286 186" marker-end="url(#ar)"/>
+  <text class="halo sm on-b" x="214" y="186">点击标记</text>
+  <path class="ln-b" d="M380 92 V156" marker-end="url(#ar)"/>
+  <text class="halo sm" x="390" y="130">发布成功：自动选中新帖子</text>
+  <path class="ln" d="M472 46 C560 46 560 110 470 110 H204" marker-end="url(#ar)"/>
+  <text class="halo sm" x="560" y="90">丢弃草稿</text>
+  <path class="ln" d="M472 206 C620 206 620 125 204 125" marker-end="url(#ar)"/>
+  <text class="halo sm" x="620" y="170">关闭</text>
+</svg>
+<figcaption>图 6-6　内容面板是一个由 store 驱动的小状态机</figcaption>
+</figure>
+
+<p>原书用 JSX 写这个组件来练习渲染函数。模板 + 动态组件同样简洁：</p>
+
+<div class="code" data-lang="vue" data-file="src/components/content/BlogContent.vue"><pre>
+&lt;script setup&gt;
+import { computed } from 'vue'
+import { usePostsStore } from '../../stores/posts'
+import LocationInfo from './LocationInfo.vue'
+import NoContent from './NoContent.vue'
+import CreatePost from './CreatePost.vue'
+import PostContent from './PostContent.vue'
+
+const postsStore = usePostsStore()
+
+const content = computed(() =&gt; {
+  if (!postsStore.currentPost) return NoContent
+  if (postsStore.draft) return CreatePost
+  return PostContent
+})
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="blog-content" :class="{ 'has-content': postsStore.currentPost }"&gt;
+    &lt;LocationInfo /&gt;
+    &lt;component :is="content" /&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>注意这里 <code>:is</code> 接收的是<strong>组件对象</strong>，而不是第 3 章那样的字符串名字 —— 在 SFC 里这是更常见的用法，不需要全局注册。</p>
+
+<div class="code" data-lang="vue" data-file="src/components/content/NoContent.vue"><pre>
+&lt;template&gt;
+  &lt;div class="no-content"&gt;
+    &lt;i class="material-icons"&gt;explore&lt;/i&gt;
+    &lt;div class="hint"&gt;点击地图，在那里发一篇帖子&lt;/div&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<h3>创建帖子</h3>
+
+<p>草稿相关的 actions：</p>
+
+<div class="code" data-lang="js" data-file="src/stores/posts.js（草稿 actions）"><pre>
+function clearDraft() {
+  draft.value = null
+}
+
+function createDraft() {
+  draft.value = { title: '', content: '', position: null, placeId: null }
+}
+
+// 点击地图时调用：没有草稿就先创建，再更新位置
+function setDraftLocation({ position, placeId = null }) {
+  if (!draft.value) createDraft()
+  Object.assign(draft.value, { position, placeId })
+}
+
+async function createPost() {
+  const result = await $fetch('posts/new', {
+    method: 'POST',
+    body: JSON.stringify(draft.value),
+  })
+  clearDraft()
+  posts.value.push(result)     // 加入列表
+  selectPost(result._id)       // 并选中它
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 不需要 toJSON 了</div>
+  <p>
+    原书提交前要调用 <code>draft.position.toJSON()</code>，因为 Google Maps 的位置是一个类实例。我们从一开始就只在 store 里存普通的 <code>{ lat, lng }</code>，
+    可以直接 <code>JSON.stringify</code>。这也是“store 里只放纯数据”的又一个好处。
+  </p>
+</div>
+
+<p>发帖表单。因为 Pinia 的 state 可以直接修改，表单可以用 <code>v-model</code> 直接绑定到 store 里的草稿上：</p>
+
+<div class="code" data-lang="vue" data-file="src/components/content/CreatePost.vue"><pre>
+&lt;script setup&gt;
+import { computed } from 'vue'
+import { usePostsStore } from '../../stores/posts'
+
+const postsStore = usePostsStore()
+
+const formValid = computed(() =&gt; postsStore.draft.title &amp;&amp; postsStore.draft.content)
+
+function handleSubmit() {
+  if (formValid.value) postsStore.createPost()
+}
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;form class="create-post" @submit.prevent="handleSubmit"&gt;
+    &lt;input name="title" v-model="postsStore.draft.title" placeholder="标题" required&gt;
+    &lt;textarea name="content" v-model="postsStore.draft.content" placeholder="内容" required /&gt;
+    &lt;div class="actions"&gt;
+      &lt;button type="button" class="secondary" @click="postsStore.clearDraft()"&gt;
+        &lt;i class="material-icons"&gt;delete&lt;/i&gt; 丢弃
+      &lt;/button&gt;
+      &lt;button type="submit" :disabled="!formValid"&gt;
+        &lt;i class="material-icons"&gt;save&lt;/i&gt; 发布
+      &lt;/button&gt;
+    &lt;/div&gt;
+  &lt;/form&gt;
+&lt;/template&gt;
+</pre></div>
+
+<details class="box deep">
+<summary class="t" style="cursor:pointer">&#128269; 原书的“可写计算属性”技巧仍然有用（点击展开）</summary>
+<p>
+  Vuex 不允许直接修改 state，所以原书用了带 <code>get</code>/<code>set</code> 的计算属性：读的时候走 getter，写的时候调用 action。
+  这个技巧在 Vue 3 里依然成立，比如当你想在写入时做转换、校验或防抖时：
+</p>
+<div class="code" data-lang="js"><pre>
+const title = computed({
+  get: () =&gt; postsStore.draft.title,
+  set: (value) =&gt; postsStore.updateDraft({ title: value.trimStart() }),
+})
+// 模板里：&lt;input v-model="title"&gt;
+</pre></div>
+</details>
+
+<h3>加载帖子：处理竞态条件</h3>
+
+<p>
+  每次地图移动结束，都要加载可见范围内的帖子。这里有一个经典问题：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="两个请求的响应乱序到达导致旧数据覆盖新数据，用请求编号丢弃过期响应">
+  <path class="ln" d="M60 40 H740" marker-end="url(#ar)"/>
+  <text class="sm" x="740" y="30" text-anchor="end">时间 →</text>
+  <text class="sm" x="20" y="44">用户</text>
+  <circle class="bx-b" cx="110" cy="40" r="6"/><text class="sm on-b" x="110" y="26" text-anchor="middle">移动地图</text>
+  <circle class="bx-b" cx="260" cy="40" r="6"/><text class="sm on-b" x="260" y="26" text-anchor="middle">再次移动</text>
+
+  <text class="sm" x="20" y="94">请求 A</text>
+  <rect class="bx" x="110" y="80" width="470" height="24" rx="5"/>
+  <text class="sm" x="345" y="97" text-anchor="middle">很慢……（id = 1）</text>
+  <text class="sm" x="20" y="134">请求 B</text>
+  <rect class="bx-g" x="260" y="120" width="160" height="24" rx="5"/>
+  <text class="sm on-g" x="340" y="137" text-anchor="middle">很快（id = 2）</text>
+
+  <path class="ln-g" d="M420 146 V176" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="340" y="180" width="160" height="40" rx="6"/>
+  <text class="sm on-g" x="420" y="198" text-anchor="middle">显示 B 的帖子 ✓</text>
+  <text class="sm" x="420" y="214" text-anchor="middle">2 === 当前 id</text>
+  <path class="ln-r" d="M580 106 V176" marker-end="url(#ar)"/>
+  <rect class="bx-r" x="520" y="180" width="200" height="40" rx="6"/>
+  <text class="sm on-r" x="620" y="198" text-anchor="middle">A 的响应晚到：丢弃</text>
+  <text class="sm" x="620" y="214" text-anchor="middle">1 !== 当前 id(2)</text>
+  <text class="lbl" x="200" y="200" text-anchor="middle">没有这个检查，</text>
+  <text class="lbl" x="200" y="218" text-anchor="middle">旧的 A 会覆盖新的 B</text>
+</svg>
+<figcaption>图 6-7　竞态条件：给每个请求编号，只采纳最新的</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="src/stores/posts.js（加载帖子）"><pre>
+const sameBounds = (a, b) =&gt; a &amp;&amp; b &amp;&amp;
+  a.ne.lat === b.ne.lat &amp;&amp; a.ne.lng === b.ne.lng &amp;&amp;
+  a.sw.lat === b.sw.lat &amp;&amp; a.sw.lng === b.sw.lng
+
+async function fetchPosts({ mapBounds: bounds, force = false }) {
+  if (!force &amp;&amp; sameBounds(mapBounds.value, bounds)) return   // 范围没变，不重复加载
+
+  const requestId = ++fetchPostsUid
+  const { ne, sw } = bounds
+  const query = new URLSearchParams({
+    ne: `${ne.lat},${ne.lng}`,
+    sw: `${sw.lat},${sw.lng}`,
+  })
+  const result = await $fetch(`posts?${query}`)
+
+  // 期间又发起了新的请求？那这个结果已经过期了
+  if (requestId === fetchPostsUid) {
+    posts.value = result
+    mapBounds.value = bounds
+  }
+}
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; URLSearchParams</div>
+  <p>原书手动拼接查询字符串并调用 <code>encodeURIComponent</code>。浏览器内置的 <code>URLSearchParams</code> 会自动编码，更不容易出错。</p>
+</div>
+
+<h3>登录与登出时的处理</h3>
+
+<div class="code" data-lang="js" data-file="src/stores/posts.js"><pre>
+// 登出：清空数据，下次登录会重新加载
+function reset() {
+  posts.value = []
+  mapBounds.value = null
+  selectedPostDetails.value = null
+}
+
+// 登录后：重新加载帖子，并恢复之前选中的帖子
+function onLoggedIn() {
+  if (mapBounds.value) fetchPosts({ mapBounds: mapBounds.value, force: true })
+  if (selectedPostId.value) selectPost(selectedPostId.value)
+}
+</pre></div>
+
+<h3>选中帖子与详情</h3>
+
+<div class="code" data-lang="js" data-file="src/stores/posts.js"><pre>
+async function selectPost(id) {
+  selectedPostDetails.value = null
+  selectedPostId.value = id
+  const details = await $fetch(`posts/${id}`)
+  if (selectedPostId.value === id) {          // 同样要防止快速切换时的乱序
+    selectedPostDetails.value = details
+  }
+}
+
+function unselectPost() {
+  selectedPostId.value = null
+}
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="src/components/content/PostContent.vue（初版）"><pre>
+&lt;script setup&gt;
+import { storeToRefs } from 'pinia'
+import { usePostsStore } from '../../stores/posts'
+import { formatDate } from '../../utils/format'
+
+const postsStore = usePostsStore()
+// 解构出一个短名字，同时保持响应性
+const { selectedPostDetails: details } = storeToRefs(postsStore)
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="post-content"&gt;
+    &lt;template v-if="details"&gt;
+      &lt;div class="title"&gt;
+        &lt;img :src="details.author.profile.photos[0].value"&gt;
+        &lt;span&gt;
+          &lt;span&gt;{{ details.title }}&lt;/span&gt;
+          &lt;span class="info"&gt;
+            &lt;span class="name"&gt;{{ details.author.profile.displayName }}&lt;/span&gt;
+            &lt;span class="date"&gt;{{ formatDate(details.date) }}&lt;/span&gt;
+          &lt;/span&gt;
+        &lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div class="content"&gt;{{ details.content }}&lt;/div&gt;
+      &lt;!-- 评论稍后添加 --&gt;
+      &lt;div class="actions"&gt;
+        &lt;button type="button" class="icon-button secondary" @click="postsStore.unselectPost()"&gt;
+          &lt;i class="material-icons"&gt;close&lt;/i&gt;
+        &lt;/button&gt;
+      &lt;/div&gt;
+    &lt;/template&gt;
+    &lt;Loading v-else /&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>帖子详情加载完成前显示 <code>Loading</code>（从上一章复制过来，并注册为全局组件）。</p>
+
+<h2 id="scoped-slots">地点信息与作用域插槽</h2>
+
+<p>
+  右侧面板顶部要显示帖子所在地点的名称和地址。原书使用 vue-googlemaps 提供的 <code>&lt;googlemaps-geocoder&gt;</code> 组件，它通过<strong>作用域插槽</strong>把地理编码结果交给你。
+  我们没有现成的组件 —— 那就自己写一个，这正是理解作用域插槽的最好方式。
+</p>
+
+<h3>什么是作用域插槽</h3>
+
+<p>
+  普通插槽：父组件决定“放什么内容”，但内容只能使用<strong>父组件</strong>的数据。
+  作用域插槽：子组件在 <code>&lt;slot&gt;</code> 上绑定属性，把<strong>子组件的数据</strong>传给插槽内容使用。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="作用域插槽：子组件把数据通过 slot 属性传给父组件提供的插槽内容">
+  <rect class="bx-g" x="20" y="20" width="320" height="140" rx="12"/>
+  <text class="ttl on-g" x="180" y="44" text-anchor="middle">子组件 ReverseGeocode</text>
+  <text class="sm" x="40" y="70">负责“取数据”：</text>
+  <text class="mono sm" x="40" y="92">const result = ref(null)</text>
+  <text class="mono sm" x="40" y="112">// 根据 position 请求地址……</text>
+  <rect class="bx-a" x="40" y="122" width="280" height="28" rx="6"/>
+  <text class="mono sm on-a" x="180" y="141" text-anchor="middle">&lt;slot :result="result" :loading /&gt;</text>
+
+  <rect class="bx-b" x="420" y="20" width="320" height="140" rx="12"/>
+  <text class="ttl on-b" x="580" y="44" text-anchor="middle">父组件 LocationInfo</text>
+  <text class="sm" x="440" y="70">负责“怎么显示”：</text>
+  <text class="mono sm" x="440" y="94">&lt;ReverseGeocode :position</text>
+  <rect class="bx-a" x="456" y="102" width="270" height="22" rx="4"/>
+  <text class="mono sm on-a" x="466" y="118">v-slot="{ result, loading }"&gt;</text>
+  <text class="mono sm" x="456" y="144">&lt;PlaceDetails :name="result.name"/&gt;</text>
+
+  <path class="ln-a" d="M322 136 C380 136 400 113 452 113" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="380" y="176" text-anchor="middle">数据“向上”流进插槽内容</text>
+
+  <rect class="bx" x="20" y="200" width="720" height="86" rx="12"/>
+  <text class="ttl" x="380" y="224" text-anchor="middle">好处：逻辑和外观彻底分离</text>
+  <text class="sm" x="380" y="248" text-anchor="middle">同一个 ReverseGeocode 可以在这里显示成卡片，在别处显示成一行小字、或者 tooltip</text>
+  <text class="sm" x="380" y="270" text-anchor="middle">这种“只提供数据、不渲染自身外观”的组件被称为“无渲染组件（renderless component）”</text>
+</svg>
+<figcaption>图 6-8　作用域插槽：子组件出数据，父组件出外观</figcaption>
+</figure>
+
+<h3>实现一个无渲染的地理编码组件</h3>
+
+<p>我们用 OpenStreetMap 的 Nominatim 服务做“反向地理编码”（坐标 → 地址）：</p>
+
+<div class="code" data-lang="vue" data-file="src/components/content/ReverseGeocode.vue"><pre>
+&lt;script setup&gt;
+import { ref, watch, onWatcherCleanup } from 'vue'
+
+const props = defineProps({
+  position: { type: Object, required: true },   // { lat, lng }
+})
+
+const result = ref(null)
+const loading = ref(false)
+
+watch(() =&gt; props.position, async ({ lat, lng }) =&gt; {
+  const controller = new AbortController()
+  onWatcherCleanup(() =&gt; controller.abort())   // 位置变了：取消上一次请求（Vue 3.5+）
+
+  loading.value = true
+  result.value = null
+  try {
+    const params = new URLSearchParams({ format: 'jsonv2', lat, lon: lng, 'accept-language': 'zh-CN' })
+    const response = await fetch(`https://nominatim.openstreetmap.org/reverse?${params}`,
+                                 { signal: controller.signal })
+    result.value = await response.json()
+  } catch (e) {
+    if (e.name !== 'AbortError') console.error(e)
+  } finally {
+    loading.value = false
+  }
+}, { immediate: true, deep: true })
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;!-- 不渲染任何自己的元素，只把数据交给插槽 --&gt;
+  &lt;slot :result="result" :loading="loading" /&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>再写一个负责显示的小组件（稍后的“渲染函数”一节会把它改写成 JSX）：</p>
+
+<div class="code" data-lang="vue" data-file="src/components/content/PlaceDetails.vue"><pre>
+&lt;script setup&gt;
+defineProps({
+  name: String,
+  address: String,
+})
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="details"&gt;
+    &lt;div class="name"&gt;&lt;i class="material-icons"&gt;place&lt;/i&gt; {{ name }}&lt;/div&gt;
+    &lt;div class="address"&gt;{{ address }}&lt;/div&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>最后组合起来：</p>
+
+<div class="code" data-lang="vue" data-file="src/components/content/LocationInfo.vue"><pre>
+&lt;script setup&gt;
+import { usePostsStore } from '../../stores/posts'
+import ReverseGeocode from './ReverseGeocode.vue'
+import PlaceDetails from './PlaceDetails.vue'
+
+const postsStore = usePostsStore()
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="location-info" v-if="postsStore.currentPost?.position"&gt;
+    &lt;ReverseGeocode :position="postsStore.currentPost.position" v-slot="{ result, loading }"&gt;
+      &lt;div v-if="loading" class="hint"&gt;正在查询地址……&lt;/div&gt;
+      &lt;PlaceDetails v-else-if="result"
+                    :name="result.name || result.address?.road || '未命名地点'"
+                    :address="result.display_name" /&gt;
+    &lt;/ReverseGeocode&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="vs">
+  <div class="old"><div class="h">原书 · Vue 2：slot-scope</div>
+<div class="code" data-lang="html"><pre>
+&lt;googlemaps-geocoder :request="..."&gt;
+  &lt;PlaceDetails
+    slot-scope="props"
+    v-if="props.results"
+    :name="props.results[1].placeDetails.name" /&gt;
+&lt;/googlemaps-geocoder&gt;
+</pre></div></div>
+  <div class="new"><div class="h">Vue 3：v-slot（可解构）</div>
+<div class="code" data-lang="html"><pre>
+&lt;ReverseGeocode :position="..."
+                v-slot="{ result }"&gt;
+  &lt;PlaceDetails
+    v-if="result"
+    :name="result.name" /&gt;
+&lt;/ReverseGeocode&gt;
+</pre></div></div>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 语法统一了</div>
+  <p>
+    <code>slot-scope</code> 和 <code>slot</code> 属性在 Vue 3 中都被移除，统一为 <code>v-slot</code>（简写 <code>#</code>）。
+    只有默认插槽时，<code>v-slot</code> 可以直接写在组件标签上（如上）；有多个插槽时，每个都用 <code>&lt;template #名字="数据"&gt;</code>。
+    作用域插槽在列表组件里特别有用：<code>&lt;slot v-for="item in items" :item="item" /&gt;</code> 让使用者决定每一项怎么显示。
+  </p>
+</div>
+
+<h2 id="render">渲染函数与 JSX（Vue 3 版）</h2>
+
+<p>
+  第 4 章已经简单介绍过：模板最终都会被编译成渲染函数。现在深入一点。先看原书的经典例子 —— 一个可以渲染任意级别标题的组件。用模板写会很啰嗦：
+</p>
+
+<div class="code" data-lang="vue" data-file="用模板写（啰嗦）"><pre>
+&lt;template&gt;
+  &lt;h1 v-if="level === 1"&gt;&lt;slot /&gt;&lt;/h1&gt;
+  &lt;h2 v-else-if="level === 2"&gt;&lt;slot /&gt;&lt;/h2&gt;
+  &lt;h3 v-else-if="level === 3"&gt;&lt;slot /&gt;&lt;/h3&gt;
+  &lt;!-- ……一直写到 h6 --&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>用渲染函数，一行就够了：</p>
+
+<div class="code" data-lang="js" data-file="MyTitle.js"><pre>
+import { h } from 'vue'
+
+export default {
+  props: ['level'],
+  setup(props, { slots }) {
+    // setup 返回一个函数 = 渲染函数，每次需要重新渲染时调用
+    return () =&gt; h(
+      `h${props.level}`,                                 // 标签名
+      { class: { 'important-title': props.level &lt;= 3 },  // 属性
+        onClick: () =&gt; console.log('你点击了标题') },
+      slots.default?.(),                                 // 子节点：默认插槽的内容
+    )
+  },
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 222" role="img" aria-label="h 函数的三个参数如何对应到生成的 VNode 和 DOM">
+  <text class="mono" x="20" y="40" style="font-size:14px">h(<tspan class="on-a">'h2'</tspan>, <tspan class="on-b">{ class: 'important-title', onClick }</tspan>, <tspan class="on-g">slots.default()</tspan>)</text>
+  <path class="ln-a" d="M60 50 V80"/><text class="sm on-a" x="60" y="96" text-anchor="middle">① 类型</text>
+  <text class="sm" x="60" y="112" text-anchor="middle">标签名或组件对象</text>
+  <path class="ln-b" d="M260 50 V80"/><text class="sm on-b" x="260" y="96" text-anchor="middle">② 属性 / props / 事件</text>
+  <text class="sm" x="260" y="112" text-anchor="middle">Vue 3 里全部扁平地写在一个对象里</text>
+  <path class="ln-g" d="M480 50 V80"/><text class="sm on-g" x="480" y="96" text-anchor="middle">③ 子节点</text>
+  <text class="sm" x="480" y="112" text-anchor="middle">文本、VNode 数组、插槽函数的返回值</text>
+
+  <rect class="bx" x="20" y="140" width="720" height="72" rx="10"/>
+  <text class="ttl" x="40" y="164">Vue 2 → Vue 3 的变化</text>
+  <text class="sm" x="40" y="186">h 从参数变为 import；data 对象扁平化（不再有 attrs/props/on/domProps 分组）；</text>
+  <text class="sm" x="40" y="204">this.$slots.default 从数组变成函数，要调用 slots.default()；nativeOn 移除</text>
+</svg>
+<figcaption>图 6-9　Vue 3 的 h() 函数</figcaption>
+</figure>
+
+<div class="vs">
+  <div class="old"><div class="h">原书 · Vue 2 data 对象</div>
+<div class="code" data-lang="js"><pre>
+h('input', {
+  'class': { foo: true },
+  attrs: { id: 'foo' },
+  domProps: { value: this.text },
+  on: { input: this.onInput },
+  nativeOn: { click: ... },
+})
+</pre></div></div>
+  <div class="new"><div class="h">Vue 3 扁平化的属性</div>
+<div class="code" data-lang="js"><pre>
+h('input', {
+  class: { foo: true },
+  id: 'foo',
+  value: text.value,
+  onInput: onInput,
+  // nativeOn 不再需要（见第 3 章透传）
+})
+</pre></div></div>
+</div>
+
+<h3>JSX 写法</h3>
+
+<p>
+  在 create-vue 里勾选了“JSX 支持”（或安装 <code>@vitejs/plugin-vue-jsx</code>）后，可以用 JSX 写同样的东西。原书的 <code>PlaceDetails</code> 用 JSX 写是这样：
+</p>
+
+<div class="code" data-lang="jsx" data-file="src/components/content/PlaceDetails.jsx"><pre>
+import { defineComponent } from 'vue'
+
+export default defineComponent({
+  props: {
+    name: String,
+    address: String,
+  },
+  setup(props) {
+    return () =&gt; (
+      &lt;div class="details"&gt;
+        &lt;div class="name"&gt;&lt;i class="material-icons"&gt;place&lt;/i&gt; {props.name}&lt;/div&gt;
+        &lt;div class="address"&gt;{props.address}&lt;/div&gt;
+      &lt;/div&gt;
+    )
+  },
+})
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; JSX 里的大小写</div>
+  <p>
+    小写开头的标签（<code>&lt;div&gt;</code>）被当作 HTML 元素；大写开头的（<code>&lt;PlaceDetails /&gt;</code>）被当作作用域里的<strong>变量</strong>，
+    所以可以直接用 import 进来的组件，甚至用一个变量动态决定渲染哪个组件：<code>const Content = cond ? A : B; return &lt;Content /&gt;</code>。
+    另外，Vue 3 的 JSX 用的是 <code>class</code>（不是 React 的 <code>className</code>），事件写成 <code>onClick</code>。
+  </p>
+</div>
+
+<h2 id="functional">评论：函数式组件</h2>
+
+<h3>评论相关的 action</h3>
+
+<div class="code" data-lang="js" data-file="src/stores/posts.js"><pre>
+async function sendComment({ post, comment }) {
+  const user = useUserStore().user      // 从另一个 store 读当前用户
+  // 乐观更新：先把评论显示出来，不等服务器
+  post.comments.push({
+    ...comment,
+    date: new Date(),
+    user_id: user._id,
+    author: user,
+  })
+  await $fetch(`posts/${post._id}/comment`, {
+    method: 'POST',
+    body: JSON.stringify(comment),
+  })
+}
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 乐观更新（optimistic update）</div>
+  <p>先更新界面、再发请求，用户感觉“瞬间完成”。代价是请求失败时要回滚（把刚加的评论删掉并提示用户）—— 留作练习。</p>
+</div>
+
+<h3>函数式组件</h3>
+
+<p>
+  原书介绍了 Vue 2 的<strong>函数式组件</strong>：没有自己的状态、没有实例，因此比普通组件更快、更省内存，适合评论这种可能大量出现的简单展示组件。
+  在 Vue 3 里，函数式组件变得更简单了 —— <strong>它就是一个普通函数</strong>：
+</p>
+
+<div class="code" data-lang="jsx" data-file="src/components/content/Comment.jsx"><pre>
+import { formatDate } from '../../utils/format'
+
+// 参数：props 和上下文 { slots, emit, attrs }；返回值：要渲染的内容
+export default function Comment({ comment }) {
+  return (
+    &lt;div class="comment"&gt;
+      &lt;img class="avatar" src={comment.author.profile.photos[0].value} /&gt;
+      &lt;div class="message"&gt;
+        &lt;div class="info"&gt;
+          &lt;span class="name"&gt;{comment.author.profile.displayName}&lt;/span&gt;
+          &lt;span class="date"&gt;{formatDate(comment.date)}&lt;/span&gt;
+        &lt;/div&gt;
+        &lt;div class="content"&gt;{comment.content}&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  )
+}
+
+Comment.props = ['comment']   // 可选：声明 props
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="普通组件与函数式组件的对比">
+  <rect class="bx-b" x="20" y="20" width="340" height="170" rx="12"/>
+  <text class="ttl on-b" x="190" y="46" text-anchor="middle">普通（有状态）组件</text>
+  <text class="sm" x="40" y="74">✓ 可以有自己的 ref、computed、watch</text>
+  <text class="sm" x="40" y="96">✓ 生命周期钩子</text>
+  <text class="sm" x="40" y="118">✓ 在 DevTools 组件树里可见</text>
+  <text class="sm" x="40" y="140">· 每个实例都要创建响应式上下文</text>
+  <text class="sm" x="40" y="168">绝大多数情况都用它</text>
+
+  <rect class="bx-a" x="400" y="20" width="340" height="170" rx="12"/>
+  <text class="ttl on-a" x="570" y="46" text-anchor="middle">函数式组件</text>
+  <text class="mono sm" x="420" y="74">(props, ctx) =&gt; VNode</text>
+  <text class="sm" x="420" y="96">· 没有状态、没有实例、没有生命周期</text>
+  <text class="sm" x="420" y="118">· 输入 props，输出 VNode，像纯函数</text>
+  <text class="sm" x="420" y="140">· Vue 3 中性能优势已经很小</text>
+  <text class="sm" x="420" y="168">适合极简的展示型组件</text>
+</svg>
+<figcaption>图 6-10　函数式组件就是“props → VNode”的纯函数</figcaption>
+</figure>
+
+<div class="box key">
+  <div class="t">&#9733; Vue 3 变化：函数式组件不再是性能利器</div>
+  <p>
+    Vue 3 大幅优化了普通组件的创建开销，官方文档明确指出：普通组件和函数式组件的性能差异已经可以忽略不计。
+    <code>functional: true</code> 选项和 <code>&lt;template functional&gt;</code> 写法都被<strong>移除</strong>了。
+    所以评论组件写成普通的 SFC 完全没问题；函数式组件现在主要是一种“写起来更轻”的风格选择。
+  </p>
+</div>
+
+<p>等价的普通 SFC 写法：</p>
+
+<div class="code" data-lang="vue" data-file="src/components/content/Comment.vue（普通组件版）"><pre>
+&lt;script setup&gt;
+import { formatDate } from '../../utils/format'
+defineProps(['comment'])
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="comment"&gt;
+    &lt;img class="avatar" :src="comment.author.profile.photos[0].value"&gt;
+    &lt;div class="message"&gt;
+      &lt;div class="info"&gt;
+        &lt;span class="name"&gt;{{ comment.author.profile.displayName }}&lt;/span&gt;
+        &lt;span class="date"&gt;{{ formatDate(comment.date) }}&lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div class="content"&gt;{{ comment.content }}&lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<h3>完成 PostContent</h3>
+
+<div class="code" data-lang="vue" data-file="src/components/content/PostContent.vue（最终版）"><pre>
+&lt;script setup&gt;
+import { ref, computed } from 'vue'
+import { storeToRefs } from 'pinia'
+import { usePostsStore } from '../../stores/posts'
+import { formatDate } from '../../utils/format'
+import Comment from './Comment.jsx'
+
+const postsStore = usePostsStore()
+const { selectedPostDetails: details } = storeToRefs(postsStore)
+
+const commentContent = ref('')
+const commentFormValid = computed(() =&gt; commentContent.value.trim().length &gt; 0)
+
+function submitComment() {
+  if (!commentFormValid.value) return
+  postsStore.sendComment({
+    post: details.value,
+    comment: { content: commentContent.value },
+  })
+  commentContent.value = ''
+}
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="post-content"&gt;
+    &lt;template v-if="details"&gt;
+      &lt;div class="title"&gt;
+        &lt;img :src="details.author.profile.photos[0].value"&gt;
+        &lt;span&gt;
+          &lt;span&gt;{{ details.title }}&lt;/span&gt;
+          &lt;span class="info"&gt;
+            &lt;span class="name"&gt;{{ details.author.profile.displayName }}&lt;/span&gt;
+            &lt;span class="date"&gt;{{ formatDate(details.date) }}&lt;/span&gt;
+          &lt;/span&gt;
+        &lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div class="content"&gt;{{ details.content }}&lt;/div&gt;
+
+      &lt;div class="comments"&gt;
+        &lt;Comment v-for="(comment, index) of details.comments" :key="index" :comment="comment" /&gt;
+      &lt;/div&gt;
+
+      &lt;div class="actions"&gt;
+        &lt;button type="button" class="icon-button secondary" @click="postsStore.unselectPost()"&gt;
+          &lt;i class="material-icons"&gt;close&lt;/i&gt;
+        &lt;/button&gt;
+        &lt;input v-model="commentContent" placeholder="写一条评论" @keyup.enter="submitComment"&gt;
+        &lt;button type="button" class="icon-button" :disabled="!commentFormValid" @click="submitComment"&gt;
+          &lt;i class="material-icons"&gt;send&lt;/i&gt;
+        &lt;/button&gt;
+      &lt;/div&gt;
+    &lt;/template&gt;
+    &lt;Loading v-else /&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p><code>@keyup.enter</code> 是带<strong>按键修饰符</strong>的事件监听：只有按下回车时才调用。</p>
+
+<h2 id="architecture">整体架构回顾</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 340" role="img" aria-label="地理定位博客的组件与三个 store 之间的关系">
+  <path class="ln-a" d="M130 52 V22 H630 V48" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="380" y="26" text-anchor="middle">logout → reset()　login → onLoggedIn()</text>
+
+  <rect class="bx-a" x="20" y="52" width="220" height="90" rx="12"/>
+  <text class="ttl on-a" x="130" y="78" text-anchor="middle">useUserStore</text>
+  <text class="mono sm" x="130" y="100" text-anchor="middle">user · userPicture</text>
+  <text class="mono sm" x="130" y="120" text-anchor="middle">init · login · logout</text>
+
+  <rect class="bx-a" x="270" y="52" width="220" height="90" rx="12"/>
+  <text class="ttl on-a" x="380" y="78" text-anchor="middle">useMapStore</text>
+  <text class="mono sm" x="380" y="100" text-anchor="middle">center · zoom</text>
+  <text class="mono sm" x="380" y="120" text-anchor="middle">centerOnUser · setBounds</text>
+
+  <rect class="bx-a" x="520" y="52" width="220" height="90" rx="12"/>
+  <text class="ttl on-a" x="630" y="78" text-anchor="middle">usePostsStore</text>
+  <text class="mono sm" x="630" y="100" text-anchor="middle">posts · draft · currentPost</text>
+  <text class="mono sm" x="630" y="120" text-anchor="middle">fetchPosts · createPost</text>
+
+  <path class="ln-a" d="M492 97 H516" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="505" y="160" text-anchor="middle">fetchPosts()</text>
+  <path class="ln-d" d="M505 150 V102"/>
+
+  <rect class="bx-g" x="20" y="210" width="130" height="40" rx="8"/><text class="sm on-g" x="85" y="235" text-anchor="middle">Login</text>
+  <rect class="bx-g" x="170" y="210" width="130" height="40" rx="8"/><text class="sm on-g" x="235" y="235" text-anchor="middle">AppMenu</text>
+  <rect class="bx-g" x="320" y="210" width="130" height="40" rx="8"/><text class="sm on-g" x="385" y="235" text-anchor="middle">BlogMap</text>
+  <rect class="bx-g" x="470" y="210" width="130" height="40" rx="8"/><text class="sm on-g" x="535" y="235" text-anchor="middle">CreatePost</text>
+  <rect class="bx-g" x="620" y="210" width="130" height="40" rx="8"/><text class="sm on-g" x="685" y="235" text-anchor="middle">PostContent</text>
+
+  <path class="ln" d="M85 208 L110 144"/>
+  <path class="ln" d="M235 208 L160 144"/>
+  <path class="ln" d="M235 208 L330 144"/>
+  <path class="ln" d="M385 208 L385 176"/>
+  <path class="ln" d="M405 208 L600 144"/>
+  <path class="ln" d="M535 208 L620 144"/>
+  <path class="ln" d="M685 208 L660 144"/>
+
+  <rect class="bx" x="20" y="276" width="720" height="50" rx="10"/>
+  <text class="sm" x="380" y="298" text-anchor="middle">组件只做两件事：读 store 的数据来渲染，调用 store 的 action 来响应用户操作。</text>
+  <text class="sm" x="380" y="316" text-anchor="middle">业务逻辑（请求、竞态处理、登录流程）都集中在 store 里，组件保持简单。</text>
+</svg>
+<figcaption>图 6-11　组件 ↔ store 的关系</figcaption>
+</figure>
+
+<h2 id="summary">小结</h2>
+
+<div class="tw"><table>
+<thead><tr><th>主题</th><th>原书</th><th>本教程</th></tr></thead>
+<tbody>
+<tr><td>状态管理</td><td>Vuex：state / getters / mutations / actions、模块、命名空间</td><td>Pinia：多个 setup store，action 直接改 state</td></tr>
+<tr><td>在组件中使用</td><td><code>mapGetters</code>、<code>mapActions</code>、<code>createNamespacedHelpers</code></td><td><code>useXxxStore()</code>、<code>storeToRefs()</code></td></tr>
+<tr><td>跨模块调用</td><td><code>{ root: true }</code>、<code>rootGetters</code></td><td>在 action 里调用另一个 store</td></tr>
+<tr><td>路由同步</td><td>vuex-router-sync</td><td>不需要</td></tr>
+<tr><td>Google 登录</td><td>Google+ API</td><td>OAuth 2.0 / OIDC 作用域</td></tr>
+<tr><td>地图</td><td>vue-googlemaps</td><td>Leaflet（直接集成）/ vue3-google-map</td></tr>
+<tr><td>第三方实例</td><td>—</td><td>普通变量 / <code>shallowRef</code> / <code>markRaw</code></td></tr>
+<tr><td>作用域插槽</td><td><code>slot-scope="props"</code></td><td><code>v-slot="{ result }"</code></td></tr>
+<tr><td>渲染函数</td><td><code>render(h)</code>，嵌套 data 对象</td><td><code>import { h }</code>，扁平属性，<code>slots.default()</code></td></tr>
+<tr><td>函数式组件</td><td><code>functional: true</code></td><td>普通函数；性能优势已不明显</td></tr>
+</tbody>
+</table></div>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>在帖子标记上显示点赞数（服务器有 <code>POST /posts/:id/like</code> 接口），并在 <code>PostContent</code> 里加一个点赞按钮。</li>
+    <li>给 <code>sendComment</code> 加上失败回滚：请求失败时把刚才乐观添加的评论删掉，并显示错误提示。</li>
+    <li>把 <code>useMapStore</code> 改写成 Pinia 的选项式写法，体会两种写法的差别。</li>
+    <li>写一个 <code>&lt;MouseTracker v-slot="{ x, y }"&gt;</code> 无渲染组件，再把同样的逻辑写成组合式函数 <code>useMouse()</code>，比较两者各适合什么场景。</li>
+    <li>（进阶）服务器支持 Socket.IO 实时推送新帖子。用 <code>socket.io-client</code> 连接，在 posts store 里收到新帖子时加入列表。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

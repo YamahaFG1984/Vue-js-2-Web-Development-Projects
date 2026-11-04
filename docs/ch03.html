@@ -1,0 +1,2159 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 3 章 · 项目二：城堡决斗卡牌游戏 — Vue 3 项目实战教程</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  /* 本页演示用的迷你卡牌 */
+  .mini-hand { display: flex; gap: 10px; justify-content: center; min-height: 128px; align-items: flex-end; position: relative; perspective: 800px; }
+  .mini-card {
+    width: 78px; height: 110px; border-radius: 9px; cursor: pointer; flex: none;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #fff; font-weight: 700; font-size: 13px; text-align: center; line-height: 1.3;
+    box-shadow: 0 3px 10px rgb(0 0 0 / .18); transition: all .3s; user-select: none;
+  }
+  .mini-card:hover { transform: translateY(-8px); }
+  .mini-card small { font-weight: 400; font-size: 11px; opacity: .85; margin-top: 4px; }
+  .mini-card.type-attack  { background: #b5413a; }
+  .mini-card.type-support { background: #2f7d51; }
+  .mini-card.type-special { background: #6b46c1; }
+  .mcard-enter-from { opacity: 0; transform: scale(.8) translateX(100px); }
+  .mcard-leave-active { transition: all .9s, opacity .45s .45s; position: absolute; z-index: 10; pointer-events: none; }
+  .mcard-leave-to { opacity: 0; transform: translateY(-120px) scale(1.4); }
+  .mhand-enter-active, .mhand-leave-active { transition: opacity .5s; }
+  .mhand-enter-active .mini-hand, .mhand-leave-active .mini-hand { transition: transform .7s cubic-bezier(.08,.74,.34,1); transform-origin: bottom center; }
+  .mhand-enter-from, .mhand-leave-to { opacity: 0; }
+  .mhand-enter-from .mini-hand, .mhand-leave-to .mini-hand { transform: rotateX(90deg); }
+  .demo-log { font-family: var(--mono); font-size: 12px; color: var(--fg-faint); min-height: 1.6em; }
+  @media (width <= 600px) {
+    .mini-hand { gap: 5px; }
+    .mini-card { width: 54px; height: 82px; font-size: 11px; }
+  }
+</style>
+</head>
+<body data-chapter="3">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 3 章 · 项目二</span>
+<h1>城堡决斗：浏览器卡牌游戏</h1>
+<p class="lede">
+  这次做一个完全不同的东西：双人回合制卡牌游戏。两位玩家各守一座城堡，用行动卡把对手的粮食或生命值打到零。
+  借这个项目，我们学习 Vue 最核心的概念 —— <strong>组件</strong>，以及组件之间如何对话、如何做动画。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>用 <code>app.component()</code> 定义和注册组件，理解“组件树”</li>
+    <li>父传子用 <strong>props</strong>，子传父用 <strong>自定义事件 emit</strong></li>
+    <li>用 <strong>插槽 slot</strong> 让组件接收任意内容，用 <code>&lt;component :is&gt;</code> 动态切换组件</li>
+    <li>用 <code>&lt;Transition&gt;</code> 和 <code>&lt;TransitionGroup&gt;</code> 做进出场和列表动画，理解 <code>key</code></li>
+    <li>在模板里直接生成动态 SVG，用模板引用访问 DOM 元素</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="rules">游戏规则</h2>
+
+<ul>
+  <li>两位玩家轮流行动。</li>
+  <li>每人开局有 10 点生命、10 点粮食和 5 张手牌；生命和粮食都不能超过 10。</li>
+  <li>粮食或生命降到 0 即失败；两人可能同时失败（平局）。</li>
+  <li>每个回合，当前玩家<strong>必须且只能打出一张牌</strong>，打出的牌进入弃牌堆。</li>
+  <li>每个回合开始时从抽牌堆抽一张牌（每人的第一回合除外），所以回合开始时手里总是 5 张。</li>
+  <li>抽牌堆空了，就把弃牌堆洗回去。</li>
+  <li>卡牌可以改变自己或对手的生命和粮食，有的还能让某个玩家跳过回合。</li>
+</ul>
+
+<p>
+  游戏的精髓在于：大部分牌都会让自己付出代价（最常见的是消耗粮食），所以出牌前要想清楚。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="游戏画面结构：顶栏、世界层（城堡、云、旗帜）、手牌和浮层">
+  <rect class="bx" x="20" y="14" width="720" height="272" rx="12"/>
+  <!-- top bar -->
+  <rect class="bx-b" x="34" y="26" width="692" height="36" rx="8"/>
+  <text class="sm on-b" x="100" y="49" text-anchor="middle">玩家 1 名字</text>
+  <text class="sm on-b" x="380" y="49" text-anchor="middle">◀ 第 3 回合</text>
+  <text class="sm on-b" x="660" y="49" text-anchor="middle">玩家 2 名字</text>
+  <text class="sm" x="480" y="49">顶栏 TopBar</text>
+  <!-- world -->
+  <rect class="bx-g" x="34" y="72" width="692" height="126" rx="8"/>
+  <text class="sm on-g" x="380" y="90" text-anchor="middle">世界层：天空、云朵、地面、城堡</text>
+  <ellipse class="bx" cx="240" cy="110" rx="34" ry="11"/>
+  <ellipse class="bx" cx="520" cy="104" rx="40" ry="12"/>
+  <rect class="bx-a" x="70" y="118" width="80" height="64" rx="4"/>
+  <text class="sm on-a" x="110" y="155" text-anchor="middle">城堡 1</text>
+  <rect class="bx-a" x="610" y="118" width="80" height="64" rx="4"/>
+  <text class="sm on-a" x="650" y="155" text-anchor="middle">城堡 2</text>
+  <rect class="bx-g" x="160" y="104" width="10" height="50" rx="1"/>
+  <rect class="bx-r" x="176" y="104" width="10" height="36" rx="1"/>
+  <text class="sm" x="196" y="136">旗帜：粮食/生命</text>
+  <!-- hand -->
+  <rect class="bx-p" x="200" y="208" width="360" height="68" rx="8"/>
+  <text class="sm on-p" x="380" y="224" text-anchor="middle">手牌 CardHand（当前玩家的 5 张牌）</text>
+  <rect class="bx" x="232" y="232" width="48" height="38" rx="4"/>
+  <rect class="bx" x="292" y="232" width="48" height="38" rx="4"/>
+  <rect class="bx" x="352" y="232" width="48" height="38" rx="4"/>
+  <rect class="bx" x="412" y="232" width="48" height="38" rx="4"/>
+  <rect class="bx" x="472" y="232" width="48" height="38" rx="4"/>
+  <!-- overlay hint -->
+  <rect class="bx-d" x="580" y="208" width="146" height="68" rx="8"/>
+  <text class="sm" x="653" y="236" text-anchor="middle">浮层出现时</text>
+  <text class="sm" x="653" y="254" text-anchor="middle">手牌会隐藏</text>
+</svg>
+<figcaption>图 3-1　游戏画面分两层：“世界”（场景）和“界面”（顶栏、手牌、浮层）</figcaption>
+</figure>
+
+<p>除了顶栏和手牌，还有三种<strong>浮层（overlay）</strong>会轮流出现，盖住手牌：</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#128227;</span><h4>轮到你了</h4><p>显示下一位玩家的名字。两人共用一台设备（比如平板）时，提醒该交换了。</p></div>
+  <div class="card"><span class="ic">&#128065;</span><h4>对手出了什么</h4><p>展示对手上一回合打出的牌，或者提示对手被跳过了。</p></div>
+  <div class="card"><span class="ic">&#127942;</span><h4>游戏结束</h4><p>显示谁赢谁输。点击后重新开始。</p></div>
+</div>
+
+<h2 id="setup">搭建项目</h2>
+
+<p>
+  这一章同样不需要构建工具。从仓库复制 <code>Chapter03/chapter3-download</code> 文件夹作为起点，里面已经准备好了素材：
+</p>
+
+<div class="tree"><b>castle-duel/</b>
+├── index.html            <i># 页面</i>
+├── style.css             <i># 样式</i>
+├── svg/                  <i># 游戏里所有的 SVG 图片</i>
+├── cards.js              <i># 全部卡牌数据（不用改）</i>
+├── state.js              <i># 我们会把游戏的主要状态集中在这里</i>
+├── utils.js              <i># 抽牌、出牌等工具函数</i>
+├── banner-template.svg   <i># 稍后要用的旗帜 SVG 模板</i>
+└── <b>main.js</b>               <i># 新建：创建 Vue 应用</i></div>
+
+<p>在 <code>index.html</code> 里按顺序引入脚本（顺序很重要，后面的文件会用到前面定义的变量）：</p>
+
+<div class="code" data-lang="html" data-file="index.html"><pre>
+&lt;div id="app"&gt;&lt;/div&gt;
+
+&lt;script src="https://unpkg.com/vue@3/dist/vue.global.js"&gt;&lt;/script&gt;
+&lt;script src="utils.js"&gt;&lt;/script&gt;
+&lt;script src="cards.js"&gt;&lt;/script&gt;
+&lt;script src="state.js"&gt;&lt;/script&gt;
+&lt;script src="main.js"&gt;&lt;/script&gt;
+</pre></div>
+
+<div class="code" data-lang="js" data-file="main.js"><pre>
+const { createApp } = Vue
+
+const app = createApp({
+  name: 'Game',
+})
+
+app.mount('#app')
+</pre></div>
+
+<h2 id="calm">风暴前的准备</h2>
+
+<h3>template 选项</h3>
+
+<p>
+  上一章我们把模板直接写在 HTML 的 <code>#notebook</code> 里。这次 <code>#app</code> 保持为空，改用组件的 <code>template</code> 选项，
+  用反引号 <code>`</code> 写多行字符串：
+</p>
+
+<div class="code" data-lang="js" data-file="main.js"><pre>
+const app = createApp({
+  name: 'Game',
+  template: `&lt;div class="game"&gt;
+    Hello world!
+  &lt;/div&gt;`,
+})
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 为什么全局构建版能编译 template 字符串</div>
+  <p>
+    <code>vue.global.js</code> 是“完整版”，内置了模板编译器，可以在浏览器里把字符串编译成渲染函数。
+    第 4 章用 Vite 时，模板会在<em>构建阶段</em>预先编译好，浏览器里只需要更小的“运行时版”。
+  </p>
+</div>
+
+<h3>集中管理的游戏状态</h3>
+
+<p>
+  <code>state.js</code> 用来把游戏的主要数据集中在一个对象里。这样，写游戏逻辑的函数可以直接修改它，
+  而不必把一堆方法塞进组件。在 Vue 3 里，我们用 <code>reactive()</code> 把这个对象变成响应式的：
+</p>
+
+<div class="code" data-lang="js" data-file="state.js"><pre>
+// 集中管理的游戏状态
+const state = Vue.reactive({
+  // 世界缩放比例：窗口越宽，场景越大
+  worldRatio: getWorldRatio(),
+})
+</pre></div>
+
+<p>
+  <code>worldRatio</code> 表示场景要缩放多少才能适应窗口（<code>0.6</code> 表示缩到 60%），由 <code>utils.js</code> 里的 <code>getWorldRatio()</code> 计算。
+  窗口大小变化时要重新计算：
+</p>
+
+<div class="code" data-lang="js" data-file="main.js"><pre>
+const app = createApp({
+  name: 'Game',
+  setup() {
+    // 把整个 state 交给模板使用
+    return { state }
+  },
+  template: `&lt;div class="game"&gt;
+    {{ state.worldRatio }}
+  &lt;/div&gt;`,
+})
+
+// 窗口尺寸变化时更新比例
+window.addEventListener('resize', () =&gt; {
+  state.worldRatio = getWorldRatio()
+})
+</pre></div>
+
+<p>
+  横向拖动浏览器窗口，页面上的数字会跟着变。注意我们修改的是<strong>全局的 <code>state</code> 对象</strong>，而不是组件 ——
+  但因为 <code>state</code> 是 <code>reactive()</code> 创建的，任何读取它的组件都会自动更新。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="reactive 状态对象被组件和游戏逻辑函数共享">
+  <rect class="bx-a" x="280" y="70" width="200" height="90" rx="14"/>
+  <text class="ttl on-a" x="380" y="98" text-anchor="middle">state = reactive({...})</text>
+  <text class="sm" x="380" y="120" text-anchor="middle">turn · players · activeOverlay</text>
+  <text class="sm" x="380" y="138" text-anchor="middle">drawPile · canPlay …</text>
+
+  <rect class="bx-b" x="20" y="30" width="190" height="56" rx="10"/>
+  <text class="on-b" x="115" y="54" text-anchor="middle">游戏逻辑函数</text>
+  <text class="mono sm" x="115" y="74" text-anchor="middle">playCard() nextTurn()</text>
+  <path class="ln-b" d="M212 62 C250 70 250 90 276 100" marker-end="url(#ar)"/>
+  <text class="halo sm on-b" x="230" y="54">写</text>
+
+  <rect class="bx-b" x="20" y="146" width="190" height="56" rx="10"/>
+  <text class="on-b" x="115" y="170" text-anchor="middle">浏览器事件</text>
+  <text class="mono sm" x="115" y="190" text-anchor="middle">resize</text>
+  <path class="ln-b" d="M212 170 C250 166 250 146 276 136" marker-end="url(#ar)"/>
+  <text class="halo sm on-b" x="230" y="186">写</text>
+
+  <rect class="bx-g" x="550" y="20" width="190" height="44" rx="10"/>
+  <text class="on-g" x="645" y="47" text-anchor="middle">根组件 Game</text>
+  <rect class="bx-g" x="550" y="93" width="190" height="44" rx="10"/>
+  <text class="on-g" x="645" y="120" text-anchor="middle">TopBar</text>
+  <rect class="bx-g" x="550" y="166" width="190" height="44" rx="10"/>
+  <text class="on-g" x="645" y="193" text-anchor="middle">CardHand …</text>
+  <path class="ln-g" d="M482 96 L546 46" marker-end="url(#ar)"/>
+  <path class="ln-g" d="M482 115 H546" marker-end="url(#ar)"/>
+  <path class="ln-g" d="M482 134 L546 184" marker-end="url(#ar)"/>
+  <text class="halo sm on-g" x="514" y="62">读 → 自动更新</text>
+</svg>
+<figcaption>图 3-2　一个 reactive 对象，谁都可以改，谁读了谁就会更新</figcaption>
+</figure>
+
+<div class="vs">
+  <div class="old"><div class="h">原书 · Vue 2</div>
+<div class="code" data-lang="js"><pre>
+var state = { worldRatio: getWorldRatio() }
+
+new Vue({
+  el: '#app',
+  data: state,   // Vue 2 会“改造”这个对象本身
+})
+// this.$data === state  → true
+</pre></div></div>
+  <div class="new"><div class="h">Vue 3</div>
+<div class="code" data-lang="js"><pre>
+const state = Vue.reactive({
+  worldRatio: getWorldRatio(),
+})
+
+createApp({
+  setup: () =&gt; ({ state }),
+})
+// 原始对象不变，reactive 返回的是它的代理
+</pre></div></div>
+</div>
+
+<div class="box deep">
+  <div class="t">&#128269; ref 还是 reactive？</div>
+  <p>
+    <code>ref()</code> 可以装任何值（包括对象），读写要 <code>.value</code>；<code>reactive()</code> 只能装对象，直接用属性。
+    官方推荐默认使用 <code>ref</code>，但像这里“一个全局状态对象”的场景用 <code>reactive</code> 更顺手。
+    记住一个限制：<strong>不要把 reactive 对象解构</strong>（<code>const { turn } = state</code>），解构出来的是普通值，会丢失响应性。
+    这正是第 6 章引入 Pinia 要解决的问题之一。
+  </p>
+</div>
+
+<h3>无所不能的组件</h3>
+
+<p>
+  组件是构成 Vue 应用的积木，是整个框架的核心概念。每个组件是界面的一小块，应该<strong>小、可复用、尽可能自给自足</strong>。
+  一个应用最终会是一棵由组件构成的树：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 320" role="img" aria-label="城堡决斗的组件树">
+  <rect class="bx-a" x="320" y="14" width="120" height="38" rx="9"/>
+  <text class="ttl on-a" x="380" y="38" text-anchor="middle">Game（根）</text>
+
+  <path class="ln" d="M380 54 V70 H95 V86"/>
+  <path class="ln" d="M380 70 H285 V86"/>
+  <path class="ln" d="M380 70 H475 V86"/>
+  <path class="ln" d="M380 70 H665 V86"/>
+
+  <rect class="bx-b" x="40" y="88" width="110" height="34" rx="8"/><text class="on-b" x="95" y="110" text-anchor="middle">TopBar</text>
+  <rect class="bx-g" x="215" y="88" width="140" height="34" rx="8"/><text class="on-g" x="285" y="110" text-anchor="middle">世界 div.world</text>
+  <rect class="bx-p" x="415" y="88" width="120" height="34" rx="8"/><text class="on-p" x="475" y="110" text-anchor="middle">CardHand</text>
+  <rect class="bx-r" x="595" y="88" width="140" height="34" rx="8"/><text class="on-r" x="665" y="110" text-anchor="middle">GameOverlay</text>
+
+  <path class="ln" d="M285 124 V140 H230 V156"/>
+  <path class="ln" d="M285 140 H340 V156"/>
+  <rect class="bx-g" x="175" y="158" width="110" height="32" rx="8"/><text class="sm on-g" x="230" y="179" text-anchor="middle">PlayerCastle ×2</text>
+  <rect class="bx-g" x="295" y="158" width="100" height="32" rx="8"/><text class="sm on-g" x="345" y="179" text-anchor="middle">SkyCloud ×10</text>
+
+  <path class="ln" d="M230 192 V210"/>
+  <rect class="bx-g" x="170" y="212" width="120" height="32" rx="8"/><text class="sm on-g" x="230" y="233" text-anchor="middle">CastleBanners</text>
+  <path class="ln" d="M230 246 V258 H180 V270"/>
+  <path class="ln" d="M230 258 H280 V270"/>
+  <rect class="bx-g" x="130" y="272" width="100" height="30" rx="7"/><text class="sm on-g" x="180" y="292" text-anchor="middle">StatBubble ×2</text>
+  <rect class="bx-g" x="236" y="272" width="96" height="30" rx="7"/><text class="sm on-g" x="284" y="292" text-anchor="middle">BannerBar ×2</text>
+
+  <path class="ln" d="M475 124 V156"/>
+  <rect class="bx-p" x="420" y="158" width="110" height="32" rx="8"/><text class="sm on-p" x="475" y="179" text-anchor="middle">GameCard ×5</text>
+
+  <path class="ln" d="M665 124 V140 H600 V156"/>
+  <path class="ln" d="M665 140 H700 V156"/>
+  <rect class="bx-r" x="555" y="158" width="94" height="44" rx="8"/>
+  <text class="sm on-r" x="602" y="176" text-anchor="middle">slot 里的</text>
+  <text class="sm on-r" x="602" y="194" text-anchor="middle">浮层内容 ×3</text>
+  <rect class="bx-r" x="655" y="158" width="90" height="44" rx="8"/>
+  <text class="sm on-r" x="700" y="176" text-anchor="middle">PlayerResult</text>
+  <text class="sm on-r" x="700" y="194" text-anchor="middle">GameCard</text>
+
+  <text class="lbl" x="560" y="262" text-anchor="middle">同一个 GameCard 组件</text>
+  <text class="lbl" x="560" y="280" text-anchor="middle">在手牌和浮层里各用了一次 —— 这就是复用</text>
+</svg>
+<figcaption>图 3-3　本章要构建的组件树</figcaption>
+</figure>
+
+<h2 id="topbar">第一个组件：顶栏</h2>
+
+<p>顶栏显示两位玩家的名字和中间的回合数，还有一个箭头指向当前玩家。</p>
+
+<h3>给状态加点游戏数据</h3>
+
+<div class="code" data-lang="js" data-file="state.js"><pre>
+const state = Vue.reactive({
+  // 世界
+  worldRatio: getWorldRatio(),
+  // 游戏
+  turn: 1,
+  players: [
+    { name: '克里维斯的安妮' },
+    { name: '秃头威廉' },
+  ],
+  // 随机决定谁先手：0 或 1
+  currentPlayerIndex: Math.round(Math.random()),
+})
+</pre></div>
+
+<h3>定义和使用组件</h3>
+
+<p>
+  新建 <code>components/ui.js</code>，在 <code>main.js</code> 之前引入。组件的本质就是一个<strong>选项对象</strong>，和传给 <code>createApp</code> 的对象用的是同一套选项：
+</p>
+
+<div class="code" data-lang="js" data-file="components/ui.js"><pre>
+const TopBar = {
+  template: `&lt;div class="top-bar"&gt;
+    Top bar
+  &lt;/div&gt;`,
+}
+</pre></div>
+
+<p>然后在 <code>main.js</code> 里，在 <code>mount</code> <strong>之前</strong>用 <code>app.component()</code> 注册它，就能在模板里像 HTML 标签一样使用了：</p>
+
+<div class="code" data-lang="js" data-file="main.js"><pre>
+const app = createApp({
+  name: 'Game',
+  setup: () =&gt; ({ state }),
+  template: `&lt;div class="game"&gt;
+    &lt;top-bar /&gt;
+  &lt;/div&gt;`,
+})
+
+app.component('TopBar', TopBar)   // 注册为全局组件
+
+app.mount('#app')                 // 一定要在注册之后再挂载
+</pre></div>
+
+<div class="vs">
+  <div class="old"><div class="h">原书 · Vue 2：注册到全局 Vue 上</div>
+<div class="code" data-lang="js"><pre>
+Vue.component('top-bar', {
+  template: `...`,
+})
+// 所有 new Vue() 都能用
+</pre></div></div>
+  <div class="new"><div class="h">Vue 3：注册到某一个应用上</div>
+<div class="code" data-lang="js"><pre>
+const app = createApp(App)
+app.component('TopBar', { template: `...` })
+app.mount('#app')
+// 只有这个 app 能用
+</pre></div></div>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 组件名的大小写</div>
+  <p>
+    用 PascalCase（<code>TopBar</code>）注册的组件，在模板里写 <code>&lt;TopBar&gt;</code> 或 <code>&lt;top-bar&gt;</code> 都可以。
+    但如果模板是直接写在 HTML 文件里的（像第 2 章那样，称为 DOM 内模板），浏览器会把标签名转成小写，这时只能用 <code>&lt;top-bar&gt;&lt;/top-bar&gt;</code>，而且不能自闭合。
+    我们这里的模板写在 JS 字符串里，没有这个限制。
+  </p>
+</div>
+
+<div class="box tip">
+  <div class="t">&#10003; 组件名用多个单词</div>
+  <p>
+    Vue 官方风格指南建议组件名至少由两个单词组成（<code>TodoItem</code> 而不是 <code>Item</code>），以免将来和 HTML 原生标签撞名。
+    所以本教程把原书的 <code>card</code>、<code>hand</code>、<code>overlay</code>、<code>castle</code>、<code>bubble</code>、<code>cloud</code>
+    分别命名为 <code>GameCard</code>、<code>CardHand</code>、<code>GameOverlay</code>、<code>PlayerCastle</code>、<code>StatBubble</code>、<code>SkyCloud</code>。CSS 类名保持不变。
+  </p>
+</div>
+
+<p>打开 DevTools，现在组件树里有两个节点：<code>Game</code> 和它下面的 <code>TopBar</code>。每个组件都是一个独立的实例。</p>
+
+<h3>父传子：props</h3>
+
+<p>
+  组件之间需要通信。先看“向下”的方向：父组件把数据传给子组件，用 <strong>props</strong>。
+  顶栏需要知道三件事：有哪些玩家、当前是谁、第几回合。所以声明三个 prop：
+</p>
+
+<div class="code" data-lang="js" data-file="components/ui.js"><pre>
+const TopBar = {
+  props: ['players', 'currentPlayerIndex', 'turn'],
+  template: `...`,
+}
+</pre></div>
+
+<p>父组件像写 HTML 属性一样给 prop 传值。用 <code>:</code>（<code>v-bind</code>）传的是 JS 表达式：</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;top-bar :turn="state.turn"
+         :current-player-index="state.currentPlayerIndex"
+         :players="state.players" /&gt;
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="props 向下传递，事件向上冒泡">
+  <rect class="bx-a" x="250" y="20" width="260" height="70" rx="12"/>
+  <text class="ttl on-a" x="380" y="46" text-anchor="middle">父组件 Game</text>
+  <text class="mono sm" x="380" y="70" text-anchor="middle">state.turn = 3</text>
+
+  <rect class="bx-g" x="250" y="160" width="260" height="70" rx="12"/>
+  <text class="ttl on-g" x="380" y="186" text-anchor="middle">子组件 TopBar</text>
+  <text class="mono sm" x="380" y="210" text-anchor="middle">props: ['turn', ...]</text>
+
+  <path class="ln-a" d="M330 92 V156" marker-end="url(#ar-a)"/>
+  <text class="halo on-a ttl" x="320" y="118" text-anchor="end">props 向下</text>
+  <text class="halo mono sm" x="320" y="138" text-anchor="end">:turn="state.turn"</text>
+
+  <path class="ln-p" d="M430 158 V94" marker-end="url(#ar)"/>
+  <text class="halo on-p ttl" x="440" y="118">事件向上</text>
+  <text class="halo mono sm" x="440" y="138">emit('play', card)</text>
+
+  <text class="lbl" x="20" y="120">数据只能</text>
+  <text class="lbl" x="20" y="138">从父流向子</text>
+  <text class="lbl" x="620" y="120">子组件只“通知”，</text>
+  <text class="lbl" x="620" y="138">由父组件决定怎么改</text>
+</svg>
+<figcaption>图 3-4　单向数据流：props down, events up</figcaption>
+</figure>
+
+<div class="box note">
+  <div class="t">&#9432; 命名约定</div>
+  <p>JS 里用 camelCase（<code>currentPlayerIndex</code>），模板属性里推荐用 kebab-case（<code>current-player-index</code>），Vue 会自动转换。</p>
+</div>
+
+<div class="box warn">
+  <div class="t">&#9888; 不要在子组件里修改 prop</div>
+  <p>
+    prop 是父组件“借”给你看的数据。直接 <code>props.turn = 4</code> 会收到 Vue 的警告，因为下次父组件重新渲染时你的修改会被覆盖，
+    而且数据到底在哪里被改的会变得无法追踪。想改？发一个事件，让父组件去改。
+  </p>
+</div>
+
+<h3>在模板里使用 props</h3>
+
+<p>prop 在模板里的用法和普通数据一样：</p>
+
+<div class="code" data-lang="js" data-file="components/ui.js"><pre>
+const TopBar = {
+  props: ['players', 'currentPlayerIndex', 'turn'],
+  template: `&lt;div class="top-bar" :class="'player-' + currentPlayerIndex"&gt;
+    &lt;div class="player p0"&gt;{{ players[0].name }}&lt;/div&gt;
+    &lt;div class="turn-counter"&gt;
+      &lt;img class="arrow" src="svg/turn.svg" /&gt;
+      &lt;div class="turn"&gt;第 {{ turn }} 回合&lt;/div&gt;
+    &lt;/div&gt;
+    &lt;div class="player p1"&gt;{{ players[1].name }}&lt;/div&gt;
+  &lt;/div&gt;`,
+}
+</pre></div>
+
+<p>动态 class <code>player-0</code> / <code>player-1</code> 会让 CSS 旋转箭头。在控制台试试：</p>
+
+<div class="code" data-lang="js" data-file="浏览器控制台"><pre>
+state.currentPlayerIndex = 1
+state.currentPlayerIndex = 0
+</pre></div>
+
+<p>箭头会转向对应的玩家，名字也会高亮。</p>
+
+<details class="box deep">
+<summary class="t" style="cursor:pointer">&#128269; 在 setup 里使用 props（点击展开）</summary>
+<p>如果组件需要在 JS 里用到 prop，<code>setup</code> 的第一个参数就是 props 对象（它是响应式的）：</p>
+<div class="code" data-lang="js"><pre>
+const TopBar = {
+  props: ['players', 'currentPlayerIndex', 'turn'],
+  setup(props) {
+    console.log(props.players)           // ✓ 直接读
+    // const { turn } = props           // ✗ 解构会丢失响应性（Vue 3.5 的 &lt;script setup&gt; 除外）
+    const label = Vue.computed(() =&gt; `第 ${props.turn} 回合`)
+    return { label }
+  },
+}
+</pre></div>
+</details>
+
+<h2 id="card">显示一张卡牌</h2>
+
+<p>所有卡牌定义都在 <code>cards.js</code> 里，每个定义有这些字段：</p>
+
+<div class="tw"><table>
+<thead><tr><th>字段</th><th>含义</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td>唯一标识，如 <code>'catapult'</code></td></tr>
+<tr><td><code>type</code></td><td>类型：<code>attack</code> / <code>support</code> / <code>special</code>，决定背景色</td></tr>
+<tr><td><code>title</code></td><td>卡牌名称</td></tr>
+<tr><td><code>description</code></td><td>效果说明（HTML 文本）</td></tr>
+<tr><td><code>note</code></td><td>可选的风味文字（HTML 文本）</td></tr>
+<tr><td><code>play(player, opponent)</code></td><td>出牌时调用的函数，修改双方数值</td></tr>
+</tbody>
+</table></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="卡牌组件的结构">
+  <rect class="bx-r" x="260" y="14" width="170" height="226" rx="14"/>
+  <text class="ttl on-r" x="345" y="46" text-anchor="middle">Archers</text>
+  <path class="ln-r" d="M285 62 H405"/>
+  <path class="ln-r" d="M300 68 H390" style="opacity:.6"/>
+  <text x="345" y="110" text-anchor="middle">Spend 3 Food</text>
+  <text x="345" y="132" text-anchor="middle">Deal 3 Damage</text>
+  <rect class="bx" x="278" y="168" width="134" height="56" rx="8"/>
+  <text class="sm" x="345" y="192" text-anchor="middle">«Ready your bows!</text>
+  <text class="sm" x="345" y="210" text-anchor="middle">Nock! Draw! Loose!»</text>
+
+  <path class="ln-d" d="M432 40 H500"/><text class="mono sm" x="506" y="44">.title　{{ def.title }}</text>
+  <path class="ln-d" d="M432 65 H500"/><text class="mono sm" x="506" y="69">img.separator</text>
+  <path class="ln-d" d="M432 120 H500"/><text class="mono sm" x="506" y="124">.description　v-html</text>
+  <path class="ln-d" d="M432 196 H500"/><text class="mono sm" x="506" y="200">.note　v-if + v-html</text>
+
+  <path class="ln-d" d="M258 30 H200"/>
+  <text class="mono sm" x="194" y="26" text-anchor="end">:class="'type-' + def.type"</text>
+  <text class="sm" x="194" y="44" text-anchor="end">attack → 红色背景</text>
+</svg>
+<figcaption>图 3-5　GameCard 组件的结构</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="components/ui.js"><pre>
+const GameCard = {
+  props: ['def'],
+  template: `&lt;div class="card" :class="'type-' + def.type"&gt;
+    &lt;div class="title"&gt;{{ def.title }}&lt;/div&gt;
+    &lt;img class="separator" src="svg/card-separator.svg" /&gt;
+    &lt;div class="description"&gt;&lt;div v-html="def.description"&gt;&lt;/div&gt;&lt;/div&gt;
+    &lt;div class="note" v-if="def.note"&gt;&lt;div v-html="def.note"&gt;&lt;/div&gt;&lt;/div&gt;
+  &lt;/div&gt;`,
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 这里用 v-html 是安全的</div>
+  <p>卡牌文字是我们自己写在 <code>cards.js</code> 里的，不是用户输入，所以可以放心使用 <code>v-html</code>。多套一层 <code>div</code> 是为了用 flexbox 垂直居中。</p>
+</div>
+
+<p>在根组件里临时放一张牌测试一下（记得 <code>app.component('GameCard', GameCard)</code>）：</p>
+
+<div class="code" data-lang="js" data-file="main.js"><pre>
+const app = createApp({
+  setup() {
+    const testCard = Vue.computed(() =&gt; cards.archers)
+    return { state, testCard }
+  },
+  template: `&lt;div class="game"&gt;
+    &lt;top-bar :turn="state.turn" :current-player-index="state.currentPlayerIndex" :players="state.players" /&gt;
+    &lt;game-card :def="testCard" /&gt;
+  &lt;/div&gt;`,
+})
+</pre></div>
+
+<h3>在组件上监听原生事件</h3>
+
+<p>给卡牌加一个点击处理：</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;game-card :def="testCard" @click="handlePlay" /&gt;
+</pre></div>
+
+<p>
+  在 Vue 2 里，这样写<strong>不会生效</strong>：组件上的 <code>@click</code> 被当作“自定义事件”，必须加 <code>.native</code> 修饰符才能监听原生点击。
+  Vue 3 简化了这一点：
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; Vue 3 变化：.native 被移除了</div>
+  <p>
+    在 Vue 3 里，组件上的监听器如果<strong>没有在 <code>emits</code> 选项中声明</strong>，就会被自动“透传”到组件的根元素上，当作原生 DOM 事件监听。
+    所以上面的 <code>@click</code> 直接就能工作。这个机制叫<strong>透传 attribute（fallthrough attributes）</strong>，<code>class</code>、<code>style</code>、<code>id</code> 等普通属性也一样会落到根元素上。
+  </p>
+</div>
+
+<h3>子传父：自定义事件</h3>
+
+<p>
+  虽然原生 click 能用，但更好的做法是让卡牌组件<strong>自己决定什么时候算“出牌”</strong>，然后通知父组件。
+  将来如果要支持“键盘选中 + 回车出牌”，只需改卡牌组件内部，父组件不用动。这就是<strong>自定义事件</strong>：
+</p>
+
+<div class="code" data-lang="js" data-file="components/ui.js"><pre>
+const GameCard = {
+  props: ['def'],
+  emits: ['play'],            // 声明本组件会发出哪些事件
+  setup(props, { emit }) {    // setup 的第二个参数里有 emit 函数
+    function play() {
+      emit('play')            // 发出 play 事件
+    }
+    return { play }
+  },
+  template: `&lt;div class="card" :class="'type-' + def.type" @click="play"&gt;
+    ...
+  &lt;/div&gt;`,
+}
+</pre></div>
+
+<p>父组件用 <code>v-on</code>（<code>@</code>）监听它，和监听原生事件的写法完全一样：</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;game-card :def="testCard" @play="handlePlay" /&gt;
+</pre></div>
+
+<p>事件还可以带参数，监听函数会按顺序收到它们：</p>
+
+<div class="code" data-lang="js"><pre>
+emit('play', 'orange', 42)
+
+// 父组件中
+function handlePlay(color, number) {
+  console.log('color =', color, 'number =', number)   // color = orange number = 42
+}
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 模板里的简写</div>
+  <p>简单的场景可以不写 <code>setup</code>，直接在模板里调用 <code>$emit</code>：<code>@click="$emit('play')"</code>。</p>
+</div>
+
+<div class="box warn">
+  <div class="t">&#9888; Vue 3 删除了 $on / $off / $once</div>
+  <p>
+    原书提到可以用 <code>this.$on('play', ...)</code> 在组件内部监听自己发出的事件。Vue 3 移除了这些实例方法，
+    “事件总线（event bus）”的写法也随之失效。组件之间的通信请用 props/emit、<code>provide/inject</code> 或状态管理（第 6 章的 Pinia）。
+  </p>
+</div>
+
+<h2 id="hand">手牌</h2>
+
+<p>
+  下一个组件是当前玩家的手牌。它负责显示 5 张牌，还要负责几种动画：整手牌出现/消失的 3D 翻转、抽牌时滑入、出牌时飞出。
+</p>
+
+<p>手牌里的每张牌用一个对象表示：</p>
+<ul>
+  <li><code>uid</code>：这张牌的唯一编号（同一种牌可以有好几张，必须能区分）</li>
+  <li><code>id</code>：卡牌定义的 id</li>
+  <li><code>def</code>：卡牌定义对象</li>
+</ul>
+
+<div class="code" data-lang="js" data-file="components/ui.js"><pre>
+const CardHand = {
+  props: ['cards'],
+  template: `&lt;div class="hand"&gt;
+    &lt;div class="wrapper"&gt;
+      &lt;game-card v-for="card of cards" :key="card.uid" :def="card.def" /&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;`,
+}
+</pre></div>
+
+<p>为了测试，先在根组件里随机生成一手牌：</p>
+
+<div class="code" data-lang="js" data-file="main.js"><pre>
+setup() {
+  // 随机抽一张（临时测试用）
+  function testDrawCard() {
+    const ids = Object.keys(cards)
+    const randomId = ids[Math.floor(Math.random() * ids.length)]
+    return { uid: cardUid++, id: randomId, def: cards[randomId] }
+  }
+
+  const testHand = Vue.ref(Array.from({ length: 5 }, testDrawCard))
+
+  return { state, testHand, testDrawCard }
+}
+</pre></div>
+
+<div class="code" data-lang="html"><pre>
+&lt;card-hand :cards="testHand" /&gt;
+</pre></div>
+
+<h3>用 &lt;Transition&gt; 给手牌做进出场动画</h3>
+
+<p>
+  游戏中，浮层出现时手牌要隐藏。为了好看，我们在它进入和离开 DOM 时加上动画。Vue 提供了一个内置组件 <code>&lt;Transition&gt;</code>，
+  它能和 <code>v-if</code> / <code>v-show</code> 配合，自动在合适的时机给元素加上 CSS 类名。
+</p>
+
+<p>先在状态里加一个 <code>activeOverlay</code>（当前显示的浮层名称，<code>null</code> 表示没有浮层）：</p>
+
+<div class="code" data-lang="js" data-file="state.js"><pre>
+const state = Vue.reactive({
+  // 界面
+  activeOverlay: null,
+  // ...
+})
+</pre></div>
+
+<div class="code" data-lang="html"><pre>
+&lt;transition&gt;
+  &lt;card-hand v-if="!state.activeOverlay" :cards="testHand" /&gt;
+&lt;/transition&gt;
+</pre></div>
+
+<p>
+  <code>&lt;transition&gt;</code> 本身不会出现在 DOM 中。元素<strong>进入</strong>时，Vue 会依次给它加上这些类；<strong>离开</strong>时同理：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 342" role="img" aria-label="Transition 的六个 CSS 类在进入和离开阶段的时间线">
+  <text class="ttl on-a" x="20" y="26">进入（Enter）</text>
+  <text class="sm" x="150" y="26">元素被 v-if 插入</text>
+  <path class="ln" d="M150 60 H730" marker-end="url(#ar)"/>
+  <path class="ln-d" d="M150 36 V146"/>
+  <text class="sm" x="150" y="160" text-anchor="middle">插入前</text>
+  <path class="ln-d" d="M250 36 V146"/>
+  <text class="sm" x="250" y="160" text-anchor="middle">下一帧</text>
+  <path class="ln-d" d="M680 36 V146"/>
+  <text class="sm" x="680" y="160" text-anchor="middle">过渡结束</text>
+
+  <rect class="bx-a" x="150" y="72" width="530" height="22" rx="4"/>
+  <text class="mono sm on-a" x="415" y="88" text-anchor="middle">v-enter-active　（写 transition: ... 的地方）</text>
+  <rect class="bx-b" x="150" y="98" width="100" height="22" rx="4"/>
+  <text class="mono sm on-b" x="200" y="114" text-anchor="middle">v-enter-from</text>
+  <rect class="bx-g" x="250" y="124" width="430" height="22" rx="4"/>
+  <text class="mono sm on-g" x="465" y="140" text-anchor="middle">v-enter-to</text>
+  <text class="sm" x="20" y="114">起始状态</text>
+  <text class="sm" x="20" y="140">目标状态</text>
+
+  <text class="ttl on-r" x="20" y="196">离开（Leave）</text>
+  <text class="sm" x="150" y="196">v-if 变成 false</text>
+  <path class="ln" d="M150 230 H730" marker-end="url(#ar)"/>
+  <path class="ln-d" d="M150 206 V316"/>
+  <path class="ln-d" d="M250 206 V316"/>
+  <path class="ln-d" d="M680 206 V316"/>
+  <text class="sm" x="680" y="328" text-anchor="middle">结束后才真正从 DOM 删除</text>
+  <rect class="bx-a" x="150" y="242" width="530" height="22" rx="4"/>
+  <text class="mono sm on-a" x="415" y="258" text-anchor="middle">v-leave-active</text>
+  <rect class="bx-b" x="150" y="268" width="100" height="22" rx="4"/>
+  <text class="mono sm on-b" x="200" y="284" text-anchor="middle">v-leave-from</text>
+  <rect class="bx-r" x="250" y="294" width="430" height="22" rx="4"/>
+  <text class="mono sm on-r" x="465" y="310" text-anchor="middle">v-leave-to</text>
+</svg>
+<figcaption>图 3-6　进入和离开各有三个类名。Vue 会自动探测 CSS 过渡时长，结束后移除类名</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; Vue 3 变化：v-enter 改名为 v-enter-from</div>
+  <p>
+    原书里的 <code>v-enter</code> 和 <code>v-leave</code> 在 Vue 3 中分别改名为 <strong><code>v-enter-from</code></strong> 和 <strong><code>v-leave-from</code></strong>，
+    和 <code>-to</code> 对称，更好理解。其余四个类名不变。迁移老代码时最容易漏掉这一处，动画会“没有起点”，直接跳到终态。
+  </p>
+</div>
+
+<p>新建 <code>transitions.css</code> 并在页面里引入。先写一个最简单的淡入淡出：</p>
+
+<div class="code" data-lang="css" data-file="transitions.css"><pre>
+.hand.v-enter-active,
+.hand.v-leave-active {
+  transition: opacity 1s;
+}
+
+.hand.v-enter-from,
+.hand.v-leave-to {
+  opacity: 0;
+}
+</pre></div>
+
+<p>
+  在控制台里把 <code>state.activeOverlay</code> 设成 <code>'player-turn'</code> 再改回 <code>null</code>，手牌会淡出淡入。
+  为了复用，给过渡起个名字，类名前缀就会从 <code>v-</code> 变成这个名字：
+</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;transition name="fade"&gt;
+  &lt;card-hand v-if="!state.activeOverlay" :cards="testHand" /&gt;
+&lt;/transition&gt;
+</pre></div>
+
+<div class="code" data-lang="css" data-file="transitions.css"><pre>
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity .5s;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+</pre></div>
+
+<h3>更漂亮的 3D 动画</h3>
+
+<p>
+  现在做一个更像样的效果：整手牌像被玩家从桌上拿起来一样绕 X 轴翻转，同时牌从叠在一起逐渐展开。
+  过渡类名会加在 <code>.hand</code> 上，我们可以用后代选择器去动画它里面的 <code>.wrapper</code> 和 <code>.card</code>：
+</p>
+
+<div class="code" data-lang="css" data-file="transitions.css"><pre>
+/* 整体淡入淡出 */
+.hand-enter-active,
+.hand-leave-active {
+  transition: opacity .5s;
+}
+.hand-enter-from,
+.hand-leave-to {
+  opacity: 0;
+}
+
+/* 绕水平轴 3D 翻转 */
+.hand-enter-active .wrapper,
+.hand-leave-active .wrapper {
+  transition: transform .8s cubic-bezier(.08, .74, .34, 1);
+  transform-origin: bottom center;
+}
+.hand-enter-from .wrapper,
+.hand-leave-to .wrapper {
+  transform: rotateX(90deg);
+}
+
+/* 牌从叠在一起展开：负的左右外边距让它们重叠 */
+.hand-enter-active .card,
+.hand-leave-active .card {
+  transition: margin .8s cubic-bezier(.08, .74, .34, 1);
+}
+.hand-enter-from .card,
+.hand-leave-to .card {
+  margin: 0 -100px;
+}
+</pre></div>
+
+<div class="code" data-lang="html"><pre>
+&lt;transition name="hand"&gt;
+  &lt;card-hand v-if="!state.activeOverlay" :cards="testHand" /&gt;
+&lt;/transition&gt;
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; Transition 只能包一个元素/组件</div>
+  <p>
+    <code>&lt;Transition&gt;</code> 的内容必须是单个元素或单个组件，而且组件本身也要只有一个根元素（这里是 <code>.hand</code>），
+    过渡类名才知道该加在谁身上。要动画一组元素，用下面马上介绍的 <code>&lt;TransitionGroup&gt;</code>。
+  </p>
+</div>
+
+<h3>出牌</h3>
+
+<p>
+  卡牌被点击时会发出 <code>play</code> 事件。手牌组件监听它，再向自己的父组件发出一个 <code>card-play</code> 事件，并带上被点击的那张牌：
+</p>
+
+<div class="code" data-lang="js" data-file="components/ui.js"><pre>
+const CardHand = {
+  props: ['cards'],
+  emits: ['card-play'],
+  template: `&lt;div class="hand"&gt;
+    &lt;div class="wrapper"&gt;
+      &lt;game-card v-for="card of cards" :key="card.uid" :def="card.def"
+                 @play="$emit('card-play', card)" /&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;`,
+}
+</pre></div>
+
+<p>
+  注意 <code>@play</code> 里直接用了 <code>v-for</code> 的循环变量 <code>card</code>：手牌组件本来就知道是哪张牌，卡牌组件不需要把自己传上来。
+  根组件里先写一个临时的出牌函数，把牌从手里移除：
+</p>
+
+<div class="code" data-lang="js" data-file="main.js"><pre>
+function testPlayCard(card) {
+  const index = testHand.value.indexOf(card)
+  testHand.value.splice(index, 1)
+}
+</pre></div>
+
+<div class="code" data-lang="html"><pre>
+&lt;card-hand v-if="!state.activeOverlay" :cards="testHand" @card-play="testPlayCard" /&gt;
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="出牌事件从卡牌冒泡到根组件，数据修改后再向下流动">
+  <rect class="bx-p" x="20" y="70" width="160" height="60" rx="10"/>
+  <text class="ttl on-p" x="100" y="96" text-anchor="middle">GameCard</text>
+  <text class="sm" x="100" y="116" text-anchor="middle">用户点击</text>
+
+  <rect class="bx-p" x="300" y="70" width="160" height="60" rx="10"/>
+  <text class="ttl on-p" x="380" y="96" text-anchor="middle">CardHand</text>
+  <text class="sm" x="380" y="116" text-anchor="middle">知道是哪张牌</text>
+
+  <rect class="bx-a" x="580" y="70" width="160" height="60" rx="10"/>
+  <text class="ttl on-a" x="660" y="96" text-anchor="middle">Game</text>
+  <text class="sm" x="660" y="116" text-anchor="middle">修改数据</text>
+
+  <path class="ln-p" d="M182 86 H296" marker-end="url(#ar)"/>
+  <text class="halo mono sm on-p" x="239" y="76" text-anchor="middle">emit('play')</text>
+  <path class="ln-p" d="M462 86 H576" marker-end="url(#ar)"/>
+  <text class="halo mono sm on-p" x="519" y="76" text-anchor="middle">emit('card-play', card)</text>
+
+  <path class="ln-a" d="M576 116 H462" marker-end="url(#ar-a)"/>
+  <text class="halo mono sm on-a" x="519" y="148" text-anchor="middle">:cards（少了一张）</text>
+  <path class="ln-a" d="M296 116 H182" marker-end="url(#ar-a)"/>
+  <text class="halo mono sm on-a" x="239" y="148" text-anchor="middle">v-for 重新渲染</text>
+
+  <text class="lbl" x="380" y="186" text-anchor="middle">DevTools 的 Timeline 面板可以看到每一次组件事件，调试时很有用</text>
+</svg>
+<figcaption>图 3-7　事件一级一级往上，数据一级一级往下</figcaption>
+</figure>
+
+<h3>用 &lt;TransitionGroup&gt; 给列表做动画</h3>
+
+<p>
+  还差三种动画：牌被<strong>加入</strong>手牌（从右边滑入）、被<strong>打出</strong>（向上放大飞走）、以及其余的牌<strong>移动</strong>填补空位。
+  列表动画要用另一个内置组件 <code>&lt;TransitionGroup&gt;</code>：
+</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;transition-group name="card" tag="div" class="cards"&gt;
+  &lt;game-card v-for="card of cards" :key="card.uid" :def="card.def"
+             @play="$emit('card-play', card)" /&gt;
+&lt;/transition-group&gt;
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; Vue 3 变化：TransitionGroup 默认不渲染包裹元素</div>
+  <p>
+    原书说 <code>&lt;transition-group&gt;</code> 默认会渲染成一个 <code>&lt;span&gt;</code>。Vue 3 中它<strong>默认不渲染任何包裹元素</strong>，
+    需要的话用 <code>tag</code> 属性指定，比如这里的 <code>tag="div"</code>。
+  </p>
+</div>
+
+<h3>key 的真正作用</h3>
+
+<p>
+  <code>&lt;TransitionGroup&gt;</code> 的每个子元素<strong>必须</strong>有唯一的 <code>key</code>。为什么？因为 Vue 更新列表时，默认会尽量<strong>就地复用</strong> DOM 元素：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 292" role="img" aria-label="没有 key 时 Vue 就地复用元素，有 key 时能正确删除和移动元素">
+  <text class="ttl on-r" x="190" y="24" text-anchor="middle">没有 key：就地复用</text>
+  <text class="sm" x="190" y="42" text-anchor="middle">数组 [a, b, c, d] 删掉 c → [a, b, d]</text>
+  <g>
+    <rect class="bx" x="60" y="56" width="70" height="32" rx="6"/><text class="mono" x="95" y="77" text-anchor="middle">a</text>
+    <rect class="bx" x="60" y="96" width="70" height="32" rx="6"/><text class="mono" x="95" y="117" text-anchor="middle">b</text>
+    <rect class="bx" x="60" y="136" width="70" height="32" rx="6"/><text class="mono" x="95" y="157" text-anchor="middle">c</text>
+    <rect class="bx" x="60" y="176" width="70" height="32" rx="6"/><text class="mono" x="95" y="197" text-anchor="middle">d</text>
+  </g>
+  <g>
+    <rect class="bx" x="250" y="56" width="70" height="32" rx="6"/><text class="mono" x="285" y="77" text-anchor="middle">a</text>
+    <rect class="bx" x="250" y="96" width="70" height="32" rx="6"/><text class="mono" x="285" y="117" text-anchor="middle">b</text>
+    <rect class="bx-a" x="250" y="136" width="70" height="32" rx="6"/><text class="mono on-a" x="285" y="157" text-anchor="middle">d</text>
+    <rect class="bx-r" x="250" y="176" width="70" height="32" rx="6" style="opacity:.5"/><text class="sm on-r" x="285" y="197" text-anchor="middle">删除</text>
+  </g>
+  <path class="ln" d="M132 72 H246" marker-end="url(#ar)"/>
+  <path class="ln" d="M132 112 H246" marker-end="url(#ar)"/>
+  <path class="ln-a" d="M132 152 H246" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="190" y="146" text-anchor="middle">改文字为 d</text>
+  <path class="ln-r" d="M132 192 H246" marker-end="url(#ar)"/>
+  <text class="sm" x="190" y="236" text-anchor="middle">第 3 个元素被“改写”成 d，</text>
+  <text class="sm" x="190" y="252" text-anchor="middle">第 4 个元素被删 —— 被删的根本不是 c</text>
+  <text class="sm on-r" x="190" y="272" text-anchor="middle">动画会出现在错误的元素上</text>
+
+  <path class="ln-d" d="M380 20 V284"/>
+
+  <text class="ttl on-g" x="570" y="24" text-anchor="middle">有 key：按身份匹配</text>
+  <text class="sm" x="570" y="42" text-anchor="middle">:key="item.id"</text>
+  <g>
+    <rect class="bx" x="440" y="56" width="70" height="32" rx="6"/><text class="mono" x="475" y="77" text-anchor="middle">a</text>
+    <rect class="bx" x="440" y="96" width="70" height="32" rx="6"/><text class="mono" x="475" y="117" text-anchor="middle">b</text>
+    <rect class="bx" x="440" y="136" width="70" height="32" rx="6"/><text class="mono" x="475" y="157" text-anchor="middle">c</text>
+    <rect class="bx" x="440" y="176" width="70" height="32" rx="6"/><text class="mono" x="475" y="197" text-anchor="middle">d</text>
+  </g>
+  <g>
+    <rect class="bx" x="630" y="56" width="70" height="32" rx="6"/><text class="mono" x="665" y="77" text-anchor="middle">a</text>
+    <rect class="bx" x="630" y="96" width="70" height="32" rx="6"/><text class="mono" x="665" y="117" text-anchor="middle">b</text>
+    <rect class="bx-g" x="630" y="136" width="70" height="32" rx="6"/><text class="mono on-g" x="665" y="157" text-anchor="middle">d</text>
+  </g>
+  <path class="ln" d="M512 72 H626" marker-end="url(#ar)"/>
+  <path class="ln" d="M512 112 H626" marker-end="url(#ar)"/>
+  <path class="ln-r" d="M512 152 H560" />
+  <text class="halo sm on-r" x="516" y="140">✕ c 播放离开动画</text>
+  <path class="ln-g" d="M512 192 C570 192 580 152 626 152" marker-end="url(#ar)"/>
+  <text class="halo sm on-g" x="570" y="214" text-anchor="middle">d 移动上来（move 动画）</text>
+  <text class="sm" x="570" y="252" text-anchor="middle">c 被真正删除，d 被真正移动</text>
+  <text class="sm on-g" x="570" y="272" text-anchor="middle">动画符合直觉</text>
+</svg>
+<figcaption>图 3-8　key 告诉 Vue“哪个元素是谁”</figcaption>
+</figure>
+
+<p>
+  所以用每张牌的 <code>uid</code> 作为 key。这也解释了为什么要给手牌里的每张牌一个 <code>uid</code>：
+  同一种牌（比如两张“投石机”）的 <code>id</code> 相同，不能拿来当 key。
+</p>
+
+<h3>列表动画的 CSS</h3>
+
+<p>
+  <code>&lt;TransitionGroup&gt;</code> 除了那六个类名，还多了一个 <code>v-move</code>（这里是 <code>card-move</code>），加在<strong>位置发生变化</strong>的元素上。
+  Vue 会用 FLIP 技术，通过 <code>transform</code> 让元素平滑地移动到新位置，我们只需要提供一个过渡时长：
+</p>
+
+<div class="code" data-lang="css" data-file="transitions.css"><pre>
+.card {
+  /* 用于进入、移动和鼠标悬停时的动画 */
+  transition: all .3s;
+}
+
+/* 进入：从右边滑进来 */
+.card-enter-from {
+  opacity: 0;
+  transform: scale(.8) translateX(100px);
+}
+
+/* 离开：向上放大飞走 */
+.card-leave-active {
+  transition: all 1s, opacity .5s .5s;  /* 离开时用更长的时长 */
+  position: absolute !important;        /* 脱离布局，其他牌才能“补位” */
+  z-index: 10;                          /* 盖在其他牌上面 */
+  pointer-events: none;                 /* 动画中不能再点 */
+}
+.card-leave-to {
+  opacity: 0;
+  transform: translateX(-106px) translateY(-300px) scale(1.5);
+}
+</pre></div>
+
+<p>在 DevTools 里选中根组件，控制台中的 <code>$vm</code> 就指向它，可以手动加牌试试：</p>
+
+<div class="code" data-lang="js" data-file="浏览器控制台"><pre>
+$vm.testHand.push($vm.testDrawCard())
+</pre></div>
+
+<p>下面这个迷你演示用的就是同样的技巧（3D 翻转 + 列表动画），点牌出牌、点按钮抽牌：</p>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · Transition + TransitionGroup + key</div>
+  <div class="body">
+    <div id="demo-hand" v-cloak>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        <button @click="draw" :disabled="!show || hand.length >= 7">抽一张</button>
+        <button class="ghost" @click="show = !show">{{ show ? '显示浮层（隐藏手牌）' : '关闭浮层（显示手牌）' }}</button>
+      </div>
+      <div style="min-height:140px">
+        <transition name="mhand">
+          <div v-if="show">
+            <transition-group name="mcard" tag="div" class="mini-hand" @after-leave="log = '↑ after-leave 事件：出牌动画结束，可以结算效果了'">
+              <div v-for="c of hand" :key="c.uid" class="mini-card" :class="'type-' + c.type" @click="play(c)">
+                {{ c.title }}<small>uid {{ c.uid }}</small>
+              </div>
+            </transition-group>
+          </div>
+        </transition>
+      </div>
+      <div class="demo-log">{{ log }}</div>
+    </div>
+  </div>
+</div>
+
+<h2 id="overlays">浮层</h2>
+
+<p>三种浮层有两个共同点：点击后都要做点什么，布局也一样。所以我们这样拆分：</p>
+
+<ul>
+  <li>一个通用的 <code>GameOverlay</code> 组件，负责布局和点击；</li>
+  <li>三个“内容”组件，各自负责显示的文字。</li>
+</ul>
+
+<h3>插槽：让组件接收内容</h3>
+
+<p>我们希望能这样使用浮层组件 —— 把内容直接写在标签中间：</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;game-overlay&gt;
+  &lt;overlay-content-player-turn /&gt;
+&lt;/game-overlay&gt;
+</pre></div>
+
+<p>这要靠 <code>&lt;slot&gt;</code>（插槽）。它在子组件模板里占一个位置，父组件写在标签中间的内容会被“插”到这里：</p>
+
+<div class="code" data-lang="js" data-file="components/ui.js"><pre>
+const GameOverlay = {
+  emits: ['close'],
+  template: `&lt;div class="overlay" @click="$emit('close')"&gt;
+    &lt;div class="content"&gt;
+      &lt;slot /&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;`,
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="插槽：父组件传入的内容被放进子组件的 slot 位置">
+  <rect class="bx-a" x="20" y="40" width="220" height="150" rx="12"/>
+  <text class="ttl on-a" x="130" y="64" text-anchor="middle">父组件这样写</text>
+  <text class="mono sm" x="40" y="96">&lt;game-overlay&gt;</text>
+  <rect class="bx-b" x="52" y="106" width="170" height="30" rx="6"/>
+  <text class="mono sm on-b" x="137" y="126" text-anchor="middle">你好，世界！</text>
+  <text class="mono sm" x="40" y="160">&lt;/game-overlay&gt;</text>
+
+  <rect class="bx-g" x="290" y="40" width="200" height="150" rx="12"/>
+  <text class="ttl on-g" x="390" y="64" text-anchor="middle">子组件模板</text>
+  <text class="mono sm" x="306" y="92">&lt;div class="overlay"&gt;</text>
+  <text class="mono sm" x="318" y="114">&lt;div class="content"&gt;</text>
+  <rect class="bx-d" x="330" y="122" width="130" height="26" rx="6"/>
+  <text class="mono sm" x="395" y="140" text-anchor="middle">&lt;slot /&gt;</text>
+  <text class="mono sm" x="318" y="168">&lt;/div&gt;&lt;/div&gt;</text>
+
+  <rect class="bx" x="540" y="40" width="200" height="150" rx="12"/>
+  <text class="ttl" x="640" y="64" text-anchor="middle">最终 DOM</text>
+  <text class="mono sm" x="556" y="92">&lt;div class="overlay"&gt;</text>
+  <text class="mono sm" x="568" y="114">&lt;div class="content"&gt;</text>
+  <rect class="bx-b" x="580" y="122" width="140" height="26" rx="6"/>
+  <text class="mono sm on-b" x="650" y="140" text-anchor="middle">你好，世界！</text>
+  <text class="mono sm" x="568" y="168">&lt;/div&gt;&lt;/div&gt;</text>
+
+  <path class="ln-b" d="M224 121 C270 121 290 135 326 135" marker-end="url(#ar)"/>
+  <path class="ln" d="M492 115 H536" marker-end="url(#ar)"/>
+  <text class="lbl" x="380" y="226" text-anchor="middle">插槽可以放任何东西：文字、HTML、其他组件。父组件决定“放什么”，子组件决定“放在哪”</text>
+</svg>
+<figcaption>图 3-9　插槽（slot）的内容分发</figcaption>
+</figure>
+
+<p>浮层内容需要更多玩家数据。给每位玩家加上这些属性：</p>
+
+<div class="code" data-lang="js" data-file="state.js"><pre>
+// 每位玩家的初始属性
+food: 10,
+health: 10,
+skipTurn: false,        // 下回合是否要被跳过
+skippedTurn: false,     // 上回合是否被跳过了
+hand: [],
+lastPlayedCardId: null,
+dead: false,
+</pre></div>
+
+<h3>“轮到你了”浮层</h3>
+
+<div class="code" data-lang="js" data-file="components/ui.js"><pre>
+const OverlayContentPlayerTurn = {
+  props: ['player'],
+  template: `&lt;div&gt;
+    &lt;div class="big" v-if="player.skipTurn"&gt;{{ player.name }}，&lt;br&gt;你的回合被跳过了！&lt;/div&gt;
+    &lt;div class="big" v-else&gt;{{ player.name }}，&lt;br&gt;轮到你了！&lt;/div&gt;
+    &lt;div&gt;点击继续&lt;/div&gt;
+  &lt;/div&gt;`,
+}
+</pre></div>
+
+<h3>“对手出了什么”浮层</h3>
+
+<p>在 <code>utils.js</code> 里有一个工具函数 <code>getLastPlayedCard(player)</code>，返回玩家上一次出的牌的定义。我们用计算属性包一下：</p>
+
+<div class="code" data-lang="js" data-file="components/ui.js"><pre>
+const OverlayContentLastPlay = {
+  props: ['opponent'],
+  setup(props) {
+    const lastPlayedCard = Vue.computed(() =&gt; getLastPlayedCard(props.opponent))
+    return { lastPlayedCard }
+  },
+  template: `&lt;div&gt;
+    &lt;div v-if="opponent.skippedTurn"&gt;{{ opponent.name }} 的回合被跳过了！&lt;/div&gt;
+    &lt;template v-else&gt;
+      &lt;div&gt;{{ opponent.name }} 刚刚打出了：&lt;/div&gt;
+      &lt;game-card :def="lastPlayedCard" /&gt;
+    &lt;/template&gt;
+  &lt;/div&gt;`,
+}
+</pre></div>
+
+<p>这里直接复用了前面写的 <code>GameCard</code> 组件。</p>
+
+<h3>“游戏结束”浮层</h3>
+
+<div class="code" data-lang="js" data-file="components/ui.js"><pre>
+const PlayerResult = {
+  props: ['player'],
+  setup(props) {
+    const result = Vue.computed(() =&gt; props.player.dead ? 'defeated' : 'victorious')
+    return { result }
+  },
+  template: `&lt;div class="player-result" :class="result"&gt;
+    &lt;span class="name"&gt;{{ player.name }}&lt;/span&gt;
+    &lt;span class="result"&gt;{{ result === 'defeated' ? '战败' : '胜利' }}&lt;/span&gt;
+  &lt;/div&gt;`,
+}
+
+const OverlayContentGameOver = {
+  props: ['players'],
+  template: `&lt;div&gt;
+    &lt;div class="big"&gt;游戏结束&lt;/div&gt;
+    &lt;player-result v-for="player in players" :key="player.name" :player="player" /&gt;
+  &lt;/div&gt;`,
+}
+</pre></div>
+
+<h3>动态组件 &lt;component :is&gt;</h3>
+
+<p>
+  三种浮层根据 <code>activeOverlay</code> 的值显示其中一个。为此先给 state 加几个 <strong>getter</strong>，方便取当前玩家和对手：
+</p>
+
+<div class="code" data-lang="js" data-file="state.js"><pre>
+const state = Vue.reactive({
+  // ...
+  get currentPlayer() {
+    return state.players[state.currentPlayerIndex]
+  },
+  get currentOpponentId() {
+    return state.currentPlayerIndex === 0 ? 1 : 0
+  },
+  get currentOpponent() {
+    return state.players[state.currentOpponentId]
+  },
+})
+</pre></div>
+
+<p>最直接的写法是三个 <code>v-if</code>：</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;game-overlay v-if="state.activeOverlay"&gt;
+  &lt;overlay-content-player-turn v-if="state.activeOverlay === 'player-turn'" :player="state.currentPlayer" /&gt;
+  &lt;overlay-content-last-play v-else-if="state.activeOverlay === 'last-play'" :opponent="state.currentOpponent" /&gt;
+  &lt;overlay-content-game-over v-else-if="state.activeOverlay === 'game-over'" :players="state.players" /&gt;
+&lt;/game-overlay&gt;
+</pre></div>
+
+<p>
+  有点啰嗦。Vue 有一个特殊的内置元素 <code>&lt;component&gt;</code>，它可以“变身”成任何组件：<code>is</code> 属性给它组件名（或组件对象），它就渲染成那个组件。
+  我们的三个内容组件恰好都以 <code>overlay-content-</code> 开头……
+</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;game-overlay v-if="state.activeOverlay"&gt;
+  &lt;component :is="'overlay-content-' + state.activeOverlay"
+             :player="state.currentPlayer"
+             :opponent="state.currentOpponent"
+             :players="state.players" /&gt;
+&lt;/game-overlay&gt;
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="动态组件根据 activeOverlay 的值切换成不同组件">
+  <rect class="bx-b" x="20" y="80" width="170" height="60" rx="10"/>
+  <text class="mono sm on-b" x="105" y="104" text-anchor="middle">state.activeOverlay</text>
+  <text class="mono" x="105" y="126" text-anchor="middle">'last-play'</text>
+
+  <rect class="bx-a" x="250" y="74" width="210" height="72" rx="12"/>
+  <text class="mono sm on-a" x="355" y="100" text-anchor="middle">&lt;component :is="</text>
+  <text class="mono sm on-a" x="355" y="120" text-anchor="middle">'overlay-content-' + …"&gt;</text>
+  <path class="ln-b" d="M192 110 H246" marker-end="url(#ar)"/>
+
+  <rect class="bx" x="530" y="20" width="210" height="44" rx="8"/>
+  <text class="mono sm" x="635" y="47" text-anchor="middle">overlay-content-player-turn</text>
+  <rect class="bx-g" x="530" y="88" width="210" height="44" rx="8" style="stroke-width:2.2"/>
+  <text class="mono sm on-g" x="635" y="115" text-anchor="middle">overlay-content-last-play ✓</text>
+  <rect class="bx" x="530" y="156" width="210" height="44" rx="8"/>
+  <text class="mono sm" x="635" y="183" text-anchor="middle">overlay-content-game-over</text>
+  <path class="ln-d" d="M462 100 L526 44"/>
+  <path class="ln-g" d="M462 110 H526" marker-end="url(#ar)"/>
+  <path class="ln-d" d="M462 120 L526 176"/>
+</svg>
+<figcaption>图 3-10　一个 &lt;component&gt; 取代三个 v-if</figcaption>
+</figure>
+
+<p>多余的 prop 不会影响各个浮层的工作（没声明的 prop 会作为普通属性透传到根元素上）。在控制台试试：</p>
+
+<div class="code" data-lang="js" data-file="浏览器控制台"><pre>
+state.activeOverlay = 'player-turn'
+state.players[0].lastPlayedCardId = 'catapult'
+state.activeOverlay = 'last-play'
+state.activeOverlay = 'game-over'
+state.activeOverlay = null
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; :is 用字符串的前提</div>
+  <p>
+    <code>:is="'overlay-content-xxx'"</code> 这种字符串写法，要求组件已经用 <code>app.component()</code> <strong>全局注册</strong>。
+    第 4 章使用单文件组件后，我们更常直接传组件对象：<code>:is="overlays[name]"</code>。
+  </p>
+</div>
+
+<h3>浮层动画与 key</h3>
+
+<p>用一个名为 <code>zoom</code> 的过渡包住浮层：</p>
+
+<div class="code" data-lang="css" data-file="transitions.css"><pre>
+.zoom-enter-active,
+.zoom-leave-active {
+  transition: opacity .3s, transform .3s;
+}
+.zoom-enter-from,
+.zoom-leave-to {
+  opacity: 0;
+  transform: scale(.7);
+}
+</pre></div>
+
+<p>
+  试一下会发现：从“无浮层”到“有浮层”有动画，反过来也有；但<strong>从一个浮层切换到另一个</strong>时没有动画。
+  原因还是就地复用：<code>&lt;game-overlay&gt;</code> 一直存在，Vue 只是换掉了它里面的内容。
+  给它加一个随浮层变化的 <code>key</code>，Vue 就会把不同的浮层当作不同的元素 —— 旧的离开、新的进入：
+</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;transition name="zoom"&gt;
+  &lt;game-overlay v-if="state.activeOverlay" :key="state.activeOverlay"&gt;
+    &lt;component :is="'overlay-content-' + state.activeOverlay" ... /&gt;
+  &lt;/game-overlay&gt;
+&lt;/transition&gt;
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 用 key 强制“换一个新的”</div>
+  <p>这是一个通用技巧：给元素或组件一个会变化的 <code>key</code>，每次 key 变化，Vue 都会销毁旧的、创建新的。常用于触发过渡，或者重置组件内部状态。</p>
+</div>
+
+<h3>浮层背景</h3>
+
+<p>半透明背景不能放在浮层组件里面，否则会跟着一起缩放，很别扭。把它单独放在外面，用淡入淡出：</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;transition name="fade"&gt;
+  &lt;div class="overlay-background" v-if="state.activeOverlay" /&gt;
+&lt;/transition&gt;
+</pre></div>
+
+<h2 id="world">游戏世界与场景</h2>
+
+<p>界面层基本完成了，接下来是场景：城堡、旗帜、数值气泡和飘动的云。新建 <code>components/world.js</code>，在 <code>ui.js</code> 之后引入。</p>
+
+<h3>城堡</h3>
+
+<div class="code" data-lang="js" data-file="components/world.js"><pre>
+const PlayerCastle = {
+  props: ['player', 'index'],
+  template: `&lt;div class="castle" :class="'player-' + index"&gt;
+    &lt;img class="building" :src="'svg/castle' + index + '.svg'" /&gt;
+    &lt;img class="ground" :src="'svg/ground' + index + '.svg'" /&gt;
+    &lt;castle-banners :player="player" /&gt;
+  &lt;/div&gt;`,
+}
+</pre></div>
+
+<div class="code" data-lang="html" data-file="根组件模板（顶栏之后）"><pre>
+&lt;div class="world"&gt;
+  &lt;player-castle v-for="(player, index) in state.players" :key="index"
+                 :player="player" :index="index" /&gt;
+  &lt;div class="land" /&gt;
+&lt;/div&gt;
+</pre></div>
+
+<p><code>v-for="(player, index) in ..."</code> 的第二个变量是下标。每位玩家有自己的城堡图 <code>castle0.svg</code> / <code>castle1.svg</code> 和地面图。</p>
+
+<h3>城堡旗帜</h3>
+
+<p>每座城堡挂两面旗帜：绿色代表粮食，红色代表生命。旗帜长度随数值变化，旁边还有一个显示具体数字的气泡。</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="城堡旗帜和气泡的位置计算">
+  <rect class="bx-a" x="60" y="40" width="160" height="230" rx="6"/>
+  <text class="ttl on-a" x="140" y="160" text-anchor="middle">城堡</text>
+  <!-- food banner -->
+  <path d="M250 30 H274 V196 L262 184 L250 196 Z" style="fill:#288339;stroke:none"/>
+  <path d="M300 30 H324 V120 L312 108 L300 120 Z" style="fill:#9b2e2e;stroke:none"/>
+  <text class="sm" x="262" y="22" text-anchor="middle">粮食</text>
+  <text class="sm" x="312" y="22" text-anchor="middle">生命</text>
+  <!-- bubbles -->
+  <circle class="bx-g" cx="262" cy="222" r="16"/><text class="ttl on-g" x="262" y="227" text-anchor="middle">8</text>
+  <circle class="bx-r" cx="312" cy="146" r="16"/><text class="ttl on-r" x="312" y="151" text-anchor="middle">4</text>
+
+  <text class="ttl" x="380" y="50">banner-bar：动态 SVG</text>
+  <text class="mono sm" x="380" y="74">height = 220 × ratio + 40</text>
+  <text class="mono sm" x="380" y="94">ratio  = food / maxFood</text>
+  <text class="ttl" x="380" y="140">stat-bubble：随数值上下移动</text>
+  <text class="mono sm" x="380" y="164">top = (ratio × 220 + 40) × worldRatio px</text>
+  <text class="sm" x="380" y="196">ratio 从 0 到 1 → 位置从 40px 到 260px</text>
+  <text class="sm" x="380" y="216">（所有尺寸都乘以 worldRatio，以适应窗口）</text>
+  <text class="sm" x="380" y="252">8/10 的粮食 → 旗帜长、气泡低</text>
+  <text class="sm" x="380" y="270">4/10 的生命 → 旗帜短、气泡高</text>
+</svg>
+<figcaption>图 3-11　旗帜长度和气泡位置都由 ratio 计算</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="components/world.js"><pre>
+const CastleBanners = {
+  props: ['player'],
+  setup(props) {
+    const foodRatio = Vue.computed(() =&gt; props.player.food / maxFood)
+    const healthRatio = Vue.computed(() =&gt; props.player.health / maxHealth)
+    return { foodRatio, healthRatio }
+  },
+  template: `&lt;div class="banners"&gt;
+    &lt;!-- 粮食 --&gt;
+    &lt;img class="food-icon" src="svg/food-icon.svg" /&gt;
+    &lt;stat-bubble type="food" :value="player.food" :ratio="foodRatio" /&gt;
+    &lt;banner-bar class="food-bar" color="#288339" :ratio="foodRatio" /&gt;
+
+    &lt;!-- 生命 --&gt;
+    &lt;img class="health-icon" src="svg/health-icon.svg" /&gt;
+    &lt;stat-bubble type="health" :value="player.health" :ratio="healthRatio" /&gt;
+    &lt;banner-bar class="health-bar" color="#9b2e2e" :ratio="healthRatio" /&gt;
+  &lt;/div&gt;`,
+}
+</pre></div>
+
+<p><code>maxFood</code> 和 <code>maxHealth</code> 定义在 <code>state.js</code> 开头。</p>
+
+<h3>数值气泡</h3>
+
+<div class="code" data-lang="js" data-file="components/world.js"><pre>
+const StatBubble = {
+  props: ['type', 'value', 'ratio'],
+  setup(props) {
+    // :style 可以绑定一个对象，键是 CSS 属性名（camelCase）
+    const bubbleStyle = Vue.computed(() =&gt; ({
+      top: (props.ratio * 220 + 40) * state.worldRatio + 'px',
+    }))
+    return { bubbleStyle }
+  },
+  template: `&lt;div class="stat-bubble" :class="type + '-bubble'" :style="bubbleStyle"&gt;
+    &lt;img :src="'svg/' + type + '-bubble.svg'" /&gt;
+    &lt;div class="counter"&gt;{{ value }}&lt;/div&gt;
+  &lt;/div&gt;`,
+}
+</pre></div>
+
+<h3>旗帜：在模板里生成 SVG</h3>
+
+<p>
+  旗帜长度要能变化，所以不能用静态图片，要在模板里<strong>动态生成 SVG</strong>。Vue 模板可以直接写 SVG 标签，属性同样可以绑定。
+  原书在这里还介绍了第三种写模板的方式 —— 放在 <code>&lt;script type="text/x-template"&gt;</code> 里，用 id 引用：
+</p>
+
+<div class="code" data-lang="html" data-file="index.html（#app 之后）"><pre>
+&lt;script type="text/x-template" id="banner"&gt;
+  &lt;svg viewBox="0 0 20 260"&gt;
+    &lt;path :d="`m 0,0 20,0 0,${height} -10,-10 -10,10 z`"
+          :style="`fill:${color};stroke:none;`" /&gt;
+  &lt;/svg&gt;
+&lt;/script&gt;
+</pre></div>
+
+<div class="code" data-lang="js" data-file="components/world.js"><pre>
+const BannerBar = {
+  template: '#banner',   // 以 # 开头：去页面里找这个 id 的元素，用它的内容当模板
+  props: ['color', 'ratio'],
+  setup(props) {
+    const height = Vue.computed(() =&gt; 220 * props.ratio + 40)
+    return { height }
+  },
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; x-template 在今天</div>
+  <p>
+    Vue 3 依然支持 <code>template: '#id'</code>，但它只在“不用构建工具”的场景下有意义。第 4 章开始我们会用单文件组件（<code>.vue</code>），
+    模板、逻辑、样式都写在一个文件里，这种写法就不需要了。
+  </p>
+</div>
+
+<p>旗帜的路径 <code>m 0,0 20,0 0,${height} -10,-10 -10,10 z</code> 画的是一个底部有缺口的长条，高度由 <code>height</code> 决定：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="旗帜 SVG 路径的每一段">
+  <path d="M120 30 H180 V160 L150 130 L120 160 Z" style="fill:var(--green-bg);stroke:var(--green);stroke-width:2"/>
+  <circle cx="120" cy="30" r="4" style="fill:var(--accent)"/><text class="mono sm on-a" x="110" y="24" text-anchor="end">① m 0,0</text>
+  <circle cx="180" cy="30" r="4" style="fill:var(--accent)"/><text class="mono sm on-a" x="190" y="24">② 向右 20</text>
+  <circle cx="180" cy="160" r="4" style="fill:var(--accent)"/><text class="mono sm on-a" x="190" y="164">③ 向下 height</text>
+  <circle cx="150" cy="130" r="4" style="fill:var(--accent)"/><text class="mono sm on-a" x="150" y="186" text-anchor="middle">④ 左上 10,10　⑤ 左下 10,10</text>
+  <circle cx="120" cy="160" r="4" style="fill:var(--accent)"/>
+  <text class="mono sm on-a" x="110" y="164" text-anchor="end">z 闭合</text>
+
+  <text class="ttl" x="380" y="60">为什么能动态？</text>
+  <text class="sm" x="380" y="86">:d 绑定了一个模板字符串，height 是计算属性。</text>
+  <text class="sm" x="380" y="108">粮食减少 → ratio 变小 → height 变小</text>
+  <text class="sm" x="380" y="130">→ :d 重新计算 → Vue 更新 path 的 d 属性</text>
+  <text class="sm" x="380" y="152">→ 旗帜变短。</text>
+  <text class="sm" x="380" y="180">SVG 属性和 HTML 属性的绑定方式完全一样。</text>
+</svg>
+<figcaption>图 3-12　旗帜路径：一笔画出带缺口的长条</figcaption>
+</figure>
+
+<h3>让数值“动”起来</h3>
+
+<p>
+  现在旗帜长度会瞬间跳变。如果能平滑地伸缩就更好了。CSS 过渡帮不上忙（我们改的是 SVG 路径字符串），
+  所以要<strong>对数值本身做动画</strong>：让 <code>height</code> 在 500 毫秒内从旧值逐渐变到新值。
+</p>
+
+<p>
+  原书用了 TWEEN.js 库。为了少一个依赖，也为了看清原理，我们自己写一个只有十几行的补间函数，放进 <code>utils.js</code>：
+</p>
+
+<div class="code" data-lang="js" data-file="utils.js"><pre>
+// 缓动函数：输入 0~1 的进度，输出 0~1 的“加工后的进度”
+const easeInOutCubic = (t) =&gt; t &lt; .5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2
+
+// 补间动画：在 duration 毫秒内把数值从 from 变到 to
+function tween({ from, to, duration, delay = 0, easing = easeInOutCubic, onUpdate, onComplete }) {
+  let frameId
+  const start = performance.now() + delay
+  function frame(now) {
+    const t = Math.min(Math.max((now - start) / duration, 0), 1)
+    onUpdate(from + (to - from) * easing(t))
+    if (t &lt; 1) frameId = requestAnimationFrame(frame)
+    else onComplete?.()
+  }
+  frameId = requestAnimationFrame(frame)
+  return () =&gt; cancelAnimationFrame(frameId)   // 返回一个“取消”函数
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="补间动画：每一帧按缓动曲线计算中间值">
+  <path class="ln" d="M60 190 H360" marker-end="url(#ar)"/>
+  <path class="ln" d="M60 190 V20" marker-end="url(#ar)"/>
+  <text class="sm" x="350" y="210" text-anchor="end">时间进度 t →</text>
+  <text class="sm" x="68" y="22">值</text>
+  <text class="sm" x="52" y="194" text-anchor="end">from</text>
+  <text class="sm" x="52" y="44" text-anchor="end">to</text>
+  <path class="ln-d" d="M60 190 L340 40"/>
+  <path class="ln-a" d="M60 190 C170 190 230 40 340 40"/>
+  <text class="sm" x="230" y="118">线性</text>
+  <text class="sm on-a" x="270" y="66">easeInOutCubic</text>
+  <circle cx="110" cy="186" r="3.5" style="fill:var(--accent)"/>
+  <circle cx="160" cy="166" r="3.5" style="fill:var(--accent)"/>
+  <circle cx="200" cy="120" r="3.5" style="fill:var(--accent)"/>
+  <circle cx="240" cy="72" r="3.5" style="fill:var(--accent)"/>
+  <circle cx="290" cy="46" r="3.5" style="fill:var(--accent)"/>
+
+  <rect class="bx-b" x="420" y="30" width="320" height="160" rx="12"/>
+  <text class="ttl on-b" x="580" y="56" text-anchor="middle">每一帧（约 16ms）</text>
+  <text class="sm" x="440" y="84">① requestAnimationFrame 调用 frame(now)</text>
+  <text class="sm" x="440" y="108">② 算出进度 t = 已过时间 / 总时长</text>
+  <text class="sm" x="440" y="132">③ value = from + (to − from) × easing(t)</text>
+  <text class="sm" x="440" y="156">④ onUpdate(value) → 写进 ref → 重新渲染</text>
+  <text class="sm" x="440" y="180">⑤ t &lt; 1 就预约下一帧</text>
+</svg>
+<figcaption>图 3-13　补间动画就是“每帧算一个中间值”</figcaption>
+</figure>
+
+<p>然后在旗帜组件里，把计算属性改名为 <code>targetHeight</code>（目标高度），另用一个 ref <code>height</code> 存“正在显示的高度”，侦听目标变化时启动动画：</p>
+
+<div class="code" data-lang="js" data-file="components/world.js"><pre>
+const BannerBar = {
+  template: '#banner',
+  props: ['color', 'ratio'],
+  setup(props) {
+    const targetHeight = Vue.computed(() =&gt; 220 * props.ratio + 40)
+    const height = Vue.ref(targetHeight.value)   // 初始值 = 目标值
+
+    let cancel
+    Vue.watch(targetHeight, (newValue, oldValue) =&gt; {
+      cancel?.()                                 // 上一个动画还没完？先停掉
+      cancel = tween({
+        from: oldValue,
+        to: newValue,
+        duration: 500,
+        onUpdate: (v) =&gt; { height.value = Math.round(v) },
+      })
+    })
+    Vue.onBeforeUnmount(() =&gt; cancel?.())        // 组件被销毁时清理
+
+    return { height }
+  },
+}
+</pre></div>
+
+<div class="box key">
+  <div class="t">&#9733; 告别 const vm = this</div>
+  <p>
+    原书在 TWEEN 的回调里不得不写 <code>const vm = this</code>，因为回调里的 <code>this</code> 指向 Tween 对象而不是组件。
+    组合式 API 里根本没有 <code>this</code>，<code>height</code> 就是一个闭包里的变量，这类问题自然消失了。
+  </p>
+</div>
+
+<div class="box tip">
+  <div class="t">&#10003; 现成的方案</div>
+  <p>
+    TWEEN.js 仍然可用（包名已改为 <code>@tweenjs/tween.js</code>）。在使用构建工具的项目中，VueUse 的 <code>useTransition</code>
+    可以一行把一个 ref “变成会平滑过渡的 ref”。另外，<code>requestAnimationFrame</code> 在标签页不可见时会暂停，既省电又省资源。
+  </p>
+</div>
+
+<h3>飘动的云</h3>
+
+<p>
+  最后给天空加一些从左往右飘的云。每朵云的高度、速度都随机；越快的云离我们越“近”，用 <code>z-index</code> 显示在前面。
+  这里要用到一个新东西：<strong>模板引用</strong>，用来拿到组件根元素的真实 DOM，读它的宽度。
+</p>
+
+<div class="code" data-lang="js" data-file="components/world.js"><pre>
+const cloudAnimationDurations = {
+  min: 10000, // 10 秒
+  max: 50000, // 50 秒
+}
+
+const SkyCloud = {
+  props: ['type'],   // 1~5，对应五种云的图片
+  setup(props) {
+    const root = Vue.ref(null)                 // ① 声明一个同名的 ref
+    const style = Vue.reactive({ transform: 'none', zIndex: 0 })
+    let cancel
+
+    function setPosition(left, top) {
+      // 用 transform 移动，性能比改 left/top 好
+      style.transform = `translate(${left}px, ${top}px)`
+    }
+
+    function initPosition() {
+      // 图片加载完才知道宽度：先把云藏到屏幕左边外面
+      setPosition(-root.value.clientWidth, 0)
+    }
+
+    function startAnimation(delay = 0) {
+      const width = root.value.clientWidth
+      const { min, max } = cloudAnimationDurations
+      const duration = Math.random() * (max - min) + min
+      style.zIndex = Math.round(max - duration)          // 越快越靠前
+      const top = Math.random() * (window.innerHeight * 0.3)
+
+      cancel = tween({
+        from: -width,
+        to: window.innerWidth,
+        duration,
+        delay,
+        easing: (t) =&gt; t,                                // 匀速
+        onUpdate: (x) =&gt; setPosition(x, top),
+        onComplete: () =&gt; startAnimation(Math.random() * 10000),
+      })
+    }
+
+    Vue.onMounted(() =&gt; {
+      // 负的延迟 = 动画“已经进行了一段时间”，开局时云就分布在天空各处
+      startAnimation(-Math.random() * cloudAnimationDurations.min)
+    })
+    Vue.onBeforeUnmount(() =&gt; cancel?.())
+
+    return { root, style, initPosition }
+  },
+  template: `&lt;div ref="root" class="cloud" :class="'cloud-' + type" :style="style"&gt;
+    &lt;img :src="'svg/cloud' + type + '.svg'" @load="initPosition" /&gt;
+  &lt;/div&gt;`,
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="模板引用：ref 属性把 DOM 元素放进同名的 ref 变量">
+  <rect class="bx-g" x="20" y="40" width="300" height="110" rx="12"/>
+  <text class="ttl on-g" x="170" y="64" text-anchor="middle">模板</text>
+  <text class="mono sm" x="40" y="96">&lt;div</text>
+  <rect class="bx-a" x="82" y="82" width="90" height="22" rx="4"/>
+  <text class="mono sm on-a" x="127" y="98" text-anchor="middle">ref="root"</text>
+  <text class="mono sm" x="178" y="96">class="cloud"&gt;</text>
+  <text class="mono sm" x="40" y="126">…</text>
+
+  <rect class="bx-b" x="440" y="40" width="300" height="110" rx="12"/>
+  <text class="ttl on-b" x="590" y="64" text-anchor="middle">setup()</text>
+  <rect class="bx-a" x="460" y="80" width="260" height="24" rx="4"/>
+  <text class="mono sm on-a" x="590" y="97" text-anchor="middle">const root = ref(null)</text>
+  <text class="mono sm" x="460" y="132">onMounted → root.value 是 &lt;div&gt;</text>
+
+  <path class="ln-a" d="M322 95 H436" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="379" y="86" text-anchor="middle">名字相同 → 自动连接</text>
+  <text class="lbl" x="380" y="184" text-anchor="middle">挂载前 root.value 是 null；挂载后才是真实元素。Vue 3.5+ 也可以写 useTemplateRef('root')</text>
+</svg>
+<figcaption>图 3-14　模板引用：取代原书的 this.$el</figcaption>
+</figure>
+
+<div class="vs">
+  <div class="old"><div class="h">原书 · Vue 2</div>
+<div class="code" data-lang="js"><pre>
+initPosition () {
+  const width = this.$el.clientWidth
+  this.setPosition(-width, 0)
+}
+</pre></div></div>
+  <div class="new"><div class="h">Vue 3</div>
+<div class="code" data-lang="js"><pre>
+const root = ref(null)  // 模板里 ref="root"
+
+function initPosition() {
+  setPosition(-root.value.clientWidth, 0)
+}
+</pre></div></div>
+</div>
+
+<p>在世界层里放 10 朵云，<code>type</code> 在 1~5 之间循环：</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;div class="clouds"&gt;
+  &lt;sky-cloud v-for="index in 10" :key="index" :type="(index - 1) % 5 + 1" /&gt;
+&lt;/div&gt;
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; v-for 遍历数字</div>
+  <p><code>v-for="index in 10"</code> 会从 <strong>1</strong> 数到 10（不是从 0 开始）。<code>(index - 1) % 5 + 1</code> 得到 1,2,3,4,5,1,2,3,4,5。</p>
+</div>
+
+<h2 id="gameplay">游戏逻辑</h2>
+
+<p>所有组件都做好了！现在加上游戏逻辑，让它真正能玩。每个回合的流程如下：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 372" role="img" aria-label="游戏回合流程图">
+<g transform="translate(0,16)">
+  <rect class="bx-a" x="20" y="20" width="140" height="44" rx="10"/>
+  <text class="ttl on-a" x="90" y="47" text-anchor="middle">开局：各抽 5 张</text>
+  <path class="ln" d="M162 42 H206" marker-end="url(#ar)"/>
+
+  <rect class="bx-r" x="210" y="14" width="170" height="56" rx="10"/>
+  <text class="on-r" x="295" y="38" text-anchor="middle">浮层：轮到你了</text>
+  <text class="mono sm" x="295" y="58" text-anchor="middle">'player-turn'</text>
+
+  <path class="ln" d="M382 42 H426" marker-end="url(#ar)"/>
+  <text class="halo sm" x="404" y="34" text-anchor="middle">点击</text>
+  <rect class="bx-r" x="430" y="14" width="170" height="56" rx="10"/>
+  <text class="on-r" x="515" y="38" text-anchor="middle">浮层：对手出了什么</text>
+  <text class="mono sm" x="515" y="58" text-anchor="middle">'last-play'</text>
+  <path class="ln-d" d="M295 72 C295 100 470 100 470 116" marker-end="url(#ar)"/>
+  <text class="halo sm" x="380" y="100" text-anchor="middle">第 1 回合直接跳过</text>
+  <path class="ln" d="M515 72 V116" marker-end="url(#ar)"/>
+
+  <rect class="bx-b" x="420" y="120" width="190" height="56" rx="10"/>
+  <text class="on-b ttl" x="515" y="144" text-anchor="middle">newTurn()</text>
+  <text class="sm" x="515" y="164" text-anchor="middle">隐藏浮层</text>
+
+  <path class="ln" d="M610 148 H650 V206" marker-end="url(#ar)"/>
+  <text class="halo sm" x="660" y="180">被跳过？</text>
+  <rect class="bx-p" x="590" y="210" width="150" height="50" rx="10"/>
+  <text class="on-p" x="665" y="232" text-anchor="middle">skipTurn()</text>
+  <text class="sm" x="665" y="250" text-anchor="middle">直接下一回合</text>
+
+  <path class="ln" d="M470 178 V206" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="380" y="210" width="180" height="50" rx="10"/>
+  <text class="on-g" x="470" y="232" text-anchor="middle">startTurn()</text>
+  <text class="sm" x="470" y="250" text-anchor="middle">抽 1 张 · canPlay = true</text>
+
+  <path class="ln" d="M378 235 H334" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="170" y="210" width="160" height="50" rx="10"/>
+  <text class="on-g" x="250" y="232" text-anchor="middle">玩家点击一张牌</text>
+  <text class="mono sm" x="250" y="250" text-anchor="middle">playCard()</text>
+
+  <path class="ln" d="M250 262 V290" marker-end="url(#ar)"/>
+  <rect class="bx" x="150" y="294" width="200" height="50" rx="10"/>
+  <text x="250" y="316" text-anchor="middle">等出牌动画结束</text>
+  <text class="mono sm" x="250" y="334" text-anchor="middle">@after-leave → applyCard()</text>
+
+  <path class="ln" d="M148 319 H110 V280" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="20" y="226" width="130" height="50" rx="10"/>
+  <text class="on-a" x="85" y="248" text-anchor="middle">有人阵亡？</text>
+  <text class="sm" x="85" y="266" text-anchor="middle">等待 700ms 后判断</text>
+
+  <path class="ln-r" d="M60 224 V150" marker-end="url(#ar)"/>
+  <rect class="bx-r" x="16" y="104" width="130" height="44" rx="10"/>
+  <text class="on-r" x="81" y="124" text-anchor="middle">是：游戏结束</text>
+  <text class="mono sm" x="81" y="140" text-anchor="middle">'game-over'</text>
+
+  <path class="ln-a" d="M120 224 C120 160 200 140 250 76" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="196" y="140">否：nextTurn()</text>
+  <text class="halo sm on-a" x="196" y="156">回合 +1，换人</text>
+
+  <path class="ln" d="M742 235 H752 V-8 H330 V10" marker-end="url(#ar)"/>
+  <text class="halo sm" x="744" y="120" text-anchor="end">nextTurn()</text>
+</g>
+</svg>
+<figcaption>图 3-15　一个回合的完整流程</figcaption>
+</figure>
+
+<h3>抽牌堆与弃牌堆</h3>
+
+<p>先在状态里加两个牌堆：</p>
+
+<div class="code" data-lang="js" data-file="state.js"><pre>
+const state = Vue.reactive({
+  // ...
+  drawPile: pile,     // 抽牌堆：cards.js 里定义的 { 卡牌id: 张数 }
+  discardPile: {},    // 弃牌堆：结构相同
+})
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="抽牌堆、手牌、弃牌堆之间的流转">
+  <rect class="bx-b" x="20" y="50" width="200" height="110" rx="12"/>
+  <text class="ttl on-b" x="120" y="76" text-anchor="middle">抽牌堆 drawPile</text>
+  <text class="mono sm" x="120" y="102" text-anchor="middle">{ pikemen: 4,</text>
+  <text class="mono sm" x="120" y="120" text-anchor="middle">catapult: 4, … }</text>
+  <text class="sm" x="120" y="144" text-anchor="middle">按张数加权随机抽</text>
+
+  <rect class="bx-p" x="290" y="50" width="180" height="110" rx="12"/>
+  <text class="ttl on-p" x="380" y="76" text-anchor="middle">玩家手牌 hand</text>
+  <text class="mono sm" x="380" y="102" text-anchor="middle">[{ uid, id, def }, …]</text>
+  <text class="sm" x="380" y="126" text-anchor="middle">每张有唯一 uid</text>
+
+  <rect class="bx" x="540" y="50" width="200" height="110" rx="12"/>
+  <text class="ttl" x="640" y="76" text-anchor="middle">弃牌堆 discardPile</text>
+  <text class="mono sm" x="640" y="102" text-anchor="middle">{ catapult: 1, … }</text>
+  <text class="sm" x="640" y="126" text-anchor="middle">打出的牌</text>
+
+  <path class="ln-b" d="M222 105 H286" marker-end="url(#ar)"/>
+  <text class="halo mono sm on-b" x="254" y="96" text-anchor="middle">drawCard()</text>
+  <path class="ln-p" d="M472 105 H536" marker-end="url(#ar)"/>
+  <text class="halo mono sm on-p" x="504" y="96" text-anchor="middle">playCard()</text>
+  <path class="ln-a" d="M640 162 V186 H120 V164" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="380" y="190" text-anchor="middle">抽牌堆空了：refillPile() 把弃牌堆倒回去</text>
+</svg>
+<figcaption>图 3-16　卡牌的循环</figcaption>
+</figure>
+
+<div class="box note">
+  <div class="t">&#9432; Vue 3 能检测到新增的属性</div>
+  <p>
+    <code>addCardToPile</code> 会给弃牌堆对象<strong>新增</strong>属性（<code>pile[cardId] = 1</code>）。在 Vue 2 里这种新增是检测不到的，
+    要用 <code>Vue.set</code>；Vue 3 的 Proxy 可以拦截新增属性，直接赋值就行。
+  </p>
+</div>
+
+<h3>开局</h3>
+
+<div class="code" data-lang="js" data-file="main.js"><pre>
+function beginGame() {
+  state.players.forEach(drawInitialHand)   // utils.js 里的函数：抽 5 张
+}
+</pre></div>
+
+<p>在根组件的 <code>setup</code> 里调用 <code>Vue.onMounted(beginGame)</code>。再给 state 加一个 getter 表示当前手牌，模板里就能把测试用的 <code>testHand</code> 换掉了：</p>
+
+<div class="code" data-lang="js" data-file="state.js"><pre>
+get currentHand() {
+  return state.currentPlayer.hand
+},
+</pre></div>
+
+<div class="code" data-lang="html"><pre>
+&lt;card-hand v-if="!state.activeOverlay" :cards="state.currentHand" @card-play="handlePlayCard" /&gt;
+</pre></div>
+
+<h3>出牌：不许作弊</h3>
+
+<p>出牌分三步：① 把牌从手里移到弃牌堆（这会触发离开动画）；② 等动画结束；③ 结算效果。</p>
+
+<p>
+  动画和等待期间，玩家可能会疯狂点击别的牌。所以加一个 <code>canPlay</code> 标志，出过牌就锁住；
+  同时用它给根元素加一个 CSS 类，没轮到出牌时禁用卡牌的鼠标事件：
+</p>
+
+<div class="code" data-lang="js" data-file="state.js"><pre>
+canPlay: false,
+</pre></div>
+
+<div class="code" data-lang="html" data-file="根组件模板"><pre>
+&lt;div class="game" :class="{ 'can-play': state.canPlay }"&gt;
+</pre></div>
+
+<div class="code" data-lang="js" data-file="main.js"><pre>
+let currentPlayingCard = null
+
+function playCard(card) {
+  if (state.canPlay) {
+    state.canPlay = false
+    currentPlayingCard = card
+
+    // 从手牌中移除
+    const index = state.currentPlayer.hand.indexOf(card)
+    state.currentPlayer.hand.splice(index, 1)
+
+    // 放进弃牌堆
+    addCardToPile(state.discardPile, card.id)
+  }
+}
+</pre></div>
+
+<h3>等出牌动画结束</h3>
+
+<p>
+  <code>&lt;Transition&gt;</code> 和 <code>&lt;TransitionGroup&gt;</code> 在每个阶段都会发出事件：
+  <code>before-enter</code>、<code>enter</code>、<code>after-enter</code>、<code>before-leave</code>、<code>leave</code>、<code>after-leave</code> 等。
+  我们需要的是 <code>after-leave</code>：
+</p>
+
+<div class="code" data-lang="js" data-file="components/ui.js"><pre>
+const CardHand = {
+  props: ['cards'],
+  emits: ['card-play', 'card-leave-end'],
+  template: `&lt;div class="hand"&gt;
+    &lt;div class="wrapper"&gt;
+      &lt;transition-group name="card" tag="div" class="cards"
+                        @after-leave="$emit('card-leave-end')"&gt;
+        &lt;game-card v-for="card of cards" :key="card.uid" :def="card.def"
+                   @play="$emit('card-play', card)" /&gt;
+      &lt;/transition-group&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;`,
+}
+</pre></div>
+
+<h3>结算效果</h3>
+
+<div class="code" data-lang="js" data-file="main.js"><pre>
+function applyCard() {
+  applyCardEffect(currentPlayingCard)   // utils.js：调用 card.def.play(玩家, 对手)
+
+  // 稍等片刻，让玩家看清发生了什么
+  setTimeout(() =&gt; {
+    state.players.forEach(checkPlayerLost)
+    if (isOnePlayerDead()) {
+      endGame()
+    } else {
+      nextTurn()
+    }
+  }, 700)
+}
+</pre></div>
+
+<h3>下一回合与新回合</h3>
+
+<div class="code" data-lang="js" data-file="main.js"><pre>
+function nextTurn() {
+  state.turn++
+  state.currentPlayerIndex = state.currentOpponentId
+  state.activeOverlay = 'player-turn'
+}
+
+function newTurn() {
+  state.activeOverlay = null
+  if (state.currentPlayer.skipTurn) {
+    skipTurn()
+  } else {
+    startTurn()
+  }
+}
+
+function skipTurn() {
+  state.currentPlayer.skippedTurn = true
+  state.currentPlayer.skipTurn = false
+  nextTurn()
+}
+
+function startTurn() {
+  state.currentPlayer.skippedTurn = false
+  // 两人都过了第一回合之后，每回合开始抽一张
+  if (state.turn &gt; 2) {
+    setTimeout(() =&gt; {
+      state.currentPlayer.hand.push(drawCard())
+      state.canPlay = true
+    }, 800)
+  } else {
+    state.canPlay = true
+  }
+}
+
+function endGame() {
+  state.activeOverlay = 'game-over'
+}
+</pre></div>
+
+<h3>点击浮层时做什么</h3>
+
+<p>用一个“浮层名 → 处理函数”的映射表，比一串 <code>if/else</code> 清晰：</p>
+
+<div class="code" data-lang="js" data-file="main.js"><pre>
+const overlayCloseHandlers = {
+  'player-turn'() {
+    if (state.turn &gt; 1) {
+      state.activeOverlay = 'last-play'
+    } else {
+      newTurn()           // 第一回合对手还没出过牌
+    }
+  },
+  'last-play'() {
+    newTurn()
+  },
+  'game-over'() {
+    location.reload()     // 重新开始
+  },
+}
+</pre></div>
+
+<h3>组装根组件</h3>
+
+<div class="code" data-lang="js" data-file="main.js"><pre>
+const { createApp, onMounted } = Vue
+
+const app = createApp({
+  name: 'Game',
+  setup() {
+    onMounted(beginGame)
+    return {
+      state,
+      handlePlayCard: playCard,
+      handleCardLeaveEnd: applyCard,
+      handleOverlayClose: () =&gt; overlayCloseHandlers[state.activeOverlay](),
+    }
+  },
+  template: `&lt;div class="game" :class="{ 'can-play': state.canPlay }"&gt;
+    &lt;top-bar :turn="state.turn" :current-player-index="state.currentPlayerIndex" :players="state.players" /&gt;
+
+    &lt;div class="world"&gt;
+      &lt;player-castle v-for="(player, index) in state.players" :key="index" :player="player" :index="index" /&gt;
+      &lt;div class="land" /&gt;
+      &lt;div class="clouds"&gt;
+        &lt;sky-cloud v-for="index in 10" :key="index" :type="(index - 1) % 5 + 1" /&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;transition name="hand"&gt;
+      &lt;card-hand v-if="!state.activeOverlay" :cards="state.currentHand"
+                 @card-play="handlePlayCard" @card-leave-end="handleCardLeaveEnd" /&gt;
+    &lt;/transition&gt;
+
+    &lt;transition name="fade"&gt;
+      &lt;div class="overlay-background" v-if="state.activeOverlay" /&gt;
+    &lt;/transition&gt;
+
+    &lt;transition name="zoom"&gt;
+      &lt;game-overlay v-if="state.activeOverlay" :key="state.activeOverlay" @close="handleOverlayClose"&gt;
+        &lt;component :is="'overlay-content-' + state.activeOverlay"
+                   :player="state.currentPlayer" :opponent="state.currentOpponent" :players="state.players" /&gt;
+      &lt;/game-overlay&gt;
+    &lt;/transition&gt;
+  &lt;/div&gt;`,
+})
+
+// 注册所有组件
+const components = {
+  TopBar, GameCard, CardHand, GameOverlay,
+  OverlayContentPlayerTurn, OverlayContentLastPlay, OverlayContentGameOver, PlayerResult,
+  PlayerCastle, CastleBanners, StatBubble, BannerBar, SkyCloud,
+}
+for (const [name, def] of Object.entries(components)) {
+  app.component(name, def)
+}
+
+app.mount('#app')
+
+// 窗口尺寸变化
+window.addEventListener('resize', () =&gt; {
+  state.worldRatio = getWorldRatio()
+})
+
+// 开局显示“轮到你了”
+state.activeOverlay = 'player-turn'
+</pre></div>
+
+<p>游戏完成了！找个朋友来一局吧。</p>
+
+<h2 id="summary">小结</h2>
+
+<div class="tw"><table>
+<thead><tr><th>主题</th><th>Vue 3 写法</th><th>和原书的不同</th></tr></thead>
+<tbody>
+<tr><td>全局状态</td><td><code>reactive({...})</code></td><td>Vue 2 直接把对象传给 <code>data</code></td></tr>
+<tr><td>注册组件</td><td><code>app.component(name, def)</code></td><td>不再是 <code>Vue.component</code></td></tr>
+<tr><td>父传子</td><td><code>props: [...]</code>，<code>setup(props)</code></td><td>—</td></tr>
+<tr><td>子传父</td><td><code>emits: [...]</code>，<code>setup(props, { emit })</code></td><td>建议声明 <code>emits</code>；<code>$on</code> 已移除</td></tr>
+<tr><td>组件上的原生事件</td><td>直接 <code>@click</code>（透传到根元素）</td><td><code>.native</code> 已移除</td></tr>
+<tr><td>插槽</td><td><code>&lt;slot /&gt;</code></td><td>—</td></tr>
+<tr><td>动态组件</td><td><code>&lt;component :is&gt;</code></td><td>—</td></tr>
+<tr><td>过渡类名</td><td><code>v-enter-from</code> / <code>v-leave-from</code></td><td>原来叫 <code>v-enter</code> / <code>v-leave</code></td></tr>
+<tr><td>列表过渡</td><td><code>&lt;TransitionGroup tag="div"&gt;</code></td><td>默认不再渲染 <code>&lt;span&gt;</code></td></tr>
+<tr><td>访问 DOM</td><td>模板引用 <code>ref="root"</code></td><td>代替 <code>this.$el</code></td></tr>
+<tr><td>数值动画</td><td>自写 <code>tween()</code> / VueUse</td><td>原书用 TWEEN.js + <code>const vm = this</code></td></tr>
+</tbody>
+</table></div>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>给 <code>GameCard</code> 加上键盘支持：<code>tabindex="0"</code>，按回车时也发出 <code>play</code> 事件。体会为什么用自定义事件比直接监听 click 更灵活。</li>
+    <li>把 <code>props: ['def']</code> 改成对象写法，声明类型和必填：<code>props: { def: { type: Object, required: true } }</code>，然后故意不传，观察控制台警告。</li>
+    <li>在顶栏里显示抽牌堆剩余的张数（提示：<code>utils.js</code> 里有 <code>getDrawPileCount</code>）。</li>
+    <li>给数值气泡里的数字也加上补间动画，让 10 → 7 时数字逐个递减。</li>
+    <li>添加一张新卡牌“丰收”：获得 4 点粮食，但对手也获得 1 点粮食。只需要改 <code>cards.js</code>。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+<script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+<script>
+  if (window.Vue) {
+    const defs = [
+      { title: '投石机', type: 'attack' }, { title: '长枪兵', type: 'attack' },
+      { title: '修缮', type: 'support' }, { title: '粮仓', type: 'support' },
+      { title: '火球', type: 'special' }, { title: '诅咒', type: 'special' },
+    ]
+    let uid = 0
+    const pick = () => ({ ...defs[Math.floor(Math.random() * defs.length)], uid: uid++ })
+    Vue.createApp({
+      setup() {
+        const hand = Vue.ref(Array.from({ length: 5 }, pick))
+        const show = Vue.ref(true)
+        const log = Vue.ref('点击一张牌把它打出去')
+        function play(c) {
+          hand.value.splice(hand.value.indexOf(c), 1)
+          log.value = `打出了 uid ${c.uid}（${c.title}）……`
+        }
+        function draw() { hand.value.push(pick()); log.value = '抽了一张：从右侧滑入（enter-from）' }
+        return { hand, show, log, play, draw }
+      }
+    }).mount('#demo-hand')
+  }
+</script>
+</body>
+</html>

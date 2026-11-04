@@ -1,0 +1,1300 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 7 章 · 项目五：在线商店与规模化 — Vue 3 项目实战教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="7">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 7 章 · 项目五</span>
+<h1>在线商店与规模化</h1>
+<p class="lede">
+  这一章快速搭起一个“时装店”应用，然后把精力放在让项目<strong>能长大</strong>的工程实践上：
+  CSS 兼容处理、代码检查、单元测试、国际化与代码分割，以及服务端渲染。
+  原书这一章大半篇幅在手写 webpack 配置 —— 在今天的生态里，这些几乎都变成了“开箱即用”。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>知道 Vite 内置了哪些 CSS 处理，如何用 browserslist 控制兼容范围</li>
+    <li>用 ESLint 9 扁平配置 + eslint-plugin-vue 检查代码</li>
+    <li>用 Vitest + Vue Test Utils 给组件写单元测试和快照测试</li>
+    <li>用 vue-i18n 11 做多语言，并通过动态 <code>import()</code> 按需加载语言包</li>
+    <li>理解服务端渲染（SSR）和“水合”，知道何时用 Nuxt、何时手写 Vite SSR</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="setup">项目搭建</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="时装店应用界面：商品列表、购物车侧栏和页脚">
+  <rect class="bx" x="20" y="14" width="720" height="222" rx="12"/>
+  <rect class="bx-a" x="34" y="26" width="692" height="36" rx="8"/>
+  <text class="ttl on-a" x="54" y="49">Fashion Store</text>
+  <text class="sm" x="560" y="49">🛒 购物车 (3)</text>
+  <rect class="bx" x="34" y="72" width="100" height="112" rx="8"/>
+  <rect class="bx-d" x="44" y="82" width="80" height="56" rx="4"/>
+  <text class="sm" x="84" y="156" text-anchor="middle">蓝色袜子</text>
+  <text class="sm on-a" x="84" y="174" text-anchor="middle">¥2.99</text>
+  <rect class="bx" x="144" y="72" width="100" height="112" rx="8"/>
+  <rect class="bx-d" x="154" y="82" width="80" height="56" rx="4"/>
+  <text class="sm" x="194" y="156" text-anchor="middle">绿色袜子</text>
+  <text class="sm on-a" x="194" y="174" text-anchor="middle">¥3.99</text>
+  <rect class="bx" x="254" y="72" width="100" height="112" rx="8"/>
+  <rect class="bx-d" x="264" y="82" width="80" height="56" rx="4"/>
+  <text class="sm" x="304" y="156" text-anchor="middle">蓝色衬衫</text>
+  <text class="sm on-a" x="304" y="174" text-anchor="middle">¥16.99</text>
+  <rect class="bx" x="364" y="72" width="100" height="112" rx="8"/>
+  <text class="sm" x="414" y="132" text-anchor="middle">……</text>
+  <rect class="bx-b" x="526" y="72" width="200" height="112" rx="8"/>
+  <text class="ttl on-b" x="626" y="94" text-anchor="middle">购物车侧栏</text>
+  <text class="sm" x="540" y="118">蓝色袜子 × 2</text>
+  <text class="sm" x="540" y="138">蓝色衬衫 × 1</text>
+  <text class="sm on-b" x="540" y="166">去结算 →</text>
+  <rect class="bx" x="34" y="196" width="692" height="28" rx="6"/>
+  <text class="sm" x="380" y="214" text-anchor="middle">页脚：切换语言（本章新增，支持中 / 英 / 法 / 西 / 德）</text>
+</svg>
+<figcaption>图 7-1　时装店应用（功能代码已经写好，本章聚焦工程化）</figcaption>
+</figure>
+
+<p>这次在 create-vue 的功能菜单里多勾几项：</p>
+
+<div class="code" data-lang="bash" data-file="终端"><pre>
+npm create vue@latest e-shop
+# 勾选：Router、Pinia、Vitest、ESLint（可选 Prettier）
+cd e-shop
+npm install
+npm install -D stylus
+</pre></div>
+
+<p>
+  应用的业务代码已经写好（仓库 <code>Chapter07/chapter7-download/src</code>），这样我们能直接聚焦在工程化话题上。
+  原书的代码用的是 Vuex 模块（<code>cart</code>、<code>item</code>、<code>items</code>、<code>ui</code>），按上一章的方法把它们改成 Pinia store 即可。
+</p>
+
+<h3>用 json-server 快速生成一个 API</h3>
+
+<p>这次我们不关心后端，用 <code>json-server</code> 根据一个 JSON 文件自动生成 REST API：</p>
+
+<div class="code" data-lang="bash"><pre>
+npm install -D json-server
+</pre></div>
+
+<div class="code" data-lang="json" data-file="package.json（scripts）"><pre>
+"scripts": {
+  "dev": "vite",
+  "db": "json-server db.json --port 3000"
+}
+</pre></div>
+
+<p>
+  把仓库里的 <code>db.json</code> 放到项目根目录，运行 <code>npm run db</code>，访问 <code>http://localhost:3000/items</code> 就能看到商品列表。
+  json-server 会自动提供 <code>GET/POST/PUT/DELETE</code> 接口，修改会写回 <code>db.json</code>。
+</p>
+
+<div class="box warn">
+  <div class="t">&#9888; 商品图片地址已失效</div>
+  <p><code>db.json</code> 里的图片来自 lorempixel.com，这个服务早已关闭。把 <code>img</code> 字段改成 <code>https://picsum.photos/seed/socks1/400/400</code> 这样的占位图地址即可。</p>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; axios 还是 fetch</div>
+  <p>
+    原书安装了 axios 来发请求。axios 至今仍很流行（拦截器、超时、自动 JSON 很方便），但浏览器原生的 <code>fetch</code> 已经足够好用，
+    上两章我们也一直在用自己封装的 <code>$fetch</code>。选哪个都可以；Nuxt 生态里常用的是基于 fetch 的 <code>ofetch</code>。
+  </p>
+</div>
+
+<h2 id="workflow">现代开发工作流</h2>
+
+<p>本章要加入的工具，在开发流程中各司其职：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="开发工作流：编辑器中的 ESLint 与 Prettier、Vitest 监听测试、Vite 热更新，提交前检查，最后构建">
+  <rect class="bx-b" x="20" y="80" width="130" height="70" rx="10"/>
+  <text class="ttl on-b" x="85" y="108" text-anchor="middle">写代码</text>
+  <text class="sm" x="85" y="130" text-anchor="middle">VS Code</text>
+
+  <path class="ln" d="M152 100 L196 50" marker-end="url(#ar)"/>
+  <path class="ln" d="M152 115 H196" marker-end="url(#ar)"/>
+  <path class="ln" d="M152 130 L196 180" marker-end="url(#ar)"/>
+
+  <rect class="bx-p" x="200" y="20" width="200" height="56" rx="10"/>
+  <text class="on-p ttl" x="300" y="42" text-anchor="middle">ESLint + Prettier</text>
+  <text class="sm" x="300" y="62" text-anchor="middle">编辑器里实时标红、保存时修复</text>
+  <rect class="bx-g" x="200" y="88" width="200" height="56" rx="10"/>
+  <text class="on-g ttl" x="300" y="110" text-anchor="middle">Vite 开发服务器</text>
+  <text class="sm" x="300" y="130" text-anchor="middle">热更新，浏览器里立即看到</text>
+  <rect class="bx-a" x="200" y="156" width="200" height="56" rx="10"/>
+  <text class="on-a ttl" x="300" y="178" text-anchor="middle">Vitest（watch 模式）</text>
+  <text class="sm" x="300" y="198" text-anchor="middle">相关测试自动重跑</text>
+
+  <path class="ln" d="M402 115 H446" marker-end="url(#ar)"/>
+  <rect class="bx" x="450" y="80" width="130" height="70" rx="10"/>
+  <text class="ttl" x="515" y="108" text-anchor="middle">提交 / CI</text>
+  <text class="mono sm" x="515" y="130" text-anchor="middle">lint + test</text>
+  <path class="ln" d="M582 115 H616" marker-end="url(#ar)"/>
+  <rect class="bx-r" x="620" y="80" width="120" height="70" rx="10"/>
+  <text class="ttl on-r" x="680" y="108" text-anchor="middle">构建上线</text>
+  <text class="mono sm" x="680" y="130" text-anchor="middle">vite build</text>
+  <text class="lbl" x="380" y="234" text-anchor="middle">问题越早发现越便宜：编辑器 &lt; 测试 &lt; CI &lt; 线上</text>
+</svg>
+<figcaption>图 7-2　本章工具在开发流程中的位置</figcaption>
+</figure>
+
+<h2 id="postcss">CSS 兼容：PostCSS 与 browserslist</h2>
+
+<p>
+  写 CSS 时，我们希望它在大多数浏览器里都能正常工作，比如自动为 <code>user-select</code> 补上 <code>-webkit-user-select</code> 这样的厂商前缀。
+  <strong>PostCSS</strong> 是一个 CSS 后处理工具，靠插件工作；<strong>autoprefixer</strong> 是其中最有名的插件。
+</p>
+
+<p>
+  <strong>Vite 内置了 PostCSS</strong>：只要项目根目录有 <code>postcss.config.js</code>，它就会自动应用到所有 CSS（包括 <code>.vue</code> 里的 <code>&lt;style&gt;</code> 和 Stylus 编译后的结果）。
+</p>
+
+<div class="code" data-lang="bash"><pre>
+npm install -D autoprefixer
+</pre></div>
+
+<div class="code" data-lang="js" data-file="postcss.config.js"><pre>
+import autoprefixer from 'autoprefixer'
+
+export default {
+  plugins: [autoprefixer()],
+}
+</pre></div>
+
+<div class="vs">
+  <div class="old"><div class="h">你写的 Stylus</div>
+<div class="code" data-lang="stylus"><pre>
+.store-cart-item
+  user-select none
+</pre></div></div>
+  <div class="new"><div class="h">输出的 CSS</div>
+<div class="code" data-lang="css"><pre>
+.store-cart-item[data-v-1af8c5dc] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+</pre></div></div>
+</div>
+
+<h3>用 browserslist 指定目标浏览器</h3>
+
+<p>
+  要支持哪些浏览器，由 <a href="https://browsersl.ist/">browserslist</a> 配置决定（数据来自 caniuse.com）。在 <code>package.json</code> 里加一个字段：
+</p>
+
+<div class="code" data-lang="json" data-file="package.json"><pre>
+"browserslist": [
+  "defaults",          // ≈ 使用率 &gt; 0.5%、最近 2 个版本、仍在维护的浏览器
+  "not dead"
+]
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 原书的配置该换了</div>
+  <p>
+    原书用的是 <code>"&gt; 1%", "last 2 versions", "not ie &lt;= 8"</code>。现在推荐直接用 <code>defaults</code>；IE 已全面退役，不需要再写排除规则。
+    在 <a href="https://browsersl.ist/">browsersl.ist</a> 网站输入查询语句，能看到它具体覆盖了哪些浏览器。
+  </p>
+</div>
+
+<div class="box tip">
+  <div class="t">&#10003; 现在需要前缀的属性已经很少了</div>
+  <p>
+    主流浏览器早已停止新增厂商前缀，autoprefixer 在现代目标下实际补充的东西越来越少。Vite 还支持用更快的 Lightning CSS 取代 PostCSS
+    （<code>css: { transformer: 'lightningcss' }</code>），它同时负责加前缀和降级新语法。
+  </p>
+</div>
+
+<h2 id="eslint">用 ESLint 检查代码质量</h2>
+
+<p>
+  多人协作时，必须保证没有低级错误（比如用了未声明的变量），并让代码风格保持一致。自动检查代码的过程叫 <strong>lint</strong>。
+  ESLint 是 Vue 团队推荐的工具，<code>eslint-plugin-vue</code> 提供了遵循 <a href="https://cn.vuejs.org/style-guide/">Vue 官方风格指南</a>的规则。
+</p>
+
+<h3>ESLint 9 的扁平配置</h3>
+
+<p>
+  原书使用 <code>.eslintrc.js</code>，还要安装 <code>babel-eslint</code>、<code>eslint-config-standard</code> 及其四个配套插件。
+  ESLint 9 改用了全新的<strong>扁平配置（flat config）</strong>，文件名是 <code>eslint.config.js</code>，旧格式已被弃用。如果你在 create-vue 里勾选了 ESLint，它已经帮你生成好了，大致如下：
+</p>
+
+<div class="code" data-lang="js" data-file="eslint.config.js"><pre>
+import js from '@eslint/js'
+import pluginVue from 'eslint-plugin-vue'
+import globals from 'globals'
+
+export default [
+  // 1. 要检查哪些文件
+  { files: ['**/*.{js,mjs,jsx,vue}'] },
+
+  // 2. 忽略构建产物
+  { ignores: ['**/dist/**', '**/coverage/**'] },
+
+  // 3. 规则集：从通用到具体，后面的覆盖前面的
+  js.configs.recommended,                  // JavaScript 推荐规则
+  ...pluginVue.configs['flat/recommended'], // Vue 推荐规则（含 .vue 解析器）
+
+  // 4. 运行环境与自定义规则
+  {
+    languageOptions: {
+      globals: { ...globals.browser },     // window、document 等浏览器全局变量
+    },
+    rules: {
+      'comma-dangle': ['error', 'always-multiline'],
+      'vue/multi-word-component-names': 'warn',
+    },
+  },
+]
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="扁平配置是一个数组，各层配置按顺序合并，后面的覆盖前面的">
+  <text class="ttl" x="20" y="24">eslint.config.js 导出一个数组 —— 从上到下依次合并</text>
+  <rect class="bx" x="20" y="40" width="520" height="30" rx="6"/>
+  <text class="mono sm" x="34" y="60">{ files, ignores }　　　　　　决定哪些文件参与检查</text>
+  <rect class="bx-b" x="20" y="76" width="520" height="30" rx="6"/>
+  <text class="mono sm on-b" x="34" y="96">js.configs.recommended　　　no-undef、no-unused-vars …</text>
+  <rect class="bx-g" x="20" y="112" width="520" height="30" rx="6"/>
+  <text class="mono sm on-g" x="34" y="132">pluginVue flat/recommended　 vue/require-v-for-key …</text>
+  <rect class="bx-a" x="20" y="148" width="520" height="30" rx="6"/>
+  <text class="mono sm on-a" x="34" y="168">{ rules: { ... } }　　　　　 你的定制（优先级最高）</text>
+  <path class="ln-a" d="M560 46 V174" marker-end="url(#ar-a)"/>
+  <text class="sm on-a" x="572" y="100">后面的</text>
+  <text class="sm on-a" x="572" y="118">覆盖前面的</text>
+  <rect class="bx-d" x="20" y="190" width="720" height="30" rx="6"/>
+  <text class="sm" x="380" y="210" text-anchor="middle">没有 extends 字符串、没有隐式的级联查找 —— 用的就是 JS 的 import 和数组展开，所见即所得</text>
+</svg>
+<figcaption>图 7-3　ESLint 扁平配置的分层</figcaption>
+</figure>
+
+<p>规则的级别有三种：<code>'off'</code>（0）、<code>'warn'</code>（1）、<code>'error'</code>（2）。</p>
+
+<div class="box note">
+  <div class="t">&#9432; 想要 Standard 风格？</div>
+  <p>原书使用 StandardJS 风格（无分号、两空格缩进）。它的扁平配置继任者是社区维护的 <code>neostandard</code>：<code>npm i -D neostandard</code>，然后在数组里加上 <code>...neostandard()</code>。</p>
+</div>
+
+<h3>运行 ESLint</h3>
+
+<div class="code" data-lang="json" data-file="package.json（create-vue 生成的脚本）"><pre>
+"lint": "eslint . --fix"
+</pre></div>
+
+<p>
+  <code>--fix</code> 会自动修复能修复的问题（比如缺少的逗号）。剩下的需要手动处理。错误信息末尾会显示规则名，如 <code>no-unused-vars</code> 或 <code>vue/require-v-for-key</code>，
+  到 eslint.org 或 eslint.vuejs.org 搜索它就能看到详细说明。
+</p>
+
+<div class="box tip">
+  <div class="t">&#10003; 原书的 no-new 报错消失了</div>
+  <p>
+    原书在 <code>new Vue({...})</code> 这一行收到 <code>no-new</code> 错误（创建了对象却没有保存），只好加注释禁用。
+    Vue 3 写的是 <code>createApp(App).mount('#app')</code>，是函数调用而不是 <code>new</code>，这个问题自然不存在了。
+    真的需要临时禁用某条规则时，用 <code>// eslint-disable-next-line 规则名</code>。
+  </p>
+</div>
+
+<h3>让检查自动发生</h3>
+
+<p>
+  原书用 <code>eslint-loader</code> 把 ESLint 塞进 webpack，每次编译都跑一遍。现在更推荐的做法是把检查放在<strong>更早</strong>和<strong>更晚</strong>的环节，而不是拖慢开发服务器：
+</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#9998;&#65039;</span><h4>编辑器里</h4><p>安装 VS Code 的 ESLint 扩展，问题在你敲代码时就会被标红，可以配置保存时自动修复。</p></div>
+  <div class="card"><span class="ic">&#128274;</span><h4>提交前</h4><p>用 <code>husky</code> + <code>lint-staged</code>，在 <code>git commit</code> 时只检查改动过的文件。</p></div>
+  <div class="card"><span class="ic">&#9881;&#65039;</span><h4>CI 中</h4><p>在 GitHub Actions 等持续集成里运行 <code>npm run lint</code>，不合格的代码无法合并。</p></div>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; Prettier 和 ESLint 的分工</div>
+  <p>
+    ESLint 负责<strong>代码质量</strong>（可能的 bug、不推荐的写法），Prettier 负责<strong>代码格式</strong>（缩进、换行、引号）。create-vue 勾选 Prettier 时会自动关闭 ESLint 中与格式相关的规则，避免两者打架。
+    另外，用 Rust 编写的 <a href="https://oxc.rs/">Oxlint</a> 速度快几十倍，create-vue 也提供了把它和 ESLint 搭配使用的选项。
+  </p>
+</div>
+
+<h2 id="test">用 Vitest 做单元测试</h2>
+
+<p>
+  重要的代码和组件应该有单元测试：确认它按预期工作，并防止以后修改代码时把它改坏（回归）。原书使用 Jest，需要配置 <code>vue-jest</code>、<code>babel-jest</code>、
+  专门的 Babel 测试环境、<code>jest-serializer-vue</code>……
+</p>
+
+<p>
+  今天 Vue 官方推荐 <strong><a href="https://vitest.dev/">Vitest</a></strong>：它由 Vite 团队开发，<strong>直接复用你的 <code>vite.config.js</code></strong>，
+  所以 <code>.vue</code> 文件、别名、插件全都不用再配一遍；API 与 Jest 几乎相同，迁移成本很低。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="Jest 需要单独的一套转换配置，Vitest 复用 Vite 配置">
+  <text class="ttl" x="190" y="24" text-anchor="middle">原书：Jest</text>
+  <rect class="bx-d" x="40" y="40" width="140" height="40" rx="8"/><text class="sm" x="110" y="65" text-anchor="middle">webpack 配置</text>
+  <rect class="bx-d" x="200" y="40" width="140" height="40" rx="8"/><text class="sm" x="270" y="65" text-anchor="middle">jest.config.js</text>
+  <rect class="bx-d" x="40" y="92" width="140" height="40" rx="8"/><text class="sm" x="110" y="117" text-anchor="middle">.babelrc（test 环境）</text>
+  <rect class="bx-d" x="200" y="92" width="140" height="40" rx="8"/><text class="sm" x="270" y="117" text-anchor="middle">vue-jest / babel-jest</text>
+  <text class="sm on-r" x="190" y="160" text-anchor="middle">构建和测试是两套管线，</text>
+  <text class="sm on-r" x="190" y="178" text-anchor="middle">配置要写两遍、还可能不一致</text>
+
+  <path class="ln-d" d="M380 14 V200"/>
+
+  <text class="ttl on-a" x="570" y="24" text-anchor="middle">本教程：Vitest</text>
+  <rect class="bx-a" x="480" y="44" width="180" height="44" rx="10"/>
+  <text class="on-a ttl" x="570" y="71" text-anchor="middle">vite.config.js</text>
+  <path class="ln-a" d="M530 90 L490 120" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M610 90 L650 120" marker-end="url(#ar-a)"/>
+  <rect class="bx-g" x="410" y="124" width="140" height="40" rx="8"/><text class="sm on-g" x="480" y="149" text-anchor="middle">vite dev / build</text>
+  <rect class="bx-g" x="590" y="124" width="140" height="40" rx="8"/><text class="sm on-g" x="660" y="149" text-anchor="middle">vitest</text>
+  <text class="sm on-g" x="570" y="190" text-anchor="middle">同一套配置、同一套插件</text>
+  <text class="lbl" x="380" y="222" text-anchor="middle">API 几乎一致：describe / test / expect / toMatchSnapshot 都还在</text>
+</svg>
+<figcaption>图 7-4　Vitest 与 Vite 共用配置</figcaption>
+</figure>
+
+<h3>配置</h3>
+
+<p>create-vue 勾选 Vitest 后，已经安装好 <code>vitest</code>、<code>@vue/test-utils</code>（Vue 官方测试工具，第 2 版对应 Vue 3）和 <code>jsdom</code>（在 Node 里模拟浏览器 DOM），并生成了配置：</p>
+
+<div class="code" data-lang="js" data-file="vitest.config.js"><pre>
+import { fileURLToPath } from 'node:url'
+import { mergeConfig, defineConfig, configDefaults } from 'vitest/config'
+import viteConfig from './vite.config'
+
+export default mergeConfig(viteConfig, defineConfig({
+  test: {
+    environment: 'jsdom',                        // 用 jsdom 模拟浏览器环境
+    exclude: [...configDefaults.exclude, 'e2e/**'],
+    root: fileURLToPath(new URL('./', import.meta.url)),
+  },
+}))
+</pre></div>
+
+<div class="code" data-lang="json" data-file="package.json"><pre>
+"test:unit": "vitest"
+</pre></div>
+
+<h3>第一个单元测试</h3>
+
+<p>测试 <code>BaseButton.vue</code> 组件：点击它时，应该发出 <code>click</code> 事件。先把它改写成 <code>&lt;script setup&gt;</code>：</p>
+
+<div class="code" data-lang="vue" data-file="src/components/BaseButton.vue（script 部分）"><pre>
+&lt;script setup&gt;
+defineProps({
+  icon: { type: String, default: null },
+  badge: { type: [String, Number], default: null },
+  disabled: { type: Boolean, default: false },
+})
+const emit = defineEmits(['click'])
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;button class="base-button" :disabled="disabled" @click="emit('click', $event)"&gt;
+    &lt;i v-if="icon" class="material-icons icon"&gt;{{ icon }}&lt;/i&gt;
+    &lt;span class="content"&gt;&lt;slot /&gt;&lt;/span&gt;
+    &lt;div v-if="badge !== null" class="button-badge"&gt;&lt;span&gt;{{ badge }}&lt;/span&gt;&lt;/div&gt;
+  &lt;/button&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>测试文件以 <code>.spec.js</code> 或 <code>.test.js</code> 结尾，放在组件旁边或 <code>__tests__</code> 目录里：</p>
+
+<div class="code" data-lang="js" data-file="src/components/BaseButton.spec.js"><pre>
+import { describe, test, expect } from 'vitest'
+import { mount } from '@vue/test-utils'
+import BaseButton from './BaseButton.vue'
+
+describe('BaseButton', () =&gt; {          // 一组测试
+  test('点击时发出 click 事件', async () =&gt; { // 一个测试用例
+    // 准备：挂载组件，得到一个“包装器”
+    const wrapper = mount(BaseButton)
+
+    // 执行：模拟点击
+    await wrapper.trigger('click')
+
+    // 断言：click 事件被发出了
+    expect(wrapper.emitted('click')).toBeTruthy()
+  })
+
+  test('disabled 时按钮不可点击', () =&gt; {
+    const wrapper = mount(BaseButton, { props: { disabled: true } })
+    expect(wrapper.attributes('disabled')).toBeDefined()
+  })
+})
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 180" role="img" aria-label="单元测试的三步：准备、执行、断言">
+  <rect class="bx-b" x="20" y="40" width="220" height="100" rx="12"/>
+  <text class="ttl on-b" x="130" y="66" text-anchor="middle">① 准备 Arrange</text>
+  <text class="mono sm" x="130" y="92" text-anchor="middle">mount(组件, {</text>
+  <text class="mono sm" x="130" y="110" text-anchor="middle">props, slots })</text>
+  <path class="ln" d="M242 90 H266" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="270" y="40" width="220" height="100" rx="12"/>
+  <text class="ttl on-a" x="380" y="66" text-anchor="middle">② 执行 Act</text>
+  <text class="mono sm" x="380" y="92" text-anchor="middle">await wrapper</text>
+  <text class="mono sm" x="380" y="110" text-anchor="middle">.trigger('click')</text>
+  <path class="ln" d="M492 90 H516" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="520" y="40" width="220" height="100" rx="12"/>
+  <text class="ttl on-g" x="630" y="66" text-anchor="middle">③ 断言 Assert</text>
+  <text class="mono sm" x="630" y="92" text-anchor="middle">expect(wrapper</text>
+  <text class="mono sm" x="630" y="110" text-anchor="middle">.emitted('click'))…</text>
+  <text class="lbl" x="380" y="172" text-anchor="middle">trigger 返回 Promise：要 await，等 Vue 完成 DOM 更新后再断言</text>
+</svg>
+<figcaption>图 7-5　每个测试都遵循“准备 → 执行 → 断言”</figcaption>
+</figure>
+
+<div class="code" data-lang="bash"><pre>
+npm run test:unit
+</pre></div>
+
+<div class="code" data-lang="text" data-file="终端输出"><pre>
+ ✓ src/components/BaseButton.spec.js (2 tests) 18ms
+   ✓ BaseButton &gt; 点击时发出 click 事件
+   ✓ BaseButton &gt; disabled 时按钮不可点击
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+</pre></div>
+
+<p>Vitest 默认进入 watch 模式：修改组件或测试文件，相关测试会立即重跑。</p>
+
+<div class="vs">
+  <div class="old"><div class="h">原书 · vue-test-utils（beta）</div>
+<div class="code" data-lang="js"><pre>
+import { shallow } from 'vue-test-utils'
+
+const wrapper = shallow(BaseButton, {
+  propsData: { icon: 'add' },
+})
+wrapper.trigger('click')
+expect(wrapper.emitted().click).toBeTruthy()
+</pre></div></div>
+  <div class="new"><div class="h">@vue/test-utils 2</div>
+<div class="code" data-lang="js"><pre>
+import { mount, shallowMount } from '@vue/test-utils'
+
+const wrapper = mount(BaseButton, {
+  props: { icon: 'add' },     // propsData → props
+})
+await wrapper.trigger('click')
+expect(wrapper.emitted('click')).toBeTruthy()
+</pre></div></div>
+</div>
+
+<div class="box tip">
+  <div class="t">&#10003; 不再需要配置 ESLint 的 jest 环境</div>
+  <p>
+    原书要在 ESLint 里声明 <code>env: { jest: true }</code>，否则 <code>describe</code>、<code>test</code> 会被报“未定义”。
+    上面的写法从 <code>'vitest'</code> 显式导入了它们，ESLint 自然认识。（也可以开启 Vitest 的 <code>globals: true</code> 选项，再给 ESLint 加上 <code>globals.vitest</code>。）
+  </p>
+</div>
+
+<h3>快照测试</h3>
+
+<p>
+  快照测试把某个值（通常是组件渲染出的 HTML）保存下来，以后每次运行时进行比较。HTML 意外变了，测试就会失败，提醒你检查是不是引入了回归。
+  原书为此借用了服务端渲染的 <code>vue-server-renderer</code>；现在直接用 <code>wrapper.html()</code>：
+</p>
+
+<div class="code" data-lang="js" data-file="src/components/BaseButton.spec.js"><pre>
+test('快照', () =&gt; {
+  const wrapper = mount(BaseButton, {
+    props: {
+      icon: 'add',
+      disabled: true,
+      badge: '3',
+    },
+    slots: {
+      default: '&lt;span&gt;添加商品&lt;/span&gt;',
+    },
+  })
+  expect(wrapper.html()).toMatchSnapshot()
+})
+</pre></div>
+
+<p>第一次运行时会在旁边生成 <code>__snapshots__/BaseButton.spec.js.snap</code> 文件（记得提交到 Git）：</p>
+
+<div class="code" data-lang="text" data-file="__snapshots__/BaseButton.spec.js.snap"><pre>
+exports[`BaseButton &gt; 快照 1`] = `
+"&lt;button class="base-button" disabled=""&gt;&lt;i class="material-icons icon"&gt;add&lt;/i&gt;&lt;span class="content"&gt;&lt;span&gt;添加商品&lt;/span&gt;&lt;/span&gt;
+  &lt;div class="button-badge"&gt;&lt;span&gt;3&lt;/span&gt;&lt;/div&gt;
+&lt;/button&gt;"
+`;
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="快照测试的工作流程">
+  <rect class="bx-b" x="20" y="80" width="150" height="56" rx="10"/>
+  <text class="on-b ttl" x="95" y="104" text-anchor="middle">运行测试</text>
+  <text class="mono sm" x="95" y="124" text-anchor="middle">wrapper.html()</text>
+  <path class="ln" d="M172 108 H216" marker-end="url(#ar)"/>
+  <rect class="bx" x="220" y="74" width="150" height="68" rx="10"/>
+  <text class="ttl" x="295" y="100" text-anchor="middle">有快照文件吗？</text>
+  <path class="ln-a" d="M295 72 V40 H426" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="330" y="34">没有</text>
+  <rect class="bx-a" x="430" y="18" width="180" height="44" rx="10"/>
+  <text class="sm on-a" x="520" y="45" text-anchor="middle">保存为新快照 ✓</text>
+  <path class="ln" d="M372 108 H426" marker-end="url(#ar)"/>
+  <text class="halo sm" x="400" y="100" text-anchor="middle">有</text>
+  <rect class="bx" x="430" y="86" width="140" height="44" rx="10"/>
+  <text class="sm" x="500" y="113" text-anchor="middle">逐字比较</text>
+  <path class="ln-g" d="M572 98 H626" marker-end="url(#ar)"/>
+  <text class="halo sm on-g" x="598" y="90" text-anchor="middle">一致</text>
+  <rect class="bx-g" x="630" y="80" width="110" height="36" rx="8"/>
+  <text class="sm on-g" x="685" y="103" text-anchor="middle">通过 ✓</text>
+  <path class="ln-r" d="M500 132 V166 H626" marker-end="url(#ar)"/>
+  <text class="halo sm on-r" x="560" y="160" text-anchor="middle">不一致</text>
+  <rect class="bx-r" x="630" y="148" width="110" height="36" rx="8"/>
+  <text class="sm on-r" x="685" y="171" text-anchor="middle">失败 ✗</text>
+  <text class="lbl" x="250" y="190" text-anchor="middle">确认是有意的修改？运行 vitest -u 更新快照</text>
+</svg>
+<figcaption>图 7-6　快照测试流程</figcaption>
+</figure>
+
+<h3>更新快照</h3>
+
+<p>修改组件（比如改了一个 class）后快照必然不一致。确认这是你想要的改动，就更新快照：</p>
+
+<div class="code" data-lang="bash"><pre>
+npx vitest -u          # 或在 watch 模式下按 u 键
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; 不要无脑更新快照</div>
+  <p>先正常跑一遍测试，确认<strong>只有</strong>你改动的那个组件的快照失败，再更新。否则可能把别处真正的回归也一起“合法化”了。</p>
+</div>
+
+<details class="box deep">
+<summary class="t" style="cursor:pointer">&#128269; 测试 Pinia store 和使用了 store 的组件（点击展开）</summary>
+<p>store 本身就是普通函数，测试很直接：</p>
+<div class="code" data-lang="js"><pre>
+import { setActivePinia, createPinia } from 'pinia'
+import { useCartStore } from '../stores/cart'
+
+beforeEach(() =&gt; setActivePinia(createPinia()))   // 每个测试一个全新的 Pinia
+
+test('加入购物车', () =&gt; {
+  const cart = useCartStore()
+  cart.addItem({ id: 1 })
+  cart.addItem({ id: 1 })
+  expect(cart.cartCount).toBe(2)
+})
+</pre></div>
+<p>测试用到 store 的组件时，可以用 <code>@pinia/testing</code> 的 <code>createTestingPinia()</code>，它会自动把所有 action 替换成可断言的 mock 函数。</p>
+</details>
+
+<h2 id="i18n">国际化与代码分割</h2>
+
+<p>
+  如果应用面向不同国家的用户，就应该翻译界面。Vue 生态里的标准方案是 <a href="https://vue-i18n.intlify.dev/">vue-i18n</a>。
+  我们会在页脚加一个链接，跳到一个可以选择语言的页面。
+</p>
+
+<div class="code" data-lang="bash"><pre>
+npm install vue-i18n
+</pre></div>
+
+<h3>语言包</h3>
+
+<p>把仓库里的语言包复制到 <code>src/i18n/locales/</code>，每种语言一个文件。顺便加上中文：</p>
+
+<div class="code" data-lang="js" data-file="src/i18n/locales/zh.js"><pre>
+export default {
+  'change-lang': '切换语言',
+  lang: {
+    zh: '中文',
+    en: 'English',
+    fr: 'Français',
+    es: 'Español',
+    de: 'Deutsch',
+  },
+  back: '返回',
+}
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/i18n/index.js"><pre>
+// 所有可用的语言
+export default ['zh', 'en', 'fr', 'es', 'de']
+</pre></div>
+
+<h3>按需加载：动态 import 与代码分割</h3>
+
+<p>
+  语言包可能很大，用户一次只用一种语言，没必要把五种都打包进首屏代码。我们用<strong>动态 <code>import()</code></strong>：它返回一个 Promise，
+  构建工具会把被动态导入的模块拆成<strong>单独的文件（chunk）</strong>，需要时才从服务器下载。这就是<strong>代码分割</strong>。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 280" role="img" aria-label="静态导入的模块进入主包，动态导入的模块被拆成独立的 chunk 按需加载">
+  <rect class="bx-a" x="20" y="40" width="250" height="190" rx="12"/>
+  <text class="ttl on-a" x="145" y="64" text-anchor="middle">首屏主包 index-[hash].js</text>
+  <rect class="bx" x="40" y="80" width="210" height="28" rx="5"/><text class="sm" x="145" y="99" text-anchor="middle">vue、vue-router、pinia</text>
+  <rect class="bx" x="40" y="114" width="210" height="28" rx="5"/><text class="sm" x="145" y="133" text-anchor="middle">App.vue、PageHome.vue</text>
+  <rect class="bx" x="40" y="148" width="210" height="28" rx="5"/><text class="sm" x="145" y="167" text-anchor="middle">utils/i18n.js</text>
+  <text class="mono sm" x="145" y="206" text-anchor="middle">import X from '...'（静态）</text>
+
+  <path class="ln-d" d="M272 160 H330"/>
+  <text class="mono sm" x="300" y="150" text-anchor="middle">import()</text>
+
+  <rect class="bx-g" x="340" y="40" width="160" height="40" rx="8"/><text class="sm on-g" x="420" y="65" text-anchor="middle">zh-[hash].js ✓ 已加载</text>
+  <rect class="bx-d" x="340" y="90" width="160" height="34" rx="8"/><text class="sm" x="420" y="112" text-anchor="middle">en-[hash].js</text>
+  <rect class="bx-d" x="340" y="132" width="160" height="34" rx="8"/><text class="sm" x="420" y="154" text-anchor="middle">fr-[hash].js</text>
+  <rect class="bx-d" x="340" y="174" width="160" height="34" rx="8"/><text class="sm" x="420" y="196" text-anchor="middle">es / de …</text>
+
+  <rect class="bx-d" x="540" y="40" width="200" height="40" rx="8"/><text class="sm" x="640" y="65" text-anchor="middle">PageCheckout-[hash].js</text>
+  <rect class="bx-d" x="540" y="90" width="200" height="40" rx="8"/><text class="sm" x="640" y="115" text-anchor="middle">PageLocale-[hash].js</text>
+  <text class="sm" x="640" y="152" text-anchor="middle">路由懒加载（第 5 章）</text>
+  <text class="sm" x="640" y="170" text-anchor="middle">用的是同一个机制</text>
+
+  <text class="lbl" x="380" y="262" text-anchor="middle">虚线框：构建时生成，但只有用户真正需要时浏览器才去下载</text>
+</svg>
+<figcaption>图 7-7　代码分割：首屏只下载必需的代码</figcaption>
+</figure>
+
+<div class="code" data-lang="js"><pre>
+async function loadModule() {
+  const module = await import('./path/to/module.js')
+  console.log('默认导出', module.default)
+  console.log('具名导出', module.myExportedFunction)
+}
+</pre></div>
+
+<p>路径里可以有变量，但必须让构建工具能“猜到”可能的文件范围：</p>
+
+<div class="code" data-lang="js"><pre>
+import(myModulePath)                       // ✗ 完全未知，无法打包
+import(`./locales/${locale}.js`)           // ✓ Vite 会把 locales 目录下所有 .js 都拆成 chunk
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; Vite 对动态路径的要求</div>
+  <p>
+    路径必须以 <code>./</code> 或 <code>../</code> 开头、要带文件扩展名、变量只能代表一层目录或文件名。需要更灵活的批量导入时，可以用 Vite 特有的
+    <code>import.meta.glob('./locales/*.js')</code>，它返回一个“路径 → 加载函数”的对象。
+    原书这里还需要把 Babel 预设从 stage-3 改成 stage-2 才能解析 <code>import()</code>；现在它已是标准语法，什么都不用改。
+  </p>
+</div>
+
+<h3>创建 i18n 实例</h3>
+
+<div class="code" data-lang="js" data-file="src/utils/i18n.js"><pre>
+import { createI18n } from 'vue-i18n'
+import langs from '../i18n'
+
+// 把语言包按需加载进来并切换过去
+// composer：i18n.global，或组件里 useI18n({ useScope: 'global' }) 的返回值
+export async function loadLocale(composer, locale) {
+  if (!composer.availableLocales.includes(locale)) {
+    const { default: messages } = await import(`../i18n/locales/${locale}.js`)
+    composer.setLocaleMessage(locale, messages)
+  }
+  composer.locale.value = locale
+  if (typeof document !== 'undefined') {
+    document.documentElement.lang = locale     // 顺便更新 &lt;html lang&gt;（服务器上没有 document）
+  }
+}
+
+export async function setupI18n(locale) {
+  const i18n = createI18n({
+    legacy: false,          // 使用组合式 API 模式（v11 推荐）
+    locale,
+    fallbackLocale: 'en',   // 某个词缺翻译时退回英文
+    messages: {},
+  })
+  await loadLocale(i18n.global, locale)
+  return i18n
+}
+
+// 根据浏览器语言选择一个我们支持的语言
+export function getAutoLang() {
+  for (const tag of navigator.languages ?? [navigator.language]) {
+    const lang = tag.slice(0, 2).toLowerCase()   // 'zh-CN' → 'zh'
+    if (langs.includes(lang)) return lang
+  }
+  return 'en'
+}
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/main.js"><pre>
+import { createApp } from 'vue'
+import { createPinia } from 'pinia'
+import App from './components/App.vue'
+import router from './router'
+import { setupI18n, getAutoLang } from './utils/i18n'
+
+async function main() {
+  const i18n = await setupI18n(getAutoLang())   // 别忘了 await，否则拿到的是 Promise
+
+  createApp(App)
+    .use(createPinia())
+    .use(router)
+    .use(i18n)
+    .mount('#app')
+}
+
+main()
+</pre></div>
+
+<p>打开开发者工具的 Network 面板刷新页面，可以看到当前语言的语言包是单独请求的。</p>
+
+<div class="vs">
+  <div class="old"><div class="h">原书 · vue-i18n 7</div>
+<div class="code" data-lang="js"><pre>
+import VueI18n from 'vue-i18n'
+Vue.use(VueI18n)
+
+const i18n = new VueI18n({ locale, messages })
+new Vue({ i18n, ... })
+
+// 切换：this.$i18n.locale = 'fr'
+</pre></div></div>
+  <div class="new"><div class="h">vue-i18n 11（组合式模式）</div>
+<div class="code" data-lang="js"><pre>
+import { createI18n } from 'vue-i18n'
+
+const i18n = createI18n({ legacy: false, locale, messages })
+app.use(i18n)
+
+// 切换：i18n.global.locale.value = 'fr'
+// 组件里：const { t, locale } = useI18n()
+</pre></div></div>
+</div>
+
+<h3>在组件里使用翻译</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="t 函数根据当前语言从语言包中查找翻译，找不到则回退">
+  <rect class="bx-g" x="20" y="70" width="180" height="60" rx="10"/>
+  <text class="mono on-g" x="110" y="96" text-anchor="middle">t('change-lang')</text>
+  <text class="sm" x="110" y="116" text-anchor="middle">模板里写 $t(...)</text>
+  <path class="ln" d="M202 100 H256" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="260" y="60" width="150" height="80" rx="10"/>
+  <text class="ttl on-a" x="335" y="86" text-anchor="middle">当前 locale</text>
+  <text class="mono" x="335" y="114" text-anchor="middle">'zh'</text>
+  <path class="ln" d="M412 100 H466" marker-end="url(#ar)"/>
+  <rect class="bx" x="470" y="20" width="270" height="70" rx="10"/>
+  <text class="mono sm" x="486" y="44">messages.zh['change-lang']</text>
+  <text class="mono sm on-g" x="486" y="70">→ '切换语言' ✓</text>
+  <rect class="bx-d" x="470" y="110" width="270" height="70" rx="10"/>
+  <text class="sm" x="486" y="134">找不到？用 fallbackLocale（en）</text>
+  <text class="sm" x="486" y="160">还找不到？显示键名本身并警告</text>
+  <text class="lbl" x="380" y="204" text-anchor="middle">locale 是响应式的：切换语言后，所有用到 t() 的地方自动重新渲染</text>
+</svg>
+<figcaption>图 7-8　翻译的查找过程</figcaption>
+</figure>
+
+<p>在路由里加一个语言页面，并在页脚放一个链接：</p>
+
+<div class="code" data-lang="js" data-file="src/router.js"><pre>
+{ path: '/locale', name: 'locale', component: () =&gt; import('./components/PageLocale.vue') },
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="src/components/AppFooter.vue（节选）"><pre>
+&lt;div v-if="$route.name !== 'locale'"&gt;
+  &lt;RouterLink :to="{ name: 'locale' }"&gt;{{ $t('change-lang') }}&lt;/RouterLink&gt;
+&lt;/div&gt;
+</pre></div>
+
+<p>语言选择页面，用组合式 API 的 <code>useI18n()</code>：</p>
+
+<div class="code" data-lang="vue" data-file="src/components/PageLocale.vue"><pre>
+&lt;script setup&gt;
+import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
+import langs from '../i18n'
+import { loadLocale } from '../utils/i18n'
+
+const i18n = useI18n({ useScope: 'global' })   // 拿到全局的 i18n 组合器
+const { t, locale } = i18n
+const router = useRouter()
+const loading = ref(false)
+
+async function setLocale(lang) {
+  loading.value = true
+  await loadLocale(i18n, lang)   // 首次切换到某语言时，才去下载它的语言包
+  loading.value = false
+}
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;BasePage class="page-locale"&gt;
+    &lt;Transition name="fade" mode="out-in"&gt;
+      &lt;BaseLoading v-if="loading" key="loading" class="overlay" /&gt;
+      &lt;div v-else&gt;
+        &lt;h1&gt;{{ t('change-lang') }}&lt;/h1&gt;
+        &lt;div class="locales"&gt;
+          &lt;div v-for="lang of langs" :key="lang" class="locale"&gt;
+            &lt;BaseButton :class="{ selected: lang === locale }" @click="setLocale(lang)"&gt;
+              {{ t(`lang.${lang}`) }}
+            &lt;/BaseButton&gt;
+          &lt;/div&gt;
+        &lt;/div&gt;
+        &lt;div class="toolbar"&gt;
+          &lt;BaseButton class="secondary" @click="router.back()"&gt;{{ t('back') }}&lt;/BaseButton&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/Transition&gt;
+  &lt;/BasePage&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 只切换已加载的语言</div>
+  <p>如果语言包都已经加载过了，组件里直接 <code>locale.value = 'fr'</code> 就能切换；<code>loadLocale</code> 只是多做了一步“没加载过就先下载”。</p>
+</div>
+
+<div class="box tip">
+  <div class="t">&#10003; 价格和日期也要本地化</div>
+  <p>
+    不同地区的数字和货币写法不同（<code>1,234.5</code> vs <code>1.234,5</code>，<code>$</code> vs <code>€</code>）。vue-i18n 内置了基于 <code>Intl</code> 的
+    <code>n()</code> 和 <code>d()</code>：配置 <code>numberFormats: { zh: { currency: { style: 'currency', currency: 'CNY' } } }</code> 后，模板里写 <code>{{ $n(item.price, 'currency') }}</code>。
+  </p>
+</div>
+
+<h2 id="ssr">服务端渲染（SSR）</h2>
+
+<h3>什么是 SSR，为什么需要它</h3>
+
+<p>
+  到目前为止，我们的应用都是<strong>客户端渲染（CSR）</strong>：服务器返回一个几乎为空的 HTML，浏览器下载并执行 JS 之后，页面内容才出现。
+  <strong>服务端渲染（SSR）</strong>则是在服务器上先把应用运行一遍，把渲染好的 HTML 直接发给浏览器：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="客户端渲染与服务端渲染的时间线对比">
+  <text class="ttl" x="20" y="24">客户端渲染（CSR）</text>
+  <rect class="bx" x="20" y="36" width="100" height="30" rx="5"/><text class="sm" x="70" y="56" text-anchor="middle">下载 HTML</text>
+  <rect class="bx-b" x="122" y="36" width="200" height="30" rx="5"/><text class="sm on-b" x="222" y="56" text-anchor="middle">下载 JS</text>
+  <rect class="bx-b" x="324" y="36" width="110" height="30" rx="5"/><text class="sm on-b" x="379" y="56" text-anchor="middle">执行 JS</text>
+  <rect class="bx-b" x="436" y="36" width="140" height="30" rx="5"/><text class="sm on-b" x="506" y="56" text-anchor="middle">请求 API 数据</text>
+  <rect class="bx-g" x="578" y="36" width="162" height="30" rx="5"/><text class="sm on-g" x="659" y="56" text-anchor="middle">看到内容 + 可交互</text>
+  <text class="sm" x="20" y="90">← 在这之前，用户（和搜索引擎爬虫）只看到空白页或加载动画</text>
+  <path class="ln-r" d="M20 98 H576" style="stroke-dasharray:4 3"/>
+
+  <text class="ttl on-a" x="20" y="140">服务端渲染（SSR）</text>
+  <rect class="bx-a" x="20" y="152" width="210" height="30" rx="5"/><text class="sm on-a" x="125" y="172" text-anchor="middle">服务器：取数据 + 渲染 HTML</text>
+  <rect class="bx-g" x="232" y="152" width="100" height="30" rx="5"/><text class="sm on-g" x="282" y="172" text-anchor="middle">下载 HTML</text>
+  <rect class="bx-g" x="334" y="152" width="406" height="30" rx="5" style="opacity:.55"/>
+  <text class="sm on-g" x="537" y="172" text-anchor="middle">已经能看到内容（但还不能交互）</text>
+  <rect class="bx-b" x="334" y="190" width="200" height="30" rx="5"/><text class="sm on-b" x="434" y="210" text-anchor="middle">下载 JS</text>
+  <rect class="bx-p" x="536" y="190" width="120" height="30" rx="5"/><text class="sm on-p" x="596" y="210" text-anchor="middle">水合 hydrate</text>
+  <rect class="bx-g" x="658" y="190" width="82" height="30" rx="5"/><text class="sm on-g" x="699" y="210" text-anchor="middle">可交互</text>
+
+  <rect class="bx-d" x="20" y="240" width="720" height="40" rx="8"/>
+  <text class="sm" x="380" y="258" text-anchor="middle">SSR 的好处：首屏内容更快出现（慢网络、慢设备尤其明显），搜索引擎和社交平台的抓取能直接拿到内容</text>
+  <text class="sm" x="380" y="274" text-anchor="middle">代价：代码要能在 Node 中运行、服务器负载更高、部署更复杂</text>
+</svg>
+<figcaption>图 7-9　CSR 与 SSR 的时间线</figcaption>
+</figure>
+
+<p>
+  <strong>水合（hydration）</strong>是 SSR 的关键概念：浏览器拿到的 HTML 是“死”的（没有事件监听），客户端 Vue 启动后不会重新创建 DOM，
+  而是“认领”服务器渲染的现有 DOM，给它们挂上事件和响应式 —— 就像给干燥的骨架注入水分。
+</p>
+
+<div class="box note">
+  <div class="t">&#9432; 不是所有应用都需要 SSR</div>
+  <p>
+    后台管理系统、需要登录才能用的工具类应用，首屏速度和 SEO 都不关键，用 CSR 就好。电商、博客、新闻、营销页这类需要被搜索引擎收录、追求首屏速度的场景才值得上 SSR。
+    如果内容基本不变，还可以考虑<strong>静态站点生成（SSG）</strong>：构建时就把每个页面渲染成 HTML 文件。
+  </p>
+</div>
+
+<h3>通用应用的结构</h3>
+
+<p>
+  要让同一份代码既能在浏览器运行、也能在服务器运行，最重要的一点是：<strong>每个请求都要创建全新的应用、路由和 store</strong>。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="单例导致跨请求状态污染，工厂函数为每个请求创建独立实例">
+  <text class="ttl on-r" x="190" y="22" text-anchor="middle">✗ 单例：所有请求共享一个 store</text>
+  <rect class="bx-r" x="120" y="100" width="140" height="56" rx="10"/>
+  <text class="ttl on-r" x="190" y="124" text-anchor="middle">store</text>
+  <text class="mono sm" x="190" y="144" text-anchor="middle">user: 张三 ??</text>
+  <rect class="bx" x="20" y="40" width="90" height="30" rx="6"/><text class="sm" x="65" y="60" text-anchor="middle">张三的请求</text>
+  <rect class="bx" x="20" y="186" width="90" height="30" rx="6"/><text class="sm" x="65" y="206" text-anchor="middle">李四的请求</text>
+  <rect class="bx" x="270" y="40" width="90" height="30" rx="6"/><text class="sm" x="315" y="60" text-anchor="middle">王五的请求</text>
+  <path class="ln-r" d="M65 72 L140 98" marker-end="url(#ar)"/>
+  <path class="ln-r" d="M65 184 L140 158" marker-end="url(#ar)"/>
+  <path class="ln-r" d="M315 72 L240 98" marker-end="url(#ar)"/>
+  <text class="sm on-r" x="190" y="244" text-anchor="middle">李四可能看到张三的购物车！</text>
+
+  <path class="ln-d" d="M380 14 V256"/>
+
+  <text class="ttl on-a" x="570" y="22" text-anchor="middle">✓ 工厂函数：每个请求一份</text>
+  <rect class="bx-a" x="490" y="44" width="160" height="40" rx="10"/>
+  <text class="mono sm on-a" x="570" y="69" text-anchor="middle">createApp()</text>
+  <path class="ln-a" d="M520 86 L450 130" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M570 86 V130" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M620 86 L690 130" marker-end="url(#ar-a)"/>
+  <rect class="bx-g" x="400" y="134" width="100" height="56" rx="8"/><text class="sm on-g" x="450" y="156" text-anchor="middle">app + router</text><text class="sm on-g" x="450" y="174" text-anchor="middle">+ store（张三）</text>
+  <rect class="bx-g" x="520" y="134" width="100" height="56" rx="8"/><text class="sm on-g" x="570" y="156" text-anchor="middle">app + router</text><text class="sm on-g" x="570" y="174" text-anchor="middle">+ store（李四）</text>
+  <rect class="bx-g" x="640" y="134" width="100" height="56" rx="8"/><text class="sm on-g" x="690" y="156" text-anchor="middle">app + router</text><text class="sm on-g" x="690" y="174" text-anchor="middle">+ store（王五）</text>
+  <text class="sm on-g" x="570" y="244" text-anchor="middle">请求结束后各自被回收，互不干扰</text>
+</svg>
+<figcaption>图 7-10　浏览器里每次打开页面都是新环境，而 Node 服务器是长期运行的</figcaption>
+</figure>
+
+<p>整个 SSR 的数据流如下：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="SSR 完整流程：服务器创建应用、预取数据、渲染 HTML 并序列化状态，浏览器恢复状态并水合">
+  <rect class="bx-a" x="20" y="20" width="340" height="260" rx="12"/>
+  <text class="ttl on-a" x="190" y="44" text-anchor="middle">服务器（Node.js）</text>
+  <rect class="bx" x="40" y="58" width="300" height="32" rx="6"/><text class="sm" x="190" y="79" text-anchor="middle">① 收到 GET /item/3</text>
+  <rect class="bx" x="40" y="98" width="300" height="32" rx="6"/><text class="sm" x="190" y="119" text-anchor="middle">② createApp() → router.push('/item/3')</text>
+  <rect class="bx" x="40" y="138" width="300" height="32" rx="6"/><text class="sm" x="190" y="159" text-anchor="middle">③ 等待组件预取数据（onServerPrefetch）</text>
+  <rect class="bx" x="40" y="178" width="300" height="32" rx="6"/><text class="sm" x="190" y="199" text-anchor="middle">④ renderToString(app) → HTML 字符串</text>
+  <rect class="bx" x="40" y="218" width="300" height="48" rx="6"/>
+  <text class="sm" x="190" y="238" text-anchor="middle">⑤ 把 HTML 和序列化后的 store 状态</text>
+  <text class="sm" x="190" y="256" text-anchor="middle">一起塞进页面模板</text>
+
+  <path class="ln-a" d="M362 150 H416" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="389" y="140" text-anchor="middle">HTML</text>
+
+  <rect class="bx-g" x="420" y="20" width="320" height="260" rx="12"/>
+  <text class="ttl on-g" x="580" y="44" text-anchor="middle">浏览器</text>
+  <rect class="bx" x="440" y="58" width="280" height="48" rx="6"/>
+  <text class="sm" x="580" y="78" text-anchor="middle">⑥ 立即显示 HTML 内容</text>
+  <text class="mono sm" x="580" y="96" text-anchor="middle">window.__INITIAL_STATE__ = {...}</text>
+  <rect class="bx" x="440" y="114" width="280" height="32" rx="6"/><text class="sm" x="580" y="135" text-anchor="middle">⑦ 下载并执行 entry-client.js</text>
+  <rect class="bx" x="440" y="154" width="280" height="32" rx="6"/><text class="sm" x="580" y="175" text-anchor="middle">⑧ createApp() + 用 __INITIAL_STATE__ 恢复 store</text>
+  <rect class="bx-p" x="440" y="194" width="280" height="32" rx="6"/><text class="sm on-p" x="580" y="215" text-anchor="middle">⑨ app.mount() → 水合现有 DOM</text>
+  <text class="sm" x="580" y="248" text-anchor="middle">store 里已经有数据，组件无需再请求</text>
+  <text class="sm" x="580" y="266" text-anchor="middle">（避免原书提到的“重复请求”问题）</text>
+</svg>
+<figcaption>图 7-11　SSR 的完整流程</figcaption>
+</figure>
+
+<h3>推荐方案：Nuxt</h3>
+
+<p>
+  原书花了大量篇幅手写 SSR：拆分 webpack 的 client/server 配置、写 Express 开发服务器、处理热更新、生成清单文件……在结尾提了一句“也可以用 Nuxt”。
+  今天，<strong><a href="https://nuxt.com/">Nuxt</a> 就是 Vue 官方推荐的 SSR 方案</strong>，上面图里的每一步它都替你做好了，还附带了文件路由、自动导入、数据获取、SEO 工具等。
+</p>
+
+<div class="code" data-lang="bash"><pre>
+npm create nuxt@latest e-shop-nuxt
+cd e-shop-nuxt
+npx nuxi module add pinia          # 官方 Pinia 模块
+npx nuxi module add i18n           # @nuxtjs/i18n，内置懒加载语言包
+npm run dev
+</pre></div>
+
+<div class="tree"><b>e-shop-nuxt/</b>
+├── nuxt.config.ts
+└── <b>app/</b>
+    ├── app.vue
+    ├── <b>pages/</b>              <i># 文件即路由，不用再写 router.js</i>
+    │   ├── index.vue      <i># → /</i>
+    │   ├── checkout.vue   <i># → /checkout</i>
+    │   └── item/
+    │       └── [id].vue   <i># → /item/:id</i>
+    ├── components/        <i># 自动导入，直接在模板里用</i>
+    └── stores/            <i># Pinia stores</i></div>
+
+<p>原书的 <code>asyncData</code> + 手动注入 <code>__INITIAL_STATE__</code>，在 Nuxt 里变成一个组合式函数：</p>
+
+<div class="code" data-lang="vue" data-file="app/pages/item/[id].vue"><pre>
+&lt;script setup&gt;
+const route = useRoute()
+
+// 在服务器上执行并把结果嵌入页面；浏览器水合时直接复用，不会再请求一次
+const { data: item, status } = await useFetch(`/api/items/${route.params.id}`)
+
+// SEO：设置页面标题和描述
+useSeoMeta({
+  title: () =&gt; item.value?.title,
+  description: () =&gt; `购买 ${item.value?.title}`,
+})
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;BaseLoading v-if="status === 'pending'" /&gt;
+  &lt;StoreItemInfos v-else-if="item" :item="item" /&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="box key">
+  <div class="t">&#9733; 从原书到 Nuxt 的对应关系</div>
+  <div class="tw" style="margin:6px 0 0"><table>
+  <thead><tr><th>原书手写</th><th>Nuxt 中</th></tr></thead>
+  <tbody>
+  <tr><td><code>createRouter()</code> + 路由表</td><td><code>pages/</code> 目录自动生成</td></tr>
+  <tr><td><code>createStore()</code> 工厂</td><td><code>@pinia/nuxt</code> 自动按请求创建</td></tr>
+  <tr><td>组件的 <code>asyncData</code> + <code>Promise.all</code></td><td><code>useFetch</code> / <code>useAsyncData</code></td></tr>
+  <tr><td><code>__INITIAL_STATE__</code> + <code>replaceState</code></td><td>自动序列化到 payload 并恢复</td></tr>
+  <tr><td>webpack client/server 配置 + 插件</td><td>内置（基于 Vite）</td></tr>
+  <tr><td>server.dev.js + 热更新中间件</td><td><code>nuxi dev</code></td></tr>
+  <tr><td>Express 生产服务器</td><td><code>nuxi build</code> 生成可独立运行的 Node 服务（Nitro），也能部署到 Serverless/边缘</td></tr>
+  <tr><td>—</td><td><code>nuxi generate</code> 静态生成（SSG）</td></tr>
+  </tbody>
+  </table></div>
+</div>
+
+<h3>了解原理：手写 Vite SSR</h3>
+
+<p>
+  如果你想理解 SSR 在底层是怎么工作的（或者有特殊需求不想用框架），可以参照 <a href="https://cn.vite.dev/guide/ssr">Vite 的 SSR 指南</a>手写。
+  它的结构和原书一一对应，只是简单得多。
+</p>
+
+<h4>1. 通用的应用工厂</h4>
+
+<div class="code" data-lang="js" data-file="src/app.js"><pre>
+import { createSSRApp } from 'vue'
+import { createPinia } from 'pinia'
+import { createRouter } from './router'     // router.js 改为导出工厂函数
+import { setupI18n } from './utils/i18n'
+import App from './components/App.vue'
+
+// 每次调用都返回全新的实例
+export async function createApp({ locale }) {
+  const app = createSSRApp(App)             // 注意是 createSSRApp：支持水合
+  const pinia = createPinia()
+  const router = createRouter()             // 内部：服务器用 createMemoryHistory，浏览器用 createWebHistory
+  const i18n = await setupI18n(locale)
+
+  app.use(pinia).use(router).use(i18n)
+  return { app, router, pinia }
+}
+</pre></div>
+
+<h4>2. 组件里的数据预取</h4>
+
+<p>原书给组件加了一个自定义的 <code>asyncData</code> 选项。Vue 3 内置了 <code>onServerPrefetch</code> 钩子：服务器渲染时会<strong>等待</strong>它返回的 Promise 完成后再输出 HTML。</p>
+
+<div class="code" data-lang="vue" data-file="src/components/PageHome.vue（script）"><pre>
+&lt;script setup&gt;
+import { onServerPrefetch, onMounted } from 'vue'
+import { useItemsStore } from '../stores/items'
+
+const itemsStore = useItemsStore()
+
+// 服务器上：渲染前把数据取好
+onServerPrefetch(() =&gt; itemsStore.fetchItems())
+
+// 浏览器上：如果 store 里已经有服务器给的数据，就不再请求
+onMounted(() =&gt; {
+  if (!itemsStore.items.length) itemsStore.fetchItems()
+})
+&lt;/script&gt;
+</pre></div>
+
+<h4>3. 服务端入口</h4>
+
+<div class="code" data-lang="js" data-file="src/entry-server.js"><pre>
+import { renderToString } from 'vue/server-renderer'
+import { createApp } from './app'
+
+export async function render(url, locale) {
+  const { app, router, pinia } = await createApp({ locale })
+
+  await router.push(url)
+  await router.isReady()               // 等异步路由组件加载完（取代原书的 router.onReady）
+
+  const html = await renderToString(app)   // 会等待所有 onServerPrefetch
+  const state = JSON.stringify(pinia.state.value)
+
+  return { html, state }
+}
+</pre></div>
+
+<h4>4. 客户端入口</h4>
+
+<div class="code" data-lang="js" data-file="src/entry-client.js"><pre>
+import { createApp } from './app'
+import { getAutoLang } from './utils/i18n'
+
+const { app, router, pinia } = await createApp({ locale: getAutoLang() })
+
+// 恢复服务器序列化的状态（取代原书的 store.replaceState）
+if (window.__INITIAL_STATE__) {
+  pinia.state.value = window.__INITIAL_STATE__
+}
+
+await router.isReady()
+app.mount('#app')                       // 因为是 createSSRApp，这里会进行水合
+</pre></div>
+
+<h4>5. 页面模板与 Node 服务器</h4>
+
+<div class="code" data-lang="html" data-file="index.html"><pre>
+&lt;!doctype html&gt;
+&lt;html&gt;
+  &lt;head&gt;&lt;meta charset="utf-8"&gt;&lt;title&gt;Fashion Store&lt;/title&gt;&lt;/head&gt;
+  &lt;body&gt;
+    &lt;div id="app"&gt;&lt;!--app-html--&gt;&lt;/div&gt;
+    &lt;script&gt;window.__INITIAL_STATE__ = &lt;!--app-state--&gt;&lt;/script&gt;
+    &lt;script type="module" src="/src/entry-client.js"&gt;&lt;/script&gt;
+  &lt;/body&gt;
+&lt;/html&gt;
+</pre></div>
+
+<div class="code" data-lang="js" data-file="server.js（开发模式核心部分）"><pre>
+import fs from 'node:fs/promises'
+import express from 'express'
+import { createServer as createViteServer } from 'vite'
+
+const app = express()
+
+// 以中间件模式运行 Vite：负责编译和热更新（取代原书的 server.dev.js + memory-fs + 各种中间件）
+const vite = await createViteServer({
+  server: { middlewareMode: true },
+  appType: 'custom',
+})
+app.use(vite.middlewares)
+
+app.use('*all', async (req, res) =&gt; {
+  try {
+    const url = req.originalUrl
+    let template = await fs.readFile('index.html', 'utf-8')
+    template = await vite.transformIndexHtml(url, template)
+
+    // 直接加载源码里的服务端入口，Vite 会即时编译
+    const { render } = await vite.ssrLoadModule('/src/entry-server.js')
+    const locale = req.acceptsLanguages('zh', 'en', 'fr', 'es', 'de') || 'en'
+    const { html, state } = await render(url, locale)
+
+    res.status(200).set({ 'Content-Type': 'text/html' }).end(
+      template
+        .replace('&lt;!--app-html--&gt;', html)
+        .replace('&lt;!--app-state--&gt;', state)
+    )
+  } catch (e) {
+    vite.ssrFixStacktrace(e)
+    console.error(e)
+    res.status(500).end('500 | Internal Server Error')
+  }
+})
+
+app.listen(5173)
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; 序列化状态时注意 XSS</div>
+  <p>
+    直接把 <code>JSON.stringify</code> 的结果放进 <code>&lt;script&gt;</code> 有风险：如果数据里有 <code>&lt;/script&gt;</code> 这样的字符串（比如商品评论），就能截断脚本标签注入代码。
+    生产环境请用 <code>devalue</code> 或 <code>serialize-javascript</code> 这类会转义危险字符的序列化库（Nuxt 内部用的就是 devalue）。
+  </p>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 写“通用代码”的注意事项</div>
+  <ul>
+    <li><code>window</code>、<code>document</code>、<code>localStorage</code> 在服务器上不存在。只在 <code>onMounted</code> 里，或用 <code>import.meta.env.SSR</code> 判断后再访问。</li>
+    <li>服务器上只会执行 <code>setup</code> 和 <code>onServerPrefetch</code>，<code>onMounted</code> 等钩子不会执行，所以在这里启动的定时器不会泄漏。</li>
+    <li>服务器和客户端渲染的结果必须一致，否则会出现“水合不匹配（hydration mismatch）”警告，比如直接在模板里显示 <code>Date.now()</code> 或随机数。</li>
+  </ul>
+</div>
+
+<h2 id="build">生产构建</h2>
+
+<p>
+  原书最后一节为生产构建做了大量配置：用 <code>extract-text-webpack-plugin</code> 把 CSS 抽成文件、加 <code>ModuleConcatenationPlugin</code> 优化、
+  用 <code>rimraf</code> 清理 <code>dist</code>、写 <code>cross-env</code> 设置环境变量……
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; 在 Vite 里，这些全是默认行为</div>
+  <p>
+    <code>vite build</code> 默认就会：把 CSS 抽成独立文件并压缩、对 JS 做 tree-shaking 和压缩、作用域提升、按动态 import 拆分代码、给文件名加内容哈希、构建前清空输出目录。
+    <code>import.meta.env.PROD</code> / <code>import.meta.env.MODE</code> 取代了手动设置的 <code>NODE_ENV</code>。
+  </p>
+</div>
+
+<p>普通（CSR）应用：</p>
+
+<div class="code" data-lang="bash"><pre>
+npm run build      # 输出到 dist/
+npm run preview    # 本地预览
+</pre></div>
+
+<p>手写 Vite SSR 时，需要分别构建客户端和服务端两个包：</p>
+
+<div class="code" data-lang="json" data-file="package.json"><pre>
+"scripts": {
+  "dev": "node server",
+  "build": "npm run build:client &amp;&amp; npm run build:server",
+  "build:client": "vite build --outDir dist/client --ssrManifest",
+  "build:server": "vite build --outDir dist/server --ssr src/entry-server.js",
+  "start": "NODE_ENV=production node server"
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="SSR 生产构建产物：客户端包和服务端包，以及生产服务器如何使用它们">
+  <rect class="bx-g" x="20" y="20" width="250" height="150" rx="12"/>
+  <text class="ttl on-g" x="145" y="44" text-anchor="middle">dist/client/</text>
+  <text class="mono sm" x="40" y="72">index.html（模板）</text>
+  <text class="mono sm" x="40" y="94">assets/*.js、*.css</text>
+  <text class="mono sm" x="40" y="116">.vite/ssr-manifest.json</text>
+  <text class="sm" x="145" y="150" text-anchor="middle">作为静态文件提供给浏览器</text>
+
+  <rect class="bx-a" x="20" y="180" width="250" height="40" rx="10"/>
+  <text class="mono sm on-a" x="145" y="205" text-anchor="middle">dist/server/entry-server.js</text>
+
+  <rect class="bx-b" x="400" y="60" width="340" height="120" rx="12"/>
+  <text class="ttl on-b" x="570" y="86" text-anchor="middle">server.js（生产模式）</text>
+  <text class="sm" x="420" y="112">· 用 express.static 提供 dist/client</text>
+  <text class="sm" x="420" y="134">· import 构建好的 entry-server.js 调用 render()</text>
+  <text class="sm" x="420" y="156">· 不再启动 Vite，没有编译开销</text>
+  <path class="ln-g" d="M272 95 H396" marker-end="url(#ar)"/>
+  <path class="ln-a" d="M272 200 C340 200 350 160 396 150" marker-end="url(#ar-a)"/>
+</svg>
+<figcaption>图 7-12　SSR 应用的两份构建产物</figcaption>
+</figure>
+
+<p>把 <code>dist/</code>、<code>server.js</code>、<code>package.json</code> 和 lock 文件上传到服务器，执行 <code>npm ci --omit=dev</code> 安装依赖，再 <code>npm start</code> 即可。</p>
+
+<h2 id="summary">小结</h2>
+
+<div class="tw"><table>
+<thead><tr><th>主题</th><th>原书（2017）</th><th>本教程</th></tr></thead>
+<tbody>
+<tr><td>CSS 前缀</td><td>postcss.config.js + autoprefixer（vue-loader 内置 PostCSS）</td><td>同样的配置，Vite 内置 PostCSS；可选 Lightning CSS</td></tr>
+<tr><td>代码检查</td><td><code>.eslintrc.js</code> + babel-eslint + standard</td><td><code>eslint.config.js</code> 扁平配置 + eslint-plugin-vue</td></tr>
+<tr><td>自动检查</td><td>eslint-loader 塞进 webpack</td><td>编辑器扩展 + lint-staged + CI</td></tr>
+<tr><td>单元测试</td><td>Jest + vue-jest + Babel test 环境</td><td>Vitest（复用 Vite 配置）</td></tr>
+<tr><td>组件测试工具</td><td>vue-test-utils beta：<code>shallow</code>、<code>propsData</code></td><td>@vue/test-utils 2：<code>mount</code>、<code>props</code></td></tr>
+<tr><td>快照</td><td>借用 vue-server-renderer</td><td><code>wrapper.html()</code></td></tr>
+<tr><td>国际化</td><td>vue-i18n 7：<code>new VueI18n</code>、<code>this.$i18n</code></td><td>vue-i18n 11：<code>createI18n</code>、<code>useI18n()</code></td></tr>
+<tr><td>动态 import</td><td>需要 babel stage-2</td><td>标准语法 / <code>import.meta.glob</code></td></tr>
+<tr><td>SSR</td><td>vue-server-renderer + 手写 webpack + Express</td><td><strong>Nuxt</strong>；或 Vite SSR + <code>vue/server-renderer</code></td></tr>
+<tr><td>数据预取</td><td>自定义 <code>asyncData</code></td><td><code>onServerPrefetch</code> / Nuxt <code>useFetch</code></td></tr>
+<tr><td>生产构建</td><td>extract-text 插件、rimraf、cross-env……</td><td><code>vite build</code> 默认搞定</td></tr>
+</tbody>
+</table></div>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>给购物车 store 写单元测试：添加、重复添加、移除商品、计算总价。</li>
+    <li>给 <code>StoreCartItem</code> 组件写一个测试：点击“删除”按钮后，断言对应的 store action 被调用（提示：<code>@pinia/testing</code>）。</li>
+    <li>把整个应用的所有文字都翻译成中文，并用 vue-i18n 的 <code>numberFormats</code> 让价格在中文下显示为人民币格式。</li>
+    <li>用 <code>vite build</code> 构建后，打开 <code>dist/assets</code>，找出每个语言包对应的 chunk 文件。</li>
+    <li>（进阶）用 Nuxt 重写商品详情页：<code>pages/item/[id].vue</code>，用 <code>useFetch</code> 获取数据，用 <code>useSeoMeta</code> 设置标题；查看网页源代码，确认商品信息已经在 HTML 里了。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

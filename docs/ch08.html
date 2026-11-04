@@ -1,0 +1,936 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 8 章 · 项目六：Meteor 实时仪表盘 — Vue 3 项目实战教程</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .gauges { display: flex; gap: 28px; justify-content: center; flex-wrap: wrap; }
+  .gauge { text-align: center; width: 170px; }
+  .gauge svg { width: 170px; height: 100px; display: block; }
+  .gauge .track { fill: none; stroke: var(--line); stroke-width: 12; stroke-linecap: round; }
+  .gauge .bar { fill: none; stroke: var(--accent); stroke-width: 12; stroke-linecap: round; transition: stroke-dashoffset .6s ease; }
+  .gauge.danger .bar { stroke: var(--red); }
+  .gauge .title { font-weight: 700; margin-top: 2px; }
+  .gauge .info { color: var(--fg-soft); font-size: 22px; font-weight: 700; line-height: 1.2; }
+  .m-list { max-height: 180px; overflow: auto; margin-top: 12px; font-size: 13px; border: 1px solid var(--line); border-radius: 8px; }
+  .m-list > div { display: grid; grid-template-columns: 1fr 60px 50px; padding: 4px 10px; border-bottom: 1px solid var(--line); }
+  .m-list > div:last-child { border-bottom: none; }
+  .m-list:empty { display: none; }
+  .m-list .err { color: var(--red); font-weight: 700; }
+  .m-list .val { text-align: right; font-family: var(--mono); }
+  .m-enter-from { opacity: 0; transform: translateX(-20px); background: var(--accent-bg); }
+  .m-enter-active { transition: all .4s; }
+</style>
+</head>
+<body data-chapter="8">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 8 章 · 项目六</span>
+<h1>Meteor 实时仪表盘</h1>
+<p class="lede">
+  最后一个项目换一套完全不同的技术栈：全栈 JavaScript 框架 <strong>Meteor</strong>。我们做一个监控产品生产情况的实时仪表盘 ——
+  在一个窗口里录入数据，另一个窗口里的图表会<strong>立刻</strong>跟着变化，而我们几乎不用写任何网络通信代码。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>了解 Meteor 的架构：Minimongo、DDP、MongoDB 和“全栈响应式”</li>
+    <li>用 Meteor 3 创建 Vue 3 项目，理解 Meteor 的目录约定</li>
+    <li>用集合（Collection）存数据，用方法（Method）修改数据并获得乐观更新</li>
+    <li>用发布/订阅（Pub/Sub）把数据实时同步到 Vue 组件</li>
+    <li>自己用 SVG 画一个半圆进度仪表组件</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="overview">我们要做什么</h2>
+
+<p>应用有两个页面：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="仪表盘页面显示平均值和错误率两个半圆仪表及测量记录列表，生成页面有两个按钮">
+  <rect class="bx" x="20" y="14" width="440" height="232" rx="12"/>
+  <text class="ttl" x="240" y="38" text-anchor="middle">仪表盘 /</text>
+  <path d="M90 140 A60 60 0 0 1 210 140" style="fill:none;stroke:var(--line);stroke-width:12;stroke-linecap:round"/>
+  <path d="M90 140 A60 60 0 0 1 192 98" style="fill:none;stroke:var(--accent);stroke-width:12;stroke-linecap:round"/>
+  <text class="ttl" x="150" y="134" text-anchor="middle" style="font-size:20px">62</text>
+  <text class="sm" x="150" y="160" text-anchor="middle">平均值</text>
+  <path d="M270 140 A60 60 0 0 1 390 140" style="fill:none;stroke:var(--line);stroke-width:12;stroke-linecap:round"/>
+  <path d="M270 140 A60 60 0 0 1 287 98" style="fill:none;stroke:var(--red);stroke-width:12;stroke-linecap:round"/>
+  <text class="ttl" x="330" y="134" text-anchor="middle" style="font-size:20px">12%</text>
+  <text class="sm" x="330" y="160" text-anchor="middle">错误率</text>
+  <rect class="bx-d" x="50" y="178" width="380" height="56" rx="6"/>
+  <text class="mono sm" x="64" y="198">2026/11/5 14:02:11　　　　　　　 73</text>
+  <text class="mono sm" x="64" y="222">2026/11/5 14:02:08　<tspan class="on-r">错误</tspan>　　　　　 18</text>
+
+  <rect class="bx" x="500" y="14" width="240" height="232" rx="12"/>
+  <text class="ttl" x="620" y="38" text-anchor="middle">生成测量 /generate</text>
+  <rect class="bx-a" x="540" y="80" width="160" height="40" rx="8"/>
+  <text class="on-a" x="620" y="105" text-anchor="middle">生成测量值</text>
+  <rect class="bx-r" x="540" y="136" width="160" height="40" rx="8"/>
+  <text class="on-r" x="620" y="161" text-anchor="middle">生成错误</text>
+  <text class="sm" x="620" y="212" text-anchor="middle">没有真实传感器，</text>
+  <text class="sm" x="620" y="228" text-anchor="middle">用按钮模拟</text>
+  <path class="ln-a" d="M498 128 H464" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="480" y="120" text-anchor="middle">实时</text>
+</svg>
+<figcaption>图 8-1　仪表盘页 + 数据生成页</figcaption>
+</figure>
+
+<h2 id="meteor">Meteor 是什么</h2>
+
+<p>Meteor 是一个用于构建 Web 应用的<strong>全栈</strong> JavaScript 框架。它的组成部分：</p>
+
+<ul>
+  <li><strong>Web 客户端</strong>：可以用任何前端库（React、Vue、Svelte……），内置一个客户端数据库 <strong>Minimongo</strong>；</li>
+  <li><strong>服务器</strong>：基于 Node.js，支持现代 JS 语法；</li>
+  <li><strong>实时数据库</strong>：服务器端使用 MongoDB；</li>
+  <li><strong>通信被抽象掉了</strong>：客户端和服务器之间通过 WebSocket 上的 DDP 协议自动同步数据；</li>
+  <li>可选的混合移动应用（Android / iOS）构建、开箱即用的命令行工具和构建系统、既能用 Meteor 包也能用 npm 包。</li>
+</ul>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="Meteor 架构：多个浏览器客户端通过 DDP WebSocket 连接到 Node 服务器和 MongoDB">
+  <rect class="bx-g" x="20" y="30" width="230" height="110" rx="12"/>
+  <text class="ttl on-g" x="135" y="54" text-anchor="middle">浏览器 A</text>
+  <rect class="bx" x="36" y="66" width="96" height="60" rx="8"/>
+  <text class="sm" x="84" y="92" text-anchor="middle">Vue 组件</text>
+  <text class="sm" x="84" y="110" text-anchor="middle">（界面）</text>
+  <rect class="bx-a" x="140" y="66" width="96" height="60" rx="8"/>
+  <text class="sm on-a" x="188" y="92" text-anchor="middle">Minimongo</text>
+  <text class="sm" x="188" y="110" text-anchor="middle">客户端缓存</text>
+
+  <rect class="bx-g" x="20" y="170" width="230" height="110" rx="12"/>
+  <text class="ttl on-g" x="135" y="194" text-anchor="middle">浏览器 B</text>
+  <rect class="bx" x="36" y="206" width="96" height="60" rx="8"/>
+  <text class="sm" x="84" y="240" text-anchor="middle">Vue 组件</text>
+  <rect class="bx-a" x="140" y="206" width="96" height="60" rx="8"/>
+  <text class="sm on-a" x="188" y="240" text-anchor="middle">Minimongo</text>
+
+  <rect class="bx-b" x="400" y="90" width="180" height="130" rx="12"/>
+  <text class="ttl on-b" x="490" y="116" text-anchor="middle">Meteor 服务器</text>
+  <text class="sm" x="490" y="140" text-anchor="middle">Node.js</text>
+  <text class="sm" x="490" y="162" text-anchor="middle">Methods（修改数据）</text>
+  <text class="sm" x="490" y="182" text-anchor="middle">Publications（推送数据）</text>
+
+  <rect class="bx-p" x="620" y="120" width="120" height="70" rx="12"/>
+  <text class="ttl on-p" x="680" y="150" text-anchor="middle">MongoDB</text>
+  <text class="sm" x="680" y="170" text-anchor="middle">持久化</text>
+  <path class="ln-p" d="M582 155 H616" marker-end="url(#ar)"/>
+  <path class="ln-p" d="M616 165 H584" marker-end="url(#ar)"/>
+
+  <path class="ln-a" d="M252 85 C330 85 340 130 396 135" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M396 145 C340 150 320 100 254 100" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M252 225 C330 225 340 180 396 175" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M396 185 C340 190 320 240 254 240" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="325" y="62" text-anchor="middle">DDP over WebSocket</text>
+  <text class="halo sm on-a" x="325" y="270" text-anchor="middle">长连接，双向实时</text>
+</svg>
+<figcaption>图 8-2　Meteor 架构：客户端有一份数据库的“镜像”</figcaption>
+</figure>
+
+<p>
+  JavaScript 无处不在，Meteor 还鼓励客户端和服务器<strong>共享代码</strong>。因为 Meteor 管理了整个技术栈，整个栈都是响应式和实时的：
+  一个客户端修改了数据，所有其他客户端都会收到新数据，界面自动更新。
+</p>
+
+<div class="box note">
+  <div class="t">&#9432; Meteor 的今天</div>
+  <p>
+    Meteor 3（2024 年发布）完成了一次大升级：移除了基于 Fibers 的同步写法，全面改用 <code>async/await</code>，并支持最新的 Node.js LTS。
+    所以本章的代码会和原书有明显不同：<code>insert</code> 变成 <code>insertAsync</code>、<code>Meteor.call</code> 变成 <code>Meteor.callAsync</code> 等。
+    Meteor 也支持用现代打包工具（Vite / Rspack）构建前端，具体集成方式随版本演进，以 <code>meteor create</code> 生成的项目为准。
+  </p>
+</div>
+
+<h2 id="setup">创建项目</h2>
+
+<h3>安装 Meteor</h3>
+
+<div class="code" data-lang="bash" data-file="终端"><pre>
+npx meteor           # 官方推荐的安装方式（需要已安装 Node.js）
+meteor --version     # 例如 Meteor 3.x
+</pre></div>
+
+<p>Windows、macOS、Linux 的详细说明见 <a href="https://docs.meteor.com/about/install.html">Meteor 安装文档</a>。</p>
+
+<h3>用 Vue 模板创建项目</h3>
+
+<p>
+  原书用 <code>meteor create --bare</code> 创建空项目，再用 <code>meteor add akryum:vue-component</code> 添加 Vue 2 的编译器。
+  Meteor 3 直接提供了 Vue 3 项目模板：
+</p>
+
+<div class="code" data-lang="bash"><pre>
+meteor create --vue dashboard
+cd dashboard
+meteor npm install vue-router      # 用 meteor npm，保证 Node/npm 版本和 Meteor 一致
+meteor                             # 启动开发服务器
+</pre></div>
+
+<div class="code" data-lang="text" data-file="终端输出"><pre>
+[[[[[ ~/dashboard ]]]]]
+
+=&gt; Started proxy.
+=&gt; Started MongoDB.
+=&gt; Started your app.
+
+=&gt; App running at: http://localhost:3000/
+</pre></div>
+
+<p>一条 <code>meteor</code> 命令同时启动了 MongoDB、Node 服务器和前端构建。</p>
+
+<h3>目录结构</h3>
+
+<div class="tree"><b>dashboard/</b>
+├── package.json         <i># "meteor.mainModule" 指定客户端/服务端入口</i>
+├── <b>client/</b>
+│   ├── main.html        <i># 页面骨架（Meteor 的特殊 HTML 格式）</i>
+│   └── main.js          <i># 客户端入口：创建 Vue 应用</i>
+├── <b>server/</b>
+│   └── main.js          <i># 服务端入口</i>
+└── <b>imports/</b>
+    ├── <b>api/</b>             <i># 集合、方法、发布（客户端和服务端共享）</i>
+    └── <b>ui/</b>              <i># Vue 组件、路由</i></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="Meteor 代码的运行位置：client 只在浏览器，server 只在服务器，imports/api 两边都会导入">
+  <rect class="bx-g" x="20" y="40" width="200" height="120" rx="12"/>
+  <text class="ttl on-g" x="120" y="66" text-anchor="middle">client/main.js</text>
+  <text class="sm" x="120" y="92" text-anchor="middle">只在浏览器运行</text>
+  <text class="mono sm" x="120" y="118" text-anchor="middle">import '../imports/ui/…'</text>
+  <text class="mono sm" x="120" y="138" text-anchor="middle">import '../imports/api/…'</text>
+
+  <rect class="bx-a" x="280" y="40" width="200" height="120" rx="12"/>
+  <text class="ttl on-a" x="380" y="66" text-anchor="middle">imports/api/</text>
+  <text class="sm" x="380" y="92" text-anchor="middle">集合 + 方法</text>
+  <text class="sm" x="380" y="114" text-anchor="middle">两边都导入 → 两边都运行</text>
+  <text class="sm" x="380" y="136" text-anchor="middle">（方法因此能乐观更新）</text>
+
+  <rect class="bx-b" x="540" y="40" width="200" height="120" rx="12"/>
+  <text class="ttl on-b" x="640" y="66" text-anchor="middle">server/main.js</text>
+  <text class="sm" x="640" y="92" text-anchor="middle">只在服务器运行</text>
+  <text class="mono sm" x="640" y="118" text-anchor="middle">import '../imports/api/…'</text>
+  <text class="sm" x="640" y="138" text-anchor="middle">+ 发布（publications）</text>
+
+  <path class="ln-g" d="M222 120 H276" marker-end="url(#ar)"/>
+  <path class="ln-b" d="M538 120 H484" marker-end="url(#ar)"/>
+  <text class="lbl" x="380" y="196" text-anchor="middle">imports/ 下的文件只有被 import 时才会执行 —— 依赖关系是显式的</text>
+</svg>
+<figcaption>图 8-3　Meteor 的代码在哪里运行</figcaption>
+</figure>
+
+<div class="box note">
+  <div class="t">&#9432; 原书的 lib/ 目录约定</div>
+  <p>
+    原书把集合放在 <code>lib/</code> 目录，利用 Meteor 的“急切加载”规则：<code>lib/</code> 下的文件会被自动、优先加载，<code>client/</code> 只在客户端、<code>server/</code> 只在服务器。
+    这个规则至今仍然存在，但官方推荐在 <code>package.json</code> 里设置 <code>meteor.mainModule</code>，把代码放进 <code>imports/</code> 并显式 import —— 新模板默认就是这样。
+  </p>
+</div>
+
+<h3>第一个 Vue + Meteor 页面</h3>
+
+<div class="code" data-lang="html" data-file="client/main.html"><pre>
+&lt;head&gt;
+  &lt;title&gt;生产仪表盘&lt;/title&gt;
+&lt;/head&gt;
+
+&lt;body&gt;
+  &lt;div id="app"&gt;&lt;/div&gt;
+&lt;/body&gt;
+</pre></div>
+
+<p>这不是一个真正的完整 HTML 文件，而是 Meteor 的特殊格式：它会把 <code>&lt;head&gt;</code> 和 <code>&lt;body&gt;</code> 里的内容分别<strong>注入</strong>到最终页面的对应位置。</p>
+
+<div class="code" data-lang="js" data-file="client/main.js"><pre>
+import { Meteor } from 'meteor/meteor'
+import { createApp } from 'vue'
+import App from '../imports/ui/App.vue'
+import { router } from '../imports/ui/router'
+import '../imports/api/measures'           // 集合和方法（客户端也要有一份）
+
+// 等 Meteor 的各个系统准备好之后再启动 Vue
+Meteor.startup(() =&gt; {
+  createApp(App)
+    .use(router)
+    .mount('#app')
+})
+</pre></div>
+
+<p>Meteor 的 Vue 模板已经装好了 <code>vue-meteor-tracker</code>（没有的话：<code>meteor npm i vue-meteor-tracker</code>）。我们会用它的组合式函数，不需要像原书那样 <code>Vue.use()</code> 安装插件；如果想继续使用原书那种 <code>meteor: {}</code> 组件选项，库里也提供了对应的插件，用法见它的文档。</p>
+
+<div class="vs">
+  <div class="old"><div class="h">原书 · Meteor 1.x + Vue 2</div>
+<div class="code" data-lang="js"><pre>
+import Vue from 'vue'
+import VueMeteorTracker from 'vue-meteor-tracker'
+Vue.use(VueMeteorTracker)
+
+Meteor.startup(() =&gt; {
+  new Vue({ el: '#app', router, ...App })
+})
+</pre></div></div>
+  <div class="new"><div class="h">Meteor 3 + Vue 3</div>
+<div class="code" data-lang="js"><pre>
+import { createApp } from 'vue'
+
+Meteor.startup(() =&gt; {
+  createApp(App).use(router).mount('#app')
+})
+// 组件里直接用 vue-meteor-tracker 的
+// subscribe() / autorun()
+</pre></div></div>
+</div>
+
+<h3>路由</h3>
+
+<div class="code" data-lang="js" data-file="imports/ui/router.js"><pre>
+import { createRouter, createWebHistory } from 'vue-router'
+import ProductionDashboard from './ProductionDashboard.vue'
+import ProductionGenerator from './ProductionGenerator.vue'
+
+export const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    { path: '/', name: 'dashboard', component: ProductionDashboard },
+    { path: '/generate', name: 'generate', component: ProductionGenerator },
+  ],
+})
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="imports/ui/App.vue"><pre>
+&lt;template&gt;
+  &lt;div class="app"&gt;
+    &lt;nav&gt;
+      &lt;RouterLink :to="{ name: 'dashboard' }"&gt;仪表盘&lt;/RouterLink&gt;
+      &lt;RouterLink :to="{ name: 'generate' }"&gt;生成测量&lt;/RouterLink&gt;
+    &lt;/nav&gt;
+    &lt;RouterView /&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+
+&lt;style lang="stylus" src="./style.styl"&gt;&lt;/style&gt;
+</pre></div>
+
+<p>
+  原书在仪表盘链接上加了 <code>exact</code>；第 5 章讲过，Vue Router 4 已移除这个属性，也不再需要它。
+  样式文件可以从仓库 <code>chapter08/client/style.styl</code> 复制（需要 <code>meteor npm i -D stylus</code>），<code>src</code> 属性可以引用外部样式文件。
+</p>
+
+<h2 id="data">集合与方法</h2>
+
+<h3>集合（Collection）</h3>
+
+<p>
+  Meteor 集合是一个响应式的对象列表，类似 MongoDB 的集合（底层就是 MongoDB）。在服务器上，它直接读写 MongoDB；在客户端，它读写 Minimongo 里的缓存副本。
+</p>
+
+<div class="code" data-lang="js" data-file="imports/api/measures.js"><pre>
+import { Meteor } from 'meteor/meteor'
+import { Mongo } from 'meteor/mongo'
+
+export const Measures = new Mongo.Collection('measures')
+</pre></div>
+
+<h3>方法（Method）与乐观更新</h3>
+
+<p>
+  Meteor 方法是一个特殊的函数：客户端调用它时，它会<strong>同时</strong>在客户端（操作 Minimongo）和服务器（操作 MongoDB）上执行。
+  客户端那一份是“模拟”，让界面瞬间更新；服务器那一份才是权威结果，完成后会纠正客户端的数据（如果不一致的话）。
+  这就是<strong>乐观更新</strong>，在网络不好时效果特别明显。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="Meteor 方法的乐观更新：客户端模拟执行立即更新界面，服务器执行后确认或纠正">
+  <rect class="bx-g" x="20" y="14" width="160" height="34" rx="8"/><text class="on-g ttl" x="100" y="36" text-anchor="middle">浏览器（Minimongo）</text>
+  <rect class="bx-b" x="560" y="14" width="180" height="34" rx="8"/><text class="on-b ttl" x="650" y="36" text-anchor="middle">服务器（MongoDB）</text>
+  <path class="ln-d" d="M100 50 V260"/><path class="ln-d" d="M650 50 V260"/>
+
+  <rect class="bx-a" x="14" y="66" width="172" height="30" rx="6"/>
+  <text class="sm on-a" x="100" y="86" text-anchor="middle">callAsync('measure.add')</text>
+  <path class="ln-a" d="M188 110 H646" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="400" y="104" text-anchor="middle">① 通过 DDP 把调用发给服务器</text>
+
+  <rect class="bx-g" x="30" y="124" width="140" height="44" rx="6"/>
+  <text class="sm on-g" x="100" y="142" text-anchor="middle">② 客户端模拟执行</text>
+  <text class="sm" x="100" y="160" text-anchor="middle">界面立即更新 ⚡</text>
+
+  <rect class="bx-b" x="580" y="124" width="140" height="44" rx="6"/>
+  <text class="sm on-b" x="650" y="142" text-anchor="middle">③ 服务器真正执行</text>
+  <text class="sm" x="650" y="160" text-anchor="middle">写入 MongoDB</text>
+
+  <path class="ln-b" d="M646 196 H104" marker-end="url(#ar)"/>
+  <text class="halo sm on-b" x="400" y="190" text-anchor="middle">④ 推送权威结果，若与模拟不同则自动纠正</text>
+  <path class="ln-b" d="M646 228 H350" marker-end="url(#ar)"/>
+  <text class="halo sm on-b" x="250" y="232" text-anchor="middle">⑤ 同时推送给所有订阅了的其他客户端</text>
+</svg>
+<figcaption>图 8-4　方法同时在两端运行：客户端先“猜”，服务器再“确认”</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="imports/api/measures.js"><pre>
+import { Meteor } from 'meteor/meteor'
+import { Mongo } from 'meteor/mongo'
+import { check } from 'meteor/check'
+
+export const Measures = new Mongo.Collection('measures')
+
+Meteor.methods({
+  async 'measure.add'(measure) {
+    // 校验参数：方法可以被任何客户端调用，永远不要信任输入
+    check(measure, { value: Number, error: Boolean })
+
+    await Measures.insertAsync({
+      ...measure,
+      date: new Date(),
+    })
+  },
+})
+</pre></div>
+
+<div class="vs">
+  <div class="old"><div class="h">原书 · Meteor 1.x（同步，基于 Fibers）</div>
+<div class="code" data-lang="js"><pre>
+Meteor.methods({
+  'measure.add' (measure) {
+    Measures.insert({
+      ...measure,
+      date: new Date(),
+    })
+  },
+})
+</pre></div></div>
+  <div class="new"><div class="h">Meteor 3（async/await）</div>
+<div class="code" data-lang="js"><pre>
+Meteor.methods({
+  async 'measure.add'(measure) {
+    check(measure, { value: Number, error: Boolean })
+    await Measures.insertAsync({
+      ...measure,
+      date: new Date(),
+    })
+  },
+})
+</pre></div></div>
+</div>
+
+<div class="box warn">
+  <div class="t">&#9888; 一定要校验方法参数</div>
+  <p>
+    原书的方法直接把客户端传来的对象展开写进数据库。任何人都可以打开浏览器控制台调用 <code>Meteor.callAsync('measure.add', { 随便什么 })</code>，
+    往你的数据库里塞任意字段。用 Meteor 自带的 <code>check()</code>（或 zod 等库）校验类型，是写方法时必须养成的习惯。
+  </p>
+</div>
+
+<h3>模拟测量数据</h3>
+
+<div class="code" data-lang="vue" data-file="imports/ui/ProductionGenerator.vue"><pre>
+&lt;script setup&gt;
+import { Meteor } from 'meteor/meteor'
+
+async function generateMeasure(error) {
+  const value = Math.round(Math.random() * 100)
+  await Meteor.callAsync('measure.add', { value, error })
+}
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="production-generator"&gt;
+    &lt;h1&gt;生成测量数据&lt;/h1&gt;
+    &lt;section class="actions"&gt;
+      &lt;button @click="generateMeasure(false)"&gt;生成测量值&lt;/button&gt;
+      &lt;button @click="generateMeasure(true)"&gt;生成错误&lt;/button&gt;
+    &lt;/section&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>点击按钮，页面上什么都不会发生 —— 因为我们还没有显示数据。</p>
+
+<h3>检查数据库</h3>
+
+<p>在另一个终端里（应用保持运行），用一条命令连接到应用的数据库：</p>
+
+<div class="code" data-lang="bash"><pre>
+meteor mongo
+</pre></div>
+
+<div class="code" data-lang="text" data-file="MongoDB shell"><pre>
+&gt; db.measures.find({})
+{ "_id" : "k3Nf8...", "value" : 73, "error" : false, "date" : ISODate("2026-11-05T06:02:11Z") }
+{ "_id" : "Qp2xd...", "value" : 18, "error" : true,  "date" : ISODate("2026-11-05T06:02:08Z") }
+</pre></div>
+
+<p>数据已经写进 MongoDB 了。</p>
+
+<h2 id="pubsub">发布与订阅</h2>
+
+<p>
+  数据在服务器的 MongoDB 里，客户端要怎么拿到它？Meteor 的答案是<strong>发布/订阅</strong>：服务器<strong>发布</strong>一个查询，客户端<strong>订阅</strong>它。
+  订阅之后，查询结果会被同步到客户端的 Minimongo 中，并且<strong>持续保持同步</strong> —— 服务器上的数据有任何变化，都会被自动推送过来。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="发布订阅：服务器发布查询，客户端订阅后数据同步到 Minimongo，组件用 autorun 读取并自动更新">
+  <rect class="bx-b" x="20" y="30" width="240" height="110" rx="12"/>
+  <text class="ttl on-b" x="140" y="54" text-anchor="middle">服务器：发布</text>
+  <text class="mono sm" x="36" y="80">Meteor.publish('measures',</text>
+  <text class="mono sm" x="52" y="100">() =&gt; Measures.find())</text>
+  <text class="sm" x="140" y="126" text-anchor="middle">“愿意给客户端看哪些数据”</text>
+
+  <rect class="bx-g" x="500" y="30" width="240" height="110" rx="12"/>
+  <text class="ttl on-g" x="620" y="54" text-anchor="middle">客户端：订阅</text>
+  <text class="mono sm" x="516" y="84">subscribe('measures')</text>
+  <text class="sm" x="620" y="114" text-anchor="middle">组件卸载时自动取消订阅</text>
+
+  <path class="ln-g" d="M498 70 H264" marker-end="url(#ar)"/>
+  <text class="halo sm on-g" x="380" y="62" text-anchor="middle">① 订阅请求</text>
+  <path class="ln-b" d="M264 105 H498" marker-end="url(#ar)"/>
+  <text class="halo sm on-b" x="380" y="98" text-anchor="middle">② 初始数据 + 之后的每一次变化</text>
+
+  <rect class="bx-a" x="500" y="170" width="240" height="44" rx="10"/>
+  <text class="on-a" x="620" y="197" text-anchor="middle">Minimongo（客户端缓存）</text>
+  <path class="ln-b" d="M620 142 V166" marker-end="url(#ar)"/>
+
+  <rect class="bx-g" x="200" y="170" width="250" height="100" rx="12"/>
+  <text class="ttl on-g" x="325" y="194" text-anchor="middle">Vue 组件</text>
+  <text class="mono sm" x="214" y="220">autorun(() =&gt;</text>
+  <text class="mono sm" x="230" y="240">Measures.find().fetch())</text>
+  <text class="sm" x="325" y="262" text-anchor="middle">Minimongo 一变，结果自动更新</text>
+  <path class="ln-a" d="M498 200 H454" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="476" y="232" text-anchor="middle">③ 查询</text>
+</svg>
+<figcaption>图 8-5　发布/订阅：数据从 MongoDB 一路“流”进组件</figcaption>
+</figure>
+
+<h3>发布</h3>
+
+<div class="code" data-lang="js" data-file="imports/api/publications.js"><pre>
+import { Meteor } from 'meteor/meteor'
+import { Measures } from './measures'
+
+Meteor.publish('measures', function () {
+  return Measures.find({})
+})
+</pre></div>
+
+<div class="code" data-lang="js" data-file="server/main.js"><pre>
+import '../imports/api/measures'
+import '../imports/api/publications'   // 只有服务器需要发布
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 只发布需要的数据</div>
+  <p>
+    这里为了简单发布了全部测量记录。真实项目要注意两件事：数据量（比如只发布最近 100 条：<code>find({}, { sort: { date: -1 }, limit: 100 })</code>）
+    和权限（只发布当前用户能看的数据，在发布函数里用 <code>this.userId</code> 过滤）。
+  </p>
+</div>
+
+<h3>在 Vue 组件中订阅和查询</h3>
+
+<p>
+  原书使用 <code>vue-meteor-tracker</code> 提供的 <code>meteor</code> 组件选项（选项式 API）。新版的 <code>vue-meteor-tracker</code> 提供了组合式 API：
+</p>
+
+<ul>
+  <li><code>subscribe(名称, ...参数)</code>：订阅一个发布，组件卸载时自动取消；</li>
+  <li><code>autorun(函数)</code>：在 Meteor 的响应式计算（Tracker）中运行函数，函数读到的 Meteor 数据变化时自动重新运行，<code>.result</code> 是一个包含最新结果的 ref。</li>
+</ul>
+
+<div class="code" data-lang="vue" data-file="imports/ui/ProductionDashboard.vue（script）"><pre>
+&lt;script setup&gt;
+import { computed } from 'vue'
+import { subscribe, autorun } from 'vue-meteor-tracker'
+import { Measures } from '../api/measures'
+import ProductionIndicator from './ProductionIndicator.vue'
+
+// 订阅
+subscribe('measures')
+
+// 查询：按时间倒序。Minimongo 数据一变，measures 自动更新
+const measures = autorun(() =&gt;
+  Measures.find({}, { sort: { date: -1 } }).fetch()
+).result
+
+// 之后就是普通的 Vue 计算属性了
+const count = computed(() =&gt; measures.value.length)
+
+const average = computed(() =&gt; {
+  if (!count.value) return 0
+  const total = measures.value.reduce((sum, m) =&gt; sum + m.value, 0)
+  return total / count.value
+})
+
+const errorRate = computed(() =&gt; {
+  if (!count.value) return 0
+  const errors = measures.value.filter(m =&gt; m.error).length
+  return errors / count.value
+})
+&lt;/script&gt;
+</pre></div>
+
+<div class="vs">
+  <div class="old"><div class="h">原书 · meteor 选项</div>
+<div class="code" data-lang="js"><pre>
+export default {
+  data: () =&gt; ({ measures: [] }),
+  meteor: {
+    $subscribe: { 'measures': [] },
+    measures () {
+      return Measures.find({}, {
+        sort: { date: -1 },
+      })
+    },
+  },
+}
+</pre></div></div>
+  <div class="new"><div class="h">组合式 API</div>
+<div class="code" data-lang="js"><pre>
+subscribe('measures')
+
+const measures = autorun(() =&gt;
+  Measures.find({}, {
+    sort: { date: -1 },
+  }).fetch()
+).result
+</pre></div></div>
+</div>
+
+<div class="box deep">
+  <div class="t">&#128269; 两套响应式系统的“握手”</div>
+  <p>
+    Meteor 有自己的响应式系统 Tracker，Vue 有自己的响应式系统。<code>autorun</code> 做的就是桥接：在 Tracker 计算中执行你的查询，
+    每次 Tracker 通知“数据变了”，就把新结果写进一个 Vue ref，于是 Vue 这边的 computed 和模板也跟着更新。
+    这和第 6 章“把 Leaflet 事件桥接到 Pinia”是同一个思路。
+  </p>
+</div>
+
+<h2 id="gauge">仪表组件：用 SVG 画半圆进度条</h2>
+
+<p>
+  原书用 <code>vue-progress-path</code> 库画半圆进度条，但它只支持 Vue 2。其实用 SVG 自己画一个只需要十几行，还能顺便学一个很实用的技巧。
+</p>
+
+<h3>原理：stroke-dasharray</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="用 pathLength 和 stroke-dashoffset 控制描边显示的比例">
+  <path d="M60 170 A100 100 0 0 1 260 170" style="fill:none;stroke:var(--line);stroke-width:16;stroke-linecap:round"/>
+  <path d="M60 170 A100 100 0 0 1 230 99" style="fill:none;stroke:var(--accent);stroke-width:16;stroke-linecap:round"/>
+  <text class="ttl" x="160" y="160" text-anchor="middle" style="font-size:24px">62%</text>
+  <text class="sm" x="160" y="200" text-anchor="middle">两条一模一样的半圆弧：</text>
+  <text class="sm" x="160" y="218" text-anchor="middle">底下灰色是轨道，上面彩色是进度</text>
+  <text class="mono sm" x="50" y="190" text-anchor="middle">起点</text>
+  <text class="mono sm" x="270" y="190" text-anchor="middle">终点</text>
+
+  <rect class="bx" x="330" y="30" width="410" height="220" rx="12"/>
+  <text class="ttl" x="350" y="56">把路径的“长度”定义为 1，就能用比例来描边</text>
+  <text class="mono sm" x="350" y="88">&lt;path d="M10 90 A80 80 0 0 1 170 90"</text>
+  <text class="mono sm on-a" x="366" y="108">pathLength="1"</text>
+  <text class="mono sm on-b" x="366" y="128">stroke-dasharray="1"</text>
+  <text class="mono sm on-g" x="366" y="148">:stroke-dashoffset="1 - value" /&gt;</text>
+  <text class="sm on-a" x="350" y="178">pathLength="1"：不管实际多长，都按长度 1 计算</text>
+  <text class="sm on-b" x="350" y="198">dasharray="1"：画 1 段实线、再空 1 段（虚线图案）</text>
+  <text class="sm on-g" x="350" y="218">dashoffset：把图案往回推，value=0.62 时露出 62%</text>
+  <text class="sm" x="350" y="238">配合 CSS transition，数值变化时进度条会平滑地动起来</text>
+</svg>
+<figcaption>图 8-6　半圆进度条的几何原理</figcaption>
+</figure>
+
+<div class="code" data-lang="vue" data-file="imports/ui/ProductionIndicator.vue"><pre>
+&lt;script setup&gt;
+defineProps({
+  value: { type: Number, required: true },   // 0 ~ 1
+  title: String,
+  info: [String, Number],
+})
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="production-indicator"&gt;
+    &lt;svg viewBox="0 0 180 100"&gt;
+      &lt;!-- 轨道 --&gt;
+      &lt;path class="track" d="M10 90 A80 80 0 0 1 170 90" /&gt;
+      &lt;!-- 进度：Math.min/max 防止数值越界 --&gt;
+      &lt;path class="bar" d="M10 90 A80 80 0 0 1 170 90"
+            pathLength="1" stroke-dasharray="1"
+            :stroke-dashoffset="1 - Math.min(Math.max(value, 0), 1)" /&gt;
+    &lt;/svg&gt;
+    &lt;div class="info"&gt;{{ info }}&lt;/div&gt;
+    &lt;div class="title"&gt;{{ title }}&lt;/div&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+
+&lt;style scoped&gt;
+.track, .bar { fill: none; stroke-width: 12; stroke-linecap: round; }
+.track { stroke: #e5e5e5; }
+.bar { stroke: #42b883; transition: stroke-dashoffset .6s ease; }
+.production-indicator.danger .bar { stroke: #e53935; }
+&lt;/style&gt;
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; SVG 弧线命令 A</div>
+  <p>
+    <code>A80 80 0 0 1 170 90</code> 的意思是：画一段 x、y 半径都是 80 的椭圆弧，旋转 0 度，取小弧（0），顺时针方向（1），终点在 (170, 90)。
+    起点 (10, 90) 和终点 (170, 90) 相距 160 = 2 × 80，所以正好是一个半圆。
+  </p>
+</div>
+
+<h3>组装仪表盘</h3>
+
+<div class="code" data-lang="vue" data-file="imports/ui/ProductionDashboard.vue（template）"><pre>
+&lt;template&gt;
+  &lt;div class="production-dashboard"&gt;
+    &lt;h1&gt;生产仪表盘&lt;/h1&gt;
+
+    &lt;section class="indicators"&gt;
+      &lt;ProductionIndicator
+        :value="average / 100"
+        title="平均值"
+        :info="Math.round(average)"
+      /&gt;
+      &lt;ProductionIndicator
+        class="danger"
+        :value="errorRate"
+        title="错误率"
+        :info="`${Math.round(errorRate * 100)}%`"
+      /&gt;
+    &lt;/section&gt;
+
+    &lt;section class="list"&gt;
+      &lt;div v-for="item of measures" :key="item._id"&gt;
+        &lt;div class="date"&gt;{{ item.date.toLocaleString() }}&lt;/div&gt;
+        &lt;div class="error"&gt;{{ item.error ? '错误' : '' }}&lt;/div&gt;
+        &lt;div class="value"&gt;{{ item.value }}&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>
+  把两个浏览器窗口并排打开：一个停在仪表盘，一个停在生成页。在生成页点击按钮，仪表盘上的指针和列表会<strong>实时</strong>更新 ——
+  这就是 Meteor 全栈响应式的威力。我们没有写一行 WebSocket 代码，也没有写一个 REST 接口。
+</p>
+
+<p>下面的演示在浏览器里模拟了同样的效果（用本地数据代替 Meteor，仪表组件的代码和上面完全一样）：</p>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · 实时仪表盘（本地模拟）</div>
+  <div class="body">
+    <div id="demo-dashboard" v-cloak>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+        <button @click="add(false)">生成测量值</button>
+        <button class="ghost" @click="add(true)">生成错误</button>
+        <button class="ghost" @click="toggleAuto">{{ timer ? '停止自动生成' : '每秒自动生成' }}</button>
+        <button class="ghost" @click="measures = []">清空</button>
+      </div>
+      <div class="gauges">
+        <div class="gauge">
+          <svg viewBox="0 0 180 100"><path class="track" d="M10 90 A80 80 0 0 1 170 90"/><path class="bar" d="M10 90 A80 80 0 0 1 170 90" pathLength="1" stroke-dasharray="1" :stroke-dashoffset="1 - average / 100"/></svg>
+          <div class="info">{{ Math.round(average) }}</div><div class="title">平均值</div>
+        </div>
+        <div class="gauge danger">
+          <svg viewBox="0 0 180 100"><path class="track" d="M10 90 A80 80 0 0 1 170 90"/><path class="bar" d="M10 90 A80 80 0 0 1 170 90" pathLength="1" stroke-dasharray="1" :stroke-dashoffset="1 - errorRate"/></svg>
+          <div class="info">{{ Math.round(errorRate * 100) }}%</div><div class="title">错误率</div>
+        </div>
+      </div>
+      <transition-group name="m" tag="div" class="m-list">
+        <div v-for="m of measures" :key="m.id">
+          <span>{{ m.date.toLocaleTimeString() }}</span>
+          <span class="err">{{ m.error ? '错误' : '' }}</span>
+          <span class="val">{{ m.value }}</span>
+        </div>
+      </transition-group>
+      <p class="muted" v-if="!measures.length">还没有数据，点上面的按钮试试。</p>
+    </div>
+  </div>
+</div>
+
+<h2 id="alternatives">不用 Meteor，怎么做实时？</h2>
+
+<p>
+  Meteor 把实时同步做到了“零代码”，但它也意味着要接受整套技术栈（MongoDB、DDP、它的构建系统）。在其他 Vue 项目里实现实时更新，常见的方案有：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="实时方案对比：轮询、SSE、WebSocket、托管的实时后端">
+  <rect class="bx" x="20" y="20" width="170" height="210" rx="12"/>
+  <text class="ttl" x="105" y="46" text-anchor="middle">轮询</text>
+  <text class="sm" x="105" y="72" text-anchor="middle">每隔几秒请求一次</text>
+  <text class="sm" x="105" y="102" text-anchor="middle">✓ 最简单</text>
+  <text class="sm" x="105" y="122" text-anchor="middle">✗ 有延迟、浪费请求</text>
+  <text class="mono sm" x="105" y="160" text-anchor="middle">setInterval</text>
+  <text class="mono sm" x="105" y="180" text-anchor="middle">VueUse useIntervalFn</text>
+
+  <rect class="bx-b" x="205" y="20" width="170" height="210" rx="12"/>
+  <text class="ttl on-b" x="290" y="46" text-anchor="middle">SSE</text>
+  <text class="sm" x="290" y="72" text-anchor="middle">服务器单向推送</text>
+  <text class="sm" x="290" y="102" text-anchor="middle">✓ 基于 HTTP，简单</text>
+  <text class="sm" x="290" y="122" text-anchor="middle">✓ 自动重连</text>
+  <text class="sm" x="290" y="142" text-anchor="middle">✗ 只能服务器 → 客户端</text>
+  <text class="mono sm" x="290" y="180" text-anchor="middle">VueUse useEventSource</text>
+
+  <rect class="bx-a" x="390" y="20" width="170" height="210" rx="12"/>
+  <text class="ttl on-a" x="475" y="46" text-anchor="middle">WebSocket</text>
+  <text class="sm" x="475" y="72" text-anchor="middle">双向长连接</text>
+  <text class="sm" x="475" y="102" text-anchor="middle">✓ 真正的双向实时</text>
+  <text class="sm" x="475" y="122" text-anchor="middle">✗ 要自己处理重连、</text>
+  <text class="sm" x="475" y="142" text-anchor="middle">鉴权、扩容</text>
+  <text class="mono sm" x="475" y="180" text-anchor="middle">VueUse useWebSocket</text>
+  <text class="mono sm" x="475" y="200" text-anchor="middle">socket.io</text>
+
+  <rect class="bx-p" x="575" y="20" width="165" height="210" rx="12"/>
+  <text class="ttl on-p" x="657" y="46" text-anchor="middle">托管实时后端</text>
+  <text class="sm" x="657" y="72" text-anchor="middle">订阅数据库变化</text>
+  <text class="sm" x="657" y="102" text-anchor="middle">✓ 和 Meteor 体验接近</text>
+  <text class="sm" x="657" y="122" text-anchor="middle">✗ 依赖第三方服务</text>
+  <text class="mono sm" x="657" y="170" text-anchor="middle">Supabase Realtime</text>
+  <text class="mono sm" x="657" y="190" text-anchor="middle">Firebase / Convex</text>
+</svg>
+<figcaption>图 8-7　常见的实时数据方案</figcaption>
+</figure>
+
+<p>以 SSE 为例，配合第 6 章的 Pinia，前端只需要几行：</p>
+
+<div class="code" data-lang="js" data-file="stores/measures.js（示意）"><pre>
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
+
+export const useMeasuresStore = defineStore('measures', () =&gt; {
+  const measures = ref([])
+
+  // 服务器每产生一条新测量，就推送一条 SSE 消息
+  const source = new EventSource('/api/measures/stream')
+  source.onmessage = (e) =&gt; {
+    measures.value.unshift(JSON.parse(e.data))
+  }
+
+  const average = computed(() =&gt; /* ...同上... */ 0)
+  return { measures, average }
+})
+</pre></div>
+
+<h2 id="summary">小结</h2>
+
+<div class="tw"><table>
+<thead><tr><th>主题</th><th>原书（Meteor 1.x + Vue 2）</th><th>本教程（Meteor 3 + Vue 3）</th></tr></thead>
+<tbody>
+<tr><td>创建项目</td><td><code>meteor create --bare</code> + <code>akryum:vue-component</code></td><td><code>meteor create --vue</code></td></tr>
+<tr><td>目录约定</td><td><code>lib/</code> 急切加载</td><td><code>imports/</code> + <code>mainModule</code> 显式导入</td></tr>
+<tr><td>启动 Vue</td><td><code>new Vue({ el, ...App })</code></td><td><code>createApp(App).mount()</code></td></tr>
+<tr><td>写入数据</td><td><code>Measures.insert()</code>（同步）</td><td><code>await Measures.insertAsync()</code></td></tr>
+<tr><td>调用方法</td><td><code>Meteor.call()</code></td><td><code>await Meteor.callAsync()</code></td></tr>
+<tr><td>参数校验</td><td>无</td><td><code>check()</code></td></tr>
+<tr><td>组件里订阅</td><td><code>meteor: { $subscribe, measures() }</code></td><td><code>subscribe()</code> + <code>autorun().result</code></td></tr>
+<tr><td>半圆进度条</td><td>vue-progress-path（仅 Vue 2）</td><td>自己用 SVG 实现</td></tr>
+<tr><td><code>.vueignore</code></td><td>需要</td><td>不需要</td></tr>
+</tbody>
+</table></div>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>发布只返回最近 50 条测量，并在仪表盘上显示“共 N 条记录”。</li>
+    <li>加一个 <code>measure.clear</code> 方法清空所有数据，并在生成页加一个按钮（想一想：这个方法应该允许任何人调用吗？）。</li>
+    <li>给仪表组件加一个 <code>max</code> prop，让它能显示 0~max 而不只是 0~1 的值；再加上刻度。</li>
+    <li>让发布接收一个参数 <code>onlyErrors</code>，仪表盘上加一个复选框，勾选时只订阅错误记录（提示：<code>subscribe('measures', () =&gt; [onlyErrors.value])</code> 这类写法能让参数变化时重新订阅，具体以 vue-meteor-tracker 文档为准）。</li>
+    <li>（进阶）不用 Meteor，用 Express + SSE 或 Supabase 实现同样的实时仪表盘，对比两种方案的代码量。</li>
+  </ol>
+</div>
+
+<h2 id="journey">旅程的终点，也是起点</h2>
+
+<p>
+  我们从一个 HTML 文件里的 <code>{{ message }}</code> 起步，一路做了 Markdown 笔记本、带动画的卡牌游戏、带登录的客服中心、地图博客、可测试可翻译可服务端渲染的商店，
+  最后是一个实时仪表盘。过程中，原书的 Vue 2 生态被我们一件件换成了今天的工具：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="六个项目学到的技能回顾">
+  <rect class="bx-a" x="20" y="30" width="110" height="130" rx="10"/>
+  <text class="ttl on-a" x="75" y="54" text-anchor="middle">笔记本</text>
+  <text class="sm" x="75" y="80" text-anchor="middle">ref · computed</text>
+  <text class="sm" x="75" y="100" text-anchor="middle">watch · 指令</text>
+  <text class="sm" x="75" y="120" text-anchor="middle">生命周期</text>
+  <rect class="bx-a" x="145" y="30" width="110" height="130" rx="10"/>
+  <text class="ttl on-a" x="200" y="54" text-anchor="middle">卡牌游戏</text>
+  <text class="sm" x="200" y="80" text-anchor="middle">组件 · props</text>
+  <text class="sm" x="200" y="100" text-anchor="middle">emit · slot</text>
+  <text class="sm" x="200" y="120" text-anchor="middle">Transition</text>
+  <rect class="bx-b" x="270" y="30" width="110" height="130" rx="10"/>
+  <text class="ttl on-b" x="325" y="54" text-anchor="middle">工程化</text>
+  <text class="sm" x="325" y="80" text-anchor="middle">Vite · SFC</text>
+  <text class="sm" x="325" y="100" text-anchor="middle">script setup</text>
+  <text class="sm" x="325" y="120" text-anchor="middle">scoped CSS</text>
+  <rect class="bx-b" x="395" y="30" width="110" height="130" rx="10"/>
+  <text class="ttl on-b" x="450" y="54" text-anchor="middle">客服中心</text>
+  <text class="sm" x="450" y="80" text-anchor="middle">Vue Router 4</text>
+  <text class="sm" x="450" y="100" text-anchor="middle">组合式函数</text>
+  <text class="sm" x="450" y="120" text-anchor="middle">defineModel</text>
+  <rect class="bx-p" x="520" y="30" width="110" height="130" rx="10"/>
+  <text class="ttl on-p" x="575" y="54" text-anchor="middle">地图博客</text>
+  <text class="sm" x="575" y="80" text-anchor="middle">Pinia</text>
+  <text class="sm" x="575" y="100" text-anchor="middle">第三方库集成</text>
+  <text class="sm" x="575" y="120" text-anchor="middle">作用域插槽</text>
+  <rect class="bx-p" x="645" y="30" width="95" height="130" rx="10"/>
+  <text class="ttl on-p" x="692" y="54" text-anchor="middle">商店+仪表盘</text>
+  <text class="sm" x="692" y="80" text-anchor="middle">Vitest · i18n</text>
+  <text class="sm" x="692" y="100" text-anchor="middle">SSR · Nuxt</text>
+  <text class="sm" x="692" y="120" text-anchor="middle">实时数据</text>
+  <path class="ln-a" d="M20 186 H736" marker-end="url(#ar-a)"/>
+  <text class="sm" x="380" y="204" text-anchor="middle">从“一个 script 标签”到“全栈应用”——这就是“渐进式”的含义</text>
+</svg>
+<figcaption>图 8-8　六个项目，一条渐进的学习路线</figcaption>
+</figure>
+
+<p>接下来可以做的事：</p>
+<ul>
+  <li>改进书中的项目：给工单加评论和关闭功能、给博客加点赞和实时推送、把商店完整迁移到 Nuxt；</li>
+  <li>通读 <a href="https://cn.vuejs.org/">Vue 官方文档</a>（中文版质量很高），尤其是“深入响应式系统”和“组合式函数”两章；</li>
+  <li>探索 <a href="https://vueuse.org/">VueUse</a>，看看两百多个组合式函数是怎么写的；</li>
+  <li>加入社区：参与开源、回答别人的问题。教别人是巩固知识最好的方法。</li>
+</ul>
+
+<p>本教程最后还附了一份 <a href="ch09.html">Vue 2 → Vue 3 速查表</a>，阅读其他 Vue 2 时代的资料时可以随时对照。</p>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+<script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+<script>
+  if (window.Vue) {
+    const { createApp, ref, computed, onBeforeUnmount } = Vue
+    let id = 0
+    createApp({
+      setup() {
+        const measures = ref([])
+        const timer = ref(null)
+        const add = (error) => {
+          measures.value.unshift({ id: id++, value: Math.round(Math.random() * 100), error, date: new Date() })
+          if (measures.value.length > 60) measures.value.pop()
+        }
+        const average = computed(() => measures.value.length
+          ? measures.value.reduce((s, m) => s + m.value, 0) / measures.value.length : 0)
+        const errorRate = computed(() => measures.value.length
+          ? measures.value.filter(m => m.error).length / measures.value.length : 0)
+        const toggleAuto = () => {
+          if (timer.value) { clearInterval(timer.value); timer.value = null }
+          else timer.value = setInterval(() => add(Math.random() < 0.15), 1000)
+        }
+        onBeforeUnmount(() => clearInterval(timer.value))
+        return { measures, timer, add, average, errorRate, toggleAuto }
+      }
+    }).mount('#demo-dashboard')
+  }
+</script>
+</body>
+</html>

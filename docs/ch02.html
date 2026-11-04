@@ -1,0 +1,1559 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 2 章 · 项目一：Markdown 笔记本 — Vue 3 项目实战教程</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .nb-demo { display: grid; grid-template-columns: 180px 1fr; gap: 14px; }
+  @media (width <= 600px) { .nb-demo { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body data-chapter="2">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 2 章 · 项目一</span>
+<h1>Markdown 笔记本</h1>
+<p class="lede">
+  第一个完整应用：一个能实时预览 Markdown、支持多条笔记、刷新后自动恢复的笔记本。
+  做完它，你就掌握了 Vue 日常开发里八成的基本功。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>用 <code>computed</code> 派生数据，理解它的缓存机制</li>
+    <li>用 <code>watch</code> 在数据变化时执行副作用（保存到 localStorage）</li>
+    <li>认识组件的生命周期钩子</li>
+    <li>掌握 <code>v-on</code>、<code>v-bind</code>、<code>v-for</code>、<code>v-if</code>、<code>v-html</code> 和动态 class</li>
+    <li>知道为什么 Vue 3 删除了过滤器，以及用什么替代</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="overview">我们要做什么</h2>
+
+<p>先列出需求：</p>
+<ul>
+  <li>用户可以用 Markdown 语法写笔记</li>
+  <li>Markdown 实时渲染预览</li>
+  <li>可以创建任意多条笔记，可以重命名、删除、收藏</li>
+  <li>下次打开页面时，笔记和上次选中的那条都还在</li>
+</ul>
+
+<p>界面分成三栏：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="笔记本界面：左侧笔记列表，中间编辑器，右侧预览">
+  <rect class="bx" x="20" y="20" width="720" height="260" rx="12"/>
+  <!-- sidebar -->
+  <rect class="bx-b" x="34" y="34" width="170" height="232" rx="8"/>
+  <text class="ttl on-b" x="119" y="56" text-anchor="middle">侧边栏 .side-bar</text>
+  <rect class="bx-a" x="48" y="68" width="142" height="28" rx="6"/>
+  <text class="sm on-a" x="119" y="87" text-anchor="middle">＋ 新建笔记</text>
+  <rect class="bx" x="48" y="106" width="142" height="26" rx="5"/>
+  <text class="sm" x="60" y="123">★ 购物清单</text>
+  <rect class="bx-b" x="48" y="138" width="142" height="26" rx="5" style="stroke-width:2"/>
+  <text class="sm on-b" x="60" y="155">读书笔记（选中）</text>
+  <rect class="bx" x="48" y="170" width="142" height="26" rx="5"/>
+  <text class="sm" x="60" y="187">新笔记 3</text>
+  <text class="sm" x="119" y="236" text-anchor="middle">v-for 渲染列表</text>
+  <text class="sm" x="119" y="252" text-anchor="middle">收藏的排在前面</text>
+
+  <!-- main -->
+  <rect class="bx-a" x="216" y="34" width="276" height="232" rx="8"/>
+  <text class="ttl on-a" x="354" y="56" text-anchor="middle">主区域 .main</text>
+  <rect class="bx" x="230" y="68" width="248" height="28" rx="6"/>
+  <text class="sm" x="242" y="87">标题输入框</text>
+  <text class="sm" x="420" y="87">☆　🗑</text>
+  <rect class="bx" x="230" y="104" width="248" height="118" rx="6"/>
+  <text class="mono sm" x="242" y="126"># 读书笔记</text>
+  <text class="mono sm" x="242" y="146">**Vue** 真好用</text>
+  <text class="sm" x="354" y="200" text-anchor="middle">&lt;textarea v-model&gt;</text>
+  <rect class="bx-d" x="230" y="230" width="248" height="26" rx="6"/>
+  <text class="sm" x="354" y="247" text-anchor="middle">状态栏：创建时间 · 行 · 词 · 字符</text>
+
+  <!-- preview -->
+  <rect class="bx-g" x="504" y="34" width="222" height="232" rx="8"/>
+  <text class="ttl on-g" x="615" y="56" text-anchor="middle">预览 .preview</text>
+  <text class="ttl" x="520" y="96" style="font-size:18px">读书笔记</text>
+  <text x="520" y="124"><tspan font-weight="700">Vue</tspan> 真好用</text>
+  <text class="sm" x="615" y="200" text-anchor="middle">v-html 显示</text>
+  <text class="sm" x="615" y="216" text-anchor="middle">计算属性生成的 HTML</text>
+</svg>
+<figcaption>图 2-1　笔记本的三栏布局</figcaption>
+</figure>
+
+<p>
+  我们分两步走：先做一个<strong>单条笔记</strong>的编辑器 + 预览，再把它扩展成<strong>多条笔记</strong>的笔记本。
+</p>
+
+<h2 id="setup">搭建项目</h2>
+
+<p>
+  这个项目仍然不需要任何构建工具。新建一个文件夹，放三个文件：<code>index.html</code>、<code>script.js</code>、<code>style.css</code>。
+  样式不是本书重点，你可以直接复制仓库里的 <code>Chapter02/chapter2-full/style.css</code>。
+</p>
+
+<div class="tree"><b>notebook/</b>
+├── index.html   <i># 页面结构 + 模板</i>
+├── script.js    <i># Vue 应用逻辑</i>
+└── style.css    <i># 样式（直接复制）</i></div>
+
+<div class="code" data-lang="html" data-file="index.html"><pre>
+&lt;!doctype html&gt;
+&lt;html lang="zh-CN"&gt;
+&lt;head&gt;
+  &lt;meta charset="utf-8"&gt;
+  &lt;title&gt;笔记本&lt;/title&gt;
+  &lt;!-- 图标字体 &amp; 样式 --&gt;
+  &lt;link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"&gt;
+  &lt;link rel="stylesheet" href="style.css"&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;!-- 笔记本应用 --&gt;
+  &lt;div id="notebook"&gt;
+    &lt;!-- 主区域 --&gt;
+    &lt;section class="main"&gt;
+    &lt;/section&gt;
+  &lt;/div&gt;
+
+  &lt;script src="https://unpkg.com/vue@3/dist/vue.global.js"&gt;&lt;/script&gt;
+  &lt;script src="script.js"&gt;&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</pre></div>
+
+<div class="code" data-lang="js" data-file="script.js"><pre>
+const { createApp, ref } = Vue
+
+createApp({
+  name: 'Notebook',
+  setup() {
+    const content = ref('这是一条笔记。')
+    return { content }
+  }
+}).mount('#notebook')
+</pre></div>
+
+<h2 id="editor">笔记编辑器</h2>
+
+<p>编辑器就是一个 <code>&lt;textarea&gt;</code>，用上一章学的 <code>v-model</code> 绑定到 <code>content</code>：</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;section class="main"&gt;
+  &lt;textarea v-model="content"&gt;&lt;/textarea&gt;
+&lt;/section&gt;
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; v-model 不只能用在文本框上</div>
+  <p>
+    复选框、单选框、下拉框都能用 <code>v-model</code>，Vue 会自动选择正确的属性和事件
+    （比如复选框绑定的是 <code>checked</code> 和 <code>change</code>）。第 5 章还会让它作用在我们自己写的组件上。
+  </p>
+</div>
+
+<h2 id="preview">预览面板</h2>
+
+<p>
+  要把 Markdown 转成 HTML，我们借助一个库：<a href="https://marked.js.org/">marked</a>。在 Vue 的 <code>&lt;script&gt;</code> 之后引入它：
+</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;script src="https://unpkg.com/vue@3/dist/vue.global.js"&gt;&lt;/script&gt;
+&lt;!-- Markdown 解析器 --&gt;
+&lt;script src="https://cdn.jsdelivr.net/npm/marked@15/lib/marked.umd.js"&gt;&lt;/script&gt;
+&lt;!-- HTML 消毒器，后面会解释为什么需要它 --&gt;
+&lt;script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"&gt;&lt;/script&gt;
+</pre></div>
+
+<p>在控制台里试一下：</p>
+
+<div class="code" data-lang="js" data-file="浏览器控制台"><pre>
+marked.parse('**粗体** *斜体* [链接](https://vuejs.org/)')
+// '&lt;p&gt;&lt;strong&gt;粗体&lt;/strong&gt; &lt;em&gt;斜体&lt;/em&gt; &lt;a href="https://vuejs.org/"&gt;链接&lt;/a&gt;&lt;/p&gt;\n'
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 和原书的差别</div>
+  <p>原书直接调用 <code>marked(text)</code>。新版 marked 推荐写成 <code>marked.parse(text)</code>，并且地址要锁定大版本号。</p>
+</div>
+
+<h3>计算属性 computed</h3>
+
+<p>
+  预览内容是由 <code>content</code> <em>推导</em>出来的：<code>content</code> 变了，预览就该跟着变。
+  这种“由别的数据算出来的数据”，正是<strong>计算属性</strong>的用武之地。它有四个特点：
+</p>
+
+<ul>
+  <li><strong>有缓存</strong>：依赖没变，就直接返回上次的结果，不会重复计算。</li>
+  <li><strong>自动更新</strong>：函数里用到的任何响应式数据变了，它会被标记为“需要重算”。</li>
+  <li><strong>用法和普通数据一样</strong>：可以在模板里用，也可以在别的计算属性里用。</li>
+  <li><strong>惰性</strong>：没人读它，它就不算。</li>
+</ul>
+
+<div class="code" data-lang="js" data-file="script.js"><pre>
+const { createApp, ref, computed } = Vue
+
+createApp({
+  setup() {
+    const content = ref('这是一条笔记。')
+
+    // 计算属性：传一个“取值函数”，返回一个只读的 ref
+    const notePreview = computed(() =&gt; marked.parse(content.value))
+
+    return { content, notePreview }
+  }
+}).mount('#notebook')
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="计算属性的缓存：依赖没变时直接返回缓存值">
+  <rect class="bx-b" x="20" y="90" width="150" height="60" rx="10"/>
+  <text class="on-b ttl" x="95" y="116" text-anchor="middle">content</text>
+  <text class="sm" x="95" y="136" text-anchor="middle">依赖（ref）</text>
+
+  <rect class="bx-a" x="260" y="60" width="220" height="120" rx="12"/>
+  <text class="ttl on-a" x="370" y="86" text-anchor="middle">notePreview = computed(...)</text>
+  <rect class="bx" x="282" y="100" width="176" height="30" rx="6"/>
+  <text class="mono sm" x="370" y="120" text-anchor="middle">marked.parse(content.value)</text>
+  <rect class="bx-g" x="282" y="138" width="176" height="30" rx="6"/>
+  <text class="sm on-g" x="370" y="158" text-anchor="middle">缓存：上次的 HTML 结果</text>
+
+  <path class="ln-b" d="M172 120 H256" marker-end="url(#ar)"/>
+  <text class="halo sm" x="214" y="112" text-anchor="middle">变了才重算</text>
+
+  <rect class="bx" x="570" y="30" width="170" height="44" rx="8"/>
+  <text class="sm" x="655" y="57" text-anchor="middle">模板读取（第 1 次）</text>
+  <rect class="bx" x="570" y="98" width="170" height="44" rx="8"/>
+  <text class="sm" x="655" y="125" text-anchor="middle">模板读取（第 2 次）</text>
+  <rect class="bx" x="570" y="166" width="170" height="44" rx="8"/>
+  <text class="sm" x="655" y="193" text-anchor="middle">别的计算属性读取</text>
+
+  <path class="ln-a" d="M482 100 L566 54" marker-end="url(#ar-a)"/>
+  <path class="ln-g" d="M482 150 L566 120" marker-end="url(#ar)"/>
+  <path class="ln-g" d="M482 160 L566 186" marker-end="url(#ar)"/>
+  <text class="halo sm on-a" x="525" y="66" text-anchor="middle">执行函数</text>
+  <text class="halo sm on-g" x="530" y="226" text-anchor="middle">直接返回缓存，不再执行</text>
+</svg>
+<figcaption>图 2-2　计算属性只在依赖变化后、被读取时才重新执行</figcaption>
+</figure>
+
+<div class="vs">
+  <div class="old"><div class="h">原书 · 选项式 API</div>
+<div class="code" data-lang="js"><pre>
+computed: {
+  notePreview () {
+    return marked(this.content)
+  }
+}
+</pre></div></div>
+  <div class="new"><div class="h">Vue 3 · 组合式 API</div>
+<div class="code" data-lang="js"><pre>
+const notePreview = computed(
+  () =&gt; marked.parse(content.value)
+)
+</pre></div></div>
+</div>
+
+<div class="box tip">
+  <div class="t">&#10003; 计算属性 vs. 函数</div>
+  <p>
+    你也可以写一个普通函数 <code>function preview() { return marked.parse(content.value) }</code>，在模板里用 <code>{{ preview() }}</code>。
+    结果一样，但<strong>函数每次重新渲染都会执行</strong>，计算属性则有缓存。Markdown 解析不便宜，这里用计算属性更合适。
+  </p>
+</div>
+
+<h3>文本插值会转义 HTML</h3>
+
+<p>先试着用插值显示预览：</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;aside class="preview"&gt;
+  {{ notePreview }}
+&lt;/aside&gt;
+</pre></div>
+
+<p>在编辑器里输入 <code>我是 **粗体**！</code>，预览区显示的却是：</p>
+
+<div class="code" data-lang="text"><pre>
+&lt;p&gt;我是 &lt;strong&gt;粗体&lt;/strong&gt;！&lt;/p&gt;
+</pre></div>
+
+<p>
+  HTML 标签被原样显示成了文字。这是 Vue 故意的：<strong>文本插值总是会转义 HTML</strong>，以防止
+  <strong>XSS（跨站脚本）攻击</strong>。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="XSS 攻击示意：恶意用户提交的脚本被当作 HTML 渲染后，在所有访客的浏览器里执行">
+  <rect class="bx-r" x="20" y="40" width="170" height="70" rx="10"/>
+  <text class="on-r ttl" x="105" y="66" text-anchor="middle">恶意用户</text>
+  <text class="mono sm" x="105" y="90" text-anchor="middle">&lt;img src=x onerror=…&gt;</text>
+  <path class="ln-r" d="M192 75 H266" marker-end="url(#ar)"/>
+  <text class="halo sm" x="229" y="66" text-anchor="middle">提交评论</text>
+
+  <rect class="bx" x="270" y="40" width="160" height="70" rx="10"/>
+  <text class="ttl" x="350" y="70" text-anchor="middle">你的网站</text>
+  <text class="sm" x="350" y="92" text-anchor="middle">存进数据库</text>
+
+  <path class="ln" d="M432 60 H510" marker-end="url(#ar)"/>
+  <text class="halo sm" x="471" y="52" text-anchor="middle">当 HTML 渲染</text>
+  <rect class="bx-r" x="514" y="30" width="226" height="56" rx="10"/>
+  <text class="on-r" x="627" y="54" text-anchor="middle">v-html / innerHTML</text>
+  <text class="sm on-r" x="627" y="74" text-anchor="middle">脚本在每个访客浏览器里执行 ✗</text>
+
+  <path class="ln" d="M432 92 H510" marker-end="url(#ar)"/>
+  <text class="halo sm" x="471" y="110" text-anchor="middle">当文本渲染</text>
+  <rect class="bx-g" x="514" y="96" width="226" height="56" rx="10"/>
+  <text class="on-g" x="627" y="120" text-anchor="middle">{{ 插值 }} / v-text</text>
+  <text class="sm on-g" x="627" y="140" text-anchor="middle">只显示成文字，安全 ✓</text>
+
+  <rect class="bx-d" x="20" y="180" width="720" height="50" rx="8"/>
+  <text class="lbl" x="380" y="202" text-anchor="middle">被执行的脚本可以读取 Cookie、冒充用户发请求、篡改页面……</text>
+  <text class="lbl" x="380" y="220" text-anchor="middle">这就是 Vue 默认转义所有插值的原因</text>
+</svg>
+<figcaption>图 2-3　XSS 攻击：把别人的内容当 HTML 渲染有多危险</figcaption>
+</figure>
+
+<h3>用 v-html 显示 HTML</h3>
+
+<p>
+  既然插值不能渲染 HTML，我们需要另一个指令：<code>v-html</code>。它会把绑定的字符串当作 HTML 插入元素内部：
+</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;!-- 预览面板 --&gt;
+&lt;aside class="preview" v-html="notePreview"&gt;&lt;/aside&gt;
+</pre></div>
+
+<p>现在预览正常了。<code>v-html</code> 会替换掉元素原有的所有子内容。</p>
+
+<div class="box warn">
+  <div class="t">&#9888; v-html + 用户内容 = 危险</div>
+  <p>
+    原书提醒过“不要对用户创建的内容使用 <code>v-html</code>”，但笔记本恰恰就是在显示用户写的内容。
+    Markdown 允许内嵌原始 HTML，marked 也<strong>不会</strong>替你过滤危险标签。
+    如果将来笔记可以分享给别人看，这就是一个真实的 XSS 漏洞。
+  </p>
+  <p>
+    现代做法是：<strong>先用 <a href="https://github.com/cure53/DOMPurify">DOMPurify</a> 消毒，再交给 v-html</strong>。
+  </p>
+</div>
+
+<div class="code" data-lang="js"><pre>
+const notePreview = computed(() =&gt;
+  // 先把 Markdown 转成 HTML，再去掉 &lt;script&gt;、onerror= 之类的危险内容
+  DOMPurify.sanitize(marked.parse(content.value))
+)
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; v-text</div>
+  <p><code>v-text="x"</code> 和 <code>{{ x }}</code> 效果一样（会转义），区别是它会替换元素的全部内容。日常用插值即可。</p>
+</div>
+
+<h2 id="save">保存笔记：侦听器 watch</h2>
+
+<p>
+  现在一刷新页面，笔记就没了。我们用浏览器自带的 <code>localStorage</code> 把它存下来。
+  需求是“<code>content</code> 一变就保存” —— 这种<strong>数据变化时执行某个动作（副作用）</strong>的场景，用<strong>侦听器</strong>。
+</p>
+
+<div class="code" data-lang="js"><pre>
+const { createApp, ref, computed, watch } = Vue
+
+// 在 setup() 里：
+watch(content, (val, oldVal) =&gt; {
+  console.log('新笔记：', val, '旧笔记：', oldVal)
+})
+</pre></div>
+
+<p>在编辑器里打字，控制台会打印：</p>
+
+<div class="code" data-lang="text"><pre>
+新笔记： 这是一条**笔记**！ 旧笔记： 这是一条**笔记**
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="计算属性用于派生数据，侦听器用于执行副作用">
+  <rect class="bx-b" x="20" y="70" width="140" height="56" rx="10"/>
+  <text class="ttl on-b" x="90" y="95" text-anchor="middle">content</text>
+  <text class="sm" x="90" y="114" text-anchor="middle">响应式数据</text>
+
+  <path class="ln-a" d="M162 86 C220 86 230 50 290 50" marker-end="url(#ar-a)"/>
+  <path class="ln-p" d="M162 110 C220 110 230 150 290 150" marker-end="url(#ar)"/>
+
+  <rect class="bx-a" x="294" y="22" width="200" height="56" rx="10"/>
+  <text class="ttl on-a" x="394" y="46" text-anchor="middle">computed</text>
+  <text class="sm" x="394" y="66" text-anchor="middle">算出一个新值，返回它</text>
+  <path class="ln-a" d="M496 50 H566" marker-end="url(#ar-a)"/>
+  <rect class="bx-g" x="570" y="22" width="170" height="56" rx="10"/>
+  <text class="on-g" x="655" y="46" text-anchor="middle">notePreview</text>
+  <text class="sm" x="655" y="66" text-anchor="middle">给模板用</text>
+
+  <rect class="bx-p" x="294" y="122" width="200" height="56" rx="10"/>
+  <text class="ttl on-p" x="394" y="146" text-anchor="middle">watch</text>
+  <text class="sm" x="394" y="166" text-anchor="middle">执行一个动作，不返回值</text>
+  <path class="ln-p" d="M496 150 H566" marker-end="url(#ar)"/>
+  <rect class="bx" x="570" y="122" width="170" height="56" rx="10"/>
+  <text x="655" y="146" text-anchor="middle">localStorage</text>
+  <text class="sm" x="655" y="166" text-anchor="middle">发请求、写存储、打日志</text>
+
+  <text class="lbl" x="380" y="204" text-anchor="middle">口诀：要“值”用 computed，要“做事”用 watch</text>
+</svg>
+<figcaption>图 2-4　computed 与 watch 的分工</figcaption>
+</figure>
+
+<h3>侦听器的选项</h3>
+
+<p><code>watch</code> 的第三个参数是选项对象，最常用的有：</p>
+
+<div class="tw"><table>
+<thead><tr><th>选项</th><th>作用</th><th>默认</th></tr></thead>
+<tbody>
+<tr><td><code>immediate</code></td><td>创建侦听器时立刻执行一次回调，而不是等第一次变化</td><td><code>false</code></td></tr>
+<tr><td><code>deep</code></td><td>深度侦听：对象/数组<em>内部</em>任何属性变化都触发</td><td><code>false</code>（侦听 reactive 对象时默认为 true）</td></tr>
+<tr><td><code>once</code> <span class="ver v3">3.4+</span></td><td>只触发一次，之后自动停止</td><td><code>false</code></td></tr>
+<tr><td><code>flush</code></td><td>回调的执行时机：<code>'pre'</code>（DOM 更新前）、<code>'post'</code>（更新后）、<code>'sync'</code></td><td><code>'pre'</code></td></tr>
+</tbody>
+</table></div>
+
+<p>试试 <code>immediate</code>：</p>
+
+<div class="code" data-lang="js"><pre>
+watch(content, (val, oldVal) =&gt; {
+  console.log('新笔记：', val, '旧笔记：', oldVal)
+}, { immediate: true })
+// 刷新页面立即打印：新笔记： 这是一条笔记。 旧笔记： undefined
+</pre></div>
+
+<p>旧值是 <code>undefined</code>，因为回调是在侦听器刚创建时调用的。这里我们其实不需要它，去掉即可。现在真正保存：</p>
+
+<div class="code" data-lang="js"><pre>
+watch(content, (val) =&gt; {
+  localStorage.setItem('content', val)
+})
+</pre></div>
+
+<p>
+  打开开发者工具的 <strong>Application</strong>（Chrome）或 <strong>存储</strong>（Firefox）面板，
+  在 <em>Local Storage</em> 下能看到一个 <code>content</code> 条目。
+</p>
+
+<div class="vs">
+  <div class="old"><div class="h">原书 · 选项式 API</div>
+<div class="code" data-lang="js"><pre>
+watch: {
+  content: {
+    handler (val, oldVal) {
+      localStorage.setItem('content', val)
+    },
+    immediate: false,
+  }
+}
+</pre></div></div>
+  <div class="new"><div class="h">Vue 3 · 组合式 API</div>
+<div class="code" data-lang="js"><pre>
+watch(content, (val, oldVal) =&gt; {
+  localStorage.setItem('content', val)
+}, {
+  immediate: false,
+})
+</pre></div></div>
+</div>
+
+<h3>把逻辑提取成函数</h3>
+
+<p>
+  “不要重复自己（DRY）”是写代码的好原则。原书在这里引入了 <code>methods</code> 选项；
+  在组合式 API 里，<strong>方法就是 <code>setup()</code> 里的普通函数</strong>，返回出去模板就能调用：
+</p>
+
+<div class="code" data-lang="js"><pre>
+function saveNote() {
+  console.log('正在保存：', content.value)
+  localStorage.setItem('content', content.value)
+  reportOperation('保存')
+}
+
+function reportOperation(opName) {
+  console.log(opName, '操作完成！')
+}
+
+// 侦听器的回调可以直接传函数
+watch(content, saveNote)
+</pre></div>
+
+<div class="box key">
+  <div class="t">&#9733; setup() 里没有 this</div>
+  <p>
+    原书反复用 <code>this.content</code>、<code>this.reportOperation()</code> 访问实例。组合式 API 里<strong>不需要也不应该用 <code>this</code></strong>：
+    所有数据和函数都是 <code>setup()</code> 里的局部变量，函数之间通过 JavaScript 的闭包直接互相访问。
+    这让代码更像“普通的 JS”，也更容易被拆分和复用。
+  </p>
+</div>
+
+<h2 id="load">加载已保存的笔记</h2>
+
+<p>保存做好了，接下来是打开页面时恢复。用 <code>localStorage.getItem()</code>：</p>
+
+<div class="code" data-lang="js"><pre>
+console.log('恢复的笔记：', localStorage.getItem('content'))
+</pre></div>
+
+<h3>生命周期钩子</h3>
+
+<p>
+  每个 Vue 组件实例都会经历一个确定的过程：被创建、挂载到页面、随数据更新、最后被卸载。
+  在这些关键时刻，Vue 会调用你注册的<strong>生命周期钩子</strong>函数，让你插入自己的逻辑。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 330" role="img" aria-label="Vue 3 组件生命周期：setup、挂载、更新循环、卸载">
+  <rect class="bx-b" x="20" y="30" width="150" height="52" rx="10"/>
+  <text class="ttl on-b" x="95" y="54" text-anchor="middle">setup()</text>
+  <text class="sm" x="95" y="72" text-anchor="middle">创建响应式数据</text>
+
+  <path class="ln" d="M172 56 H222" marker-end="url(#ar)"/>
+  <rect class="bx" x="226" y="34" width="150" height="44" rx="10"/>
+  <text class="mono sm" x="301" y="61" text-anchor="middle">onBeforeMount</text>
+
+  <path class="ln" d="M378 56 H428" marker-end="url(#ar)"/>
+  <rect class="bx" x="432" y="34" width="120" height="44" rx="10" style="stroke-dasharray:4 3"/>
+  <text class="sm" x="492" y="61" text-anchor="middle">渲染并插入 DOM</text>
+
+  <path class="ln" d="M554 56 H600" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="604" y="34" width="136" height="44" rx="10"/>
+  <text class="mono sm on-a" x="672" y="61" text-anchor="middle">onMounted</text>
+
+  <!-- update loop -->
+  <path class="ln-a" d="M672 80 V130" marker-end="url(#ar-a)"/>
+  <rect class="bx-g" x="430" y="134" width="310" height="110" rx="12"/>
+  <text class="ttl on-g" x="585" y="156" text-anchor="middle">更新循环（数据变化时）</text>
+  <rect class="bx" x="446" y="168" width="130" height="34" rx="8"/>
+  <text class="mono sm" x="511" y="190" text-anchor="middle">onBeforeUpdate</text>
+  <path class="ln" d="M578 185 H600" marker-end="url(#ar)"/>
+  <rect class="bx" x="604" y="168" width="120" height="34" rx="8"/>
+  <text class="mono sm" x="664" y="190" text-anchor="middle">onUpdated</text>
+  <path class="ln-d" d="M664 204 V224 H511 V206" marker-end="url(#ar)"/>
+  <text class="sm" x="587" y="238" text-anchor="middle">可以反复多次</text>
+
+  <path class="ln" d="M430 210 H330 V266" marker-end="url(#ar)"/>
+  <text class="halo sm" x="380" y="202" text-anchor="middle">组件被移除</text>
+  <rect class="bx" x="240" y="270" width="180" height="44" rx="10"/>
+  <text class="mono sm" x="330" y="297" text-anchor="middle">onBeforeUnmount</text>
+  <path class="ln" d="M240 292 H190" marker-end="url(#ar)"/>
+  <rect class="bx-r" x="40" y="270" width="146" height="44" rx="10"/>
+  <text class="mono sm on-r" x="113" y="297" text-anchor="middle">onUnmounted</text>
+
+  <text class="sm" x="20" y="130">setup() 本身就相当于</text>
+  <text class="sm" x="20" y="146">Vue 2 的 beforeCreate</text>
+  <text class="sm" x="20" y="162">+ created</text>
+</svg>
+<figcaption>图 2-5　Vue 3 组件的生命周期（组合式 API 名称）</figcaption>
+</figure>
+
+<div class="tw"><table>
+<thead><tr><th>Vue 2（原书）</th><th>Vue 3 选项式</th><th>Vue 3 组合式</th><th>典型用途</th></tr></thead>
+<tbody>
+<tr><td><code>beforeCreate</code> / <code>created</code></td><td>同名</td><td>直接写在 <code>setup()</code> 里</td><td>初始化数据、发起请求</td></tr>
+<tr><td><code>beforeMount</code> / <code>mounted</code></td><td>同名</td><td><code>onBeforeMount</code> / <code>onMounted</code></td><td>需要访问真实 DOM 时（如初始化图表、地图）</td></tr>
+<tr><td><code>beforeUpdate</code> / <code>updated</code></td><td>同名</td><td><code>onBeforeUpdate</code> / <code>onUpdated</code></td><td>很少用</td></tr>
+<tr><td><code>beforeDestroy</code> / <code>destroyed</code></td><td><code>beforeUnmount</code> / <code>unmounted</code></td><td><code>onBeforeUnmount</code> / <code>onUnmounted</code></td><td>清理定时器、事件监听</td></tr>
+</tbody>
+</table></div>
+
+<p>原书用 <code>created</code> 钩子恢复笔记。在组合式 API 里，<code>setup()</code> 就是“创建时”，所以直接写：</p>
+
+<div class="code" data-lang="js"><pre>
+setup() {
+  const content = ref('这是一条笔记。')
+
+  // 相当于原书的 created 钩子：setup 运行时实例正在被创建
+  content.value = localStorage.getItem('content') || '你可以用 **Markdown** 写作'
+
+  watch(content, saveNote)
+  // ...
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 什么是 falsy</div>
+  <p>
+    <code>a || b</code> 在 <code>a</code> 为 <em>falsy</em> 时取 <code>b</code>。JavaScript 里 falsy 的值有：<code>false</code>、<code>0</code>、空字符串、<code>null</code>、<code>undefined</code>、<code>NaN</code>。
+    <code>localStorage.getItem()</code> 在键不存在时返回 <code>null</code>，所以第一次打开时会用默认文字。
+  </p>
+</div>
+
+<h3>更简单：直接用存储的值初始化</h3>
+
+<p>与其“先给默认值再覆盖”，不如创建 ref 时就用恢复的值：</p>
+
+<div class="code" data-lang="js"><pre>
+const content = ref(localStorage.getItem('content') || '你可以用 **Markdown** 写作')
+</pre></div>
+
+<p>这样侦听器不会在启动时被触发一次（因为值是“初始化”的，而不是“修改”的），更干净。</p>
+
+<h2 id="multi">多条笔记</h2>
+
+<p>只有一条笔记的笔记本没什么用。现在我们加入左侧的笔记列表，以及重命名、收藏等功能。先在模板里加上侧边栏：</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;div id="notebook"&gt;
+  &lt;!-- 侧边栏 --&gt;
+  &lt;aside class="side-bar"&gt;
+    &lt;!-- 笔记列表放这里 --&gt;
+  &lt;/aside&gt;
+
+  &lt;!-- 主区域 --&gt;
+  &lt;section class="main"&gt;
+  ...
+</pre></div>
+
+<h3>笔记的数据结构</h3>
+
+<p>每条笔记是一个对象，所有笔记放在 <code>notes</code> 数组里：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="notes 数组与 selectedId 的关系">
+  <text class="ttl" x="20" y="24">notes = ref([ ... ])</text>
+  <rect class="bx" x="20" y="36" width="220" height="150" rx="10"/>
+  <text class="mono sm" x="36" y="60">id:       '1730700000000'</text>
+  <text class="mono sm" x="36" y="82">title:    '购物清单'</text>
+  <text class="mono sm" x="36" y="104">content:  '- 牛奶\n- 面包'</text>
+  <text class="mono sm" x="36" y="126">created:  1730700000000</text>
+  <text class="mono sm" x="36" y="148">favorite: true</text>
+  <text class="sm" x="130" y="176" text-anchor="middle">notes[0]</text>
+
+  <rect class="bx-a" x="260" y="36" width="220" height="150" rx="10" style="stroke-width:2.2"/>
+  <text class="mono sm" x="276" y="60">id:       '1730800000000'</text>
+  <text class="mono sm" x="276" y="82">title:    '读书笔记'</text>
+  <text class="mono sm" x="276" y="104">content:  '# Vue …'</text>
+  <text class="mono sm" x="276" y="126">created:  1730800000000</text>
+  <text class="mono sm" x="276" y="148">favorite: false</text>
+  <text class="sm on-a" x="370" y="176" text-anchor="middle">notes[1]</text>
+
+  <rect class="bx-d" x="500" y="36" width="90" height="150" rx="10"/>
+  <text class="sm" x="545" y="116" text-anchor="middle">……</text>
+
+  <rect class="bx-b" x="610" y="50" width="130" height="56" rx="10"/>
+  <text class="mono sm on-b" x="675" y="74" text-anchor="middle">selectedId</text>
+  <text class="mono sm" x="675" y="94" text-anchor="middle">'1730800000000'</text>
+  <path class="ln-b" d="M610 78 C560 20 420 10 400 34" marker-end="url(#ar)"/>
+
+  <rect class="bx-g" x="610" y="130" width="130" height="56" rx="10"/>
+  <text class="mono sm on-g" x="675" y="154" text-anchor="middle">selectedNote</text>
+  <text class="sm" x="675" y="174" text-anchor="middle">computed：查找</text>
+  <path class="ln-g" d="M675 108 V126" marker-end="url(#ar)"/>
+
+  <text class="lbl" x="380" y="222" text-anchor="middle">只保存“选中谁的 id”，选中的对象由计算属性实时查出来 —— 永远不会和数组不同步</text>
+</svg>
+<figcaption>图 2-6　笔记数组 + 选中 id + 计算出的选中笔记</figcaption>
+</figure>
+
+<ul>
+  <li><code>id</code>：唯一标识</li>
+  <li><code>title</code>：列表里显示的名字</li>
+  <li><code>content</code>：Markdown 正文</li>
+  <li><code>created</code>：创建时间（毫秒时间戳）</li>
+  <li><code>favorite</code>：是否收藏，收藏的排在列表最前</li>
+</ul>
+
+<div class="code" data-lang="js"><pre>
+const notes = ref([])
+
+// 新建一条带默认内容的笔记
+function addNote() {
+  const time = Date.now()
+  const note = {
+    id: String(time),
+    title: '新笔记 ' + (notes.value.length + 1),
+    content: '**你好！** 这个笔记本支持 [Markdown](https://commonmark.org/help/) 格式！',
+    created: time,
+    favorite: false,
+  }
+  notes.value.push(note)
+}
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 更稳妥的唯一 id</div>
+  <p>
+    <code>Date.now()</code> 在同一毫秒内连点两次会重复。现代浏览器提供了 <code>crypto.randomUUID()</code>，
+    生成形如 <code>'3b241101-e2bb-4255-8caf-4136c566a962'</code> 的随机 id，几乎不可能冲突。
+  </p>
+</div>
+
+<h3>v-on：监听点击事件</h3>
+
+<p>
+  需要一个按钮来调用 <code>addNote</code>。监听 DOM 事件用 <code>v-on</code> 指令，冒号后面是事件名（指令的<strong>参数</strong>）：
+</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;aside class="side-bar"&gt;
+  &lt;div class="toolbar"&gt;
+    &lt;button v-on:click="addNote"&gt;&lt;i class="material-icons"&gt;add&lt;/i&gt; 新建笔记&lt;/button&gt;
+  &lt;/div&gt;
+&lt;/aside&gt;
+</pre></div>
+
+<p><code>v-on:</code> 太常用了，所以有简写 <code>@</code>：</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;button @click="addNote"&gt;&lt;i class="material-icons"&gt;add&lt;/i&gt; 新建笔记&lt;/button&gt;
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 170" role="img" aria-label="指令语法解剖：名称、参数、修饰符、值">
+  <text class="mono" x="380" y="60" text-anchor="middle" style="font-size:22px">v-on:click.prevent="addNote"</text>
+  <path class="ln-a" d="M218 72 V100"/><text class="sm on-a" x="218" y="118" text-anchor="middle">指令名</text>
+  <text class="sm" x="218" y="134" text-anchor="middle">v-on</text>
+  <path class="ln-b" d="M312 72 V100"/><text class="sm on-b" x="312" y="118" text-anchor="middle">参数</text>
+  <text class="sm" x="312" y="134" text-anchor="middle">事件名</text>
+  <path class="ln-p" d="M416 72 V100"/><text class="sm on-p" x="416" y="118" text-anchor="middle">修饰符</text>
+  <text class="sm" x="416" y="134" text-anchor="middle">阻止默认行为</text>
+  <path class="ln-g" d="M540 72 V100"/><text class="sm on-g" x="540" y="118" text-anchor="middle">值</text>
+  <text class="sm" x="540" y="134" text-anchor="middle">JS 表达式 / 函数名</text>
+  <text class="lbl" x="380" y="162" text-anchor="middle">简写：@click.prevent="addNote"　　　v-bind:title 简写为 :title</text>
+</svg>
+<figcaption>图 2-7　一个指令的完整结构</figcaption>
+</figure>
+
+<h3>v-bind：绑定属性</h3>
+
+<p>
+  想让鼠标悬停在按钮上时，显示“已有 3 条笔记”。提示文字由 HTML 的 <code>title</code> 属性控制，
+  但静态写死的值不会变。要把<em>属性</em>和 JS 表达式绑定，用 <code>v-bind</code>：
+</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;button @click="addNote" v-bind:title="notes.length + ' 条笔记'"&gt;
+&lt;!-- 简写：冒号 --&gt;
+&lt;button @click="addNote" :title="notes.length + ' 条笔记'"&gt;
+</pre></div>
+
+<p>表达式会在依赖变化时自动重新计算。如果表达式变长了，可以把它移到计算属性里：</p>
+
+<div class="code" data-lang="js"><pre>
+const addButtonTitle = computed(() =&gt; `已有 ${notes.value.length} 条笔记`)
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; 原书的一个小 bug</div>
+  <p>原书这里写成了 <code>return notes.length + ...</code>，漏了 <code>this.</code>。在组合式 API 里对应的坑是漏了 <code>.value</code> —— 写成 <code>notes.length</code> 会得到 <code>undefined</code>。</p>
+</div>
+
+<div class="box tip">
+  <div class="t">&#10003; Vue 3.4+：同名简写</div>
+  <p>当属性名和变量名相同时，<code>:title="title"</code> 可以简写为 <code>:title</code>。</p>
+</div>
+
+<h3>v-for：渲染列表</h3>
+
+<p>
+  现在在工具栏下方显示笔记列表。<code>v-for</code> 用 <code>item of items</code>（或 <code>item in items</code>）的语法遍历数组，
+  <strong>它所在的元素会被重复渲染</strong>：
+</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;div class="notes"&gt;
+  &lt;div class="note" v-for="note of notes" :key="note.id"&gt;{{ note.title }}&lt;/div&gt;
+&lt;/div&gt;
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="v-for 把数组的每一项渲染成一个元素">
+  <rect class="bx-b" x="20" y="40" width="220" height="130" rx="10"/>
+  <text class="ttl on-b" x="130" y="64" text-anchor="middle">notes 数组</text>
+  <text class="mono sm" x="40" y="92">{ id: 'a', title: '购物' }</text>
+  <text class="mono sm" x="40" y="116">{ id: 'b', title: '读书' }</text>
+  <text class="mono sm" x="40" y="140">{ id: 'c', title: '旅行' }</text>
+
+  <rect class="bx-a" x="290" y="62" width="180" height="86" rx="10"/>
+  <text class="ttl on-a" x="380" y="90" text-anchor="middle">模板（写一次）</text>
+  <text class="mono sm" x="380" y="114" text-anchor="middle">&lt;div v-for="note of notes"</text>
+  <text class="mono sm" x="380" y="132" text-anchor="middle">:key="note.id"&gt;</text>
+
+  <path class="ln-a" d="M242 105 H286" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M472 105 H516" marker-end="url(#ar-a)"/>
+
+  <rect class="bx-g" x="520" y="40" width="220" height="130" rx="10"/>
+  <text class="ttl on-g" x="630" y="64" text-anchor="middle">真实 DOM（三份）</text>
+  <rect class="bx" x="540" y="76" width="180" height="24" rx="4"/><text class="mono sm" x="552" y="93">&lt;div&gt;购物&lt;/div&gt;</text>
+  <rect class="bx" x="540" y="106" width="180" height="24" rx="4"/><text class="mono sm" x="552" y="123">&lt;div&gt;读书&lt;/div&gt;</text>
+  <rect class="bx" x="540" y="136" width="180" height="24" rx="4"/><text class="mono sm" x="552" y="153">&lt;div&gt;旅行&lt;/div&gt;</text>
+
+  <text class="lbl" x="380" y="200" text-anchor="middle">数组 push / splice / 排序，DOM 自动跟着增删、移动</text>
+</svg>
+<figcaption>图 2-8　v-for：模板写一次，数据有几项就渲染几份</figcaption>
+</figure>
+
+<div class="box key">
+  <div class="t">&#9733; 一定要加 :key</div>
+  <p>
+    原书这里没有写 <code>key</code>，但现在的 Vue 官方风格指南和 ESLint 插件都要求 <code>v-for</code> 搭配 <code>:key</code>。
+    <code>key</code> 是每一项的“身份证”，让 Vue 在列表变化时能准确知道哪一项被移动、新增或删除，而不是笨拙地就地复用 DOM。
+    用数据里稳定且唯一的值（比如 <code>id</code>），<strong>不要用数组下标</strong>。第 3 章做动画时你会亲眼看到它的作用。
+  </p>
+</div>
+
+<h2 id="select">选择笔记</h2>
+
+<p>被选中的笔记成为中间和右侧面板的内容。先加一个 <code>selectedId</code> 记录选中的 id，再写一个选择函数：</p>
+
+<div class="code" data-lang="js"><pre>
+const selectedId = ref(null)
+
+function selectNote(note) {
+  selectedId.value = note.id
+}
+</pre></div>
+
+<div class="code" data-lang="html"><pre>
+&lt;div class="note" v-for="note of notes" :key="note.id"
+     @click="selectNote(note)"&gt;{{ note.title }}&lt;/div&gt;
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 为什么存 id，而不是直接存笔记对象</div>
+  <p>存对象也能工作，但保存到 localStorage 时会很麻烦（JSON 化后对象身份就丢了）。存 id 简单、可序列化，选中的对象交给计算属性去查。</p>
+</div>
+
+<h3>当前笔记：计算属性</h3>
+
+<div class="code" data-lang="js"><pre>
+const selectedNote = computed(() =&gt;
+  notes.value.find(note =&gt; note.id === selectedId.value)
+)
+</pre></div>
+
+<p>然后把之前所有用 <code>content</code> 的地方换成 <code>selectedNote.content</code>：</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;textarea v-model="selectedNote.content"&gt;&lt;/textarea&gt;
+</pre></div>
+
+<div class="code" data-lang="js"><pre>
+const notePreview = computed(() =&gt;
+  selectedNote.value
+    ? DOMPurify.sanitize(marked.parse(selectedNote.value.content))
+    : ''
+)
+</pre></div>
+
+<p>旧的 <code>content</code>、它的侦听器和 <code>saveNote</code> 函数现在都用不上了，可以删掉。</p>
+
+<h3>动态 CSS class</h3>
+
+<p>
+  选中的笔记应该有不同的背景色。<code>:class</code> 有特殊的“魔法”：除了字符串，它还接受<strong>数组</strong>和<strong>对象</strong>。
+</p>
+
+<div class="tw"><table>
+<thead><tr><th>写法</th><th>渲染结果</th></tr></thead>
+<tbody>
+<tr><td><code>:class="['one', 'two']"</code></td><td><code>class="one two"</code></td></tr>
+<tr><td><code>:class="{ one: true, two: false, three: true }"</code></td><td><code>class="one three"</code></td></tr>
+<tr><td><code>class="note" :class="{ selected: isSel }"</code></td><td>静态和动态会合并：<code>class="note selected"</code></td></tr>
+</tbody>
+</table></div>
+
+<p>对象写法最常用：键是 class 名，值是“要不要加上它”。我们的列表变成：</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;div class="note" v-for="note of notes" :key="note.id"
+     :class="{ selected: note === selectedNote }"
+     @click="selectNote(note)"&gt;{{ note.title }}&lt;/div&gt;
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 静态 class 写在静态属性里</div>
+  <p>不会变的 class（比如 <code>note</code>）放在普通的 <code>class</code> 属性里，Vue 编译时会把它们当作常量优化。</p>
+</div>
+
+<h3>v-if：条件渲染</h3>
+
+<p>
+  如果没有选中任何笔记，<code>selectedNote</code> 是 <code>undefined</code>，访问 <code>selectedNote.content</code> 会直接报错。
+  所以没选中时，中间和右边的面板都不应该出现。<code>v-if</code> 可以根据条件把一段模板<strong>完全从 DOM 中移除</strong>：
+</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;div v-if="loading"&gt;加载中……&lt;/div&gt;
+&lt;div v-else-if="processing"&gt;处理中……&lt;/div&gt;
+&lt;div v-else&gt;内容&lt;/div&gt;
+</pre></div>
+
+<p>两个面板都要加同样的条件，重复了。可以用一个特殊的 <code>&lt;template&gt;</code> 标签把它们包起来，它就像 JS 里的花括号，<strong>本身不会出现在 DOM 里</strong>：</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;template v-if="selectedNote"&gt;
+  &lt;!-- 主区域 --&gt;
+  &lt;section class="main"&gt;
+    &lt;textarea v-model="selectedNote.content"&gt;&lt;/textarea&gt;
+  &lt;/section&gt;
+
+  &lt;!-- 预览 --&gt;
+  &lt;aside class="preview" v-html="notePreview"&gt;&lt;/aside&gt;
+&lt;/template&gt;
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="v-if 与 v-show 的区别">
+  <text class="ttl on-a" x="190" y="24" text-anchor="middle">v-if="false"</text>
+  <rect class="bx" x="40" y="40" width="300" height="110" rx="10"/>
+  <text class="mono sm" x="60" y="66">&lt;div id="notebook"&gt;</text>
+  <text class="mono sm" x="80" y="90">&lt;aside class="side-bar"&gt;…</text>
+  <rect class="bx-d" x="80" y="100" width="230" height="24" rx="4"/>
+  <text class="sm" x="195" y="117" text-anchor="middle">（这里什么都没有）</text>
+  <text class="sm" x="190" y="176" text-anchor="middle">元素被销毁 / 重建，切换成本高，初始成本低</text>
+
+  <text class="ttl on-b" x="570" y="24" text-anchor="middle">v-show="false"</text>
+  <rect class="bx" x="420" y="40" width="300" height="110" rx="10"/>
+  <text class="mono sm" x="440" y="66">&lt;div id="notebook"&gt;</text>
+  <text class="mono sm" x="460" y="90">&lt;aside class="side-bar"&gt;…</text>
+  <rect class="bx-b" x="460" y="100" width="240" height="24" rx="4"/>
+  <text class="mono sm on-b" x="470" y="117">&lt;section style="display:none"&gt;</text>
+  <text class="sm" x="570" y="176" text-anchor="middle">元素一直在，只是隐藏；适合频繁切换</text>
+</svg>
+<figcaption>图 2-9　v-if 是“有没有”，v-show 是“看不看得见”</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; Vue 3 变化：v-if 和 v-for 的优先级</div>
+  <p>
+    在 Vue 2 里，同一个元素上同时写 <code>v-for</code> 和 <code>v-if</code> 时，<code>v-for</code> 先执行；
+    Vue 3 反过来了，<strong><code>v-if</code> 优先</strong>，此时 <code>v-if</code> 里还拿不到循环变量。
+    官方建议永远不要把它们写在同一个元素上：要过滤列表就用计算属性，要整体隐藏就在外面包一层 <code>&lt;template v-if&gt;</code>。
+  </p>
+</div>
+
+<h2 id="deep">用深度侦听保存所有笔记</h2>
+
+<p>现在要把整个笔记列表持久化。<code>localStorage</code> 只能存字符串，所以要先 <code>JSON.stringify</code>：</p>
+
+<div class="code" data-lang="js"><pre>
+const notes = ref(JSON.parse(localStorage.getItem('notes')) || [])
+
+function saveNotes() {
+  localStorage.setItem('notes', JSON.stringify(notes.value))
+  console.log('笔记已保存！', new Date())
+}
+
+watch(notes, saveNotes)
+</pre></div>
+
+<p>
+  试一下：新建笔记……<strong>控制台什么都没打印</strong>。修改笔记内容，也没打印。这是为什么？
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="浅侦听与深侦听能检测到的变化">
+  <rect class="bx-b" x="300" y="20" width="160" height="40" rx="10"/>
+  <text class="mono on-b" x="380" y="45" text-anchor="middle">notes（ref 盒子）</text>
+  <path class="ln" d="M380 62 V84" marker-end="url(#ar)"/>
+  <rect class="bx" x="280" y="88" width="200" height="40" rx="8"/>
+  <text class="mono sm" x="380" y="113" text-anchor="middle">.value → 数组</text>
+  <path class="ln" d="M330 130 L210 166" marker-end="url(#ar)"/>
+  <path class="ln" d="M380 130 V166" marker-end="url(#ar)"/>
+  <path class="ln" d="M430 130 L550 166" marker-end="url(#ar)"/>
+  <rect class="bx" x="140" y="170" width="140" height="36" rx="8"/><text class="mono sm" x="210" y="193" text-anchor="middle">笔记 0</text>
+  <rect class="bx" x="310" y="170" width="140" height="36" rx="8"/><text class="mono sm" x="380" y="193" text-anchor="middle">笔记 1</text>
+  <rect class="bx" x="480" y="170" width="140" height="36" rx="8"/><text class="mono sm" x="550" y="193" text-anchor="middle">笔记 2</text>
+  <text class="mono sm" x="380" y="230" text-anchor="middle">.title / .content / .favorite</text>
+
+  <!-- 浅：左侧括号 -->
+  <path class="ln-a" d="M120 22 H108 V126 H120"/>
+  <text class="sm on-a" x="98" y="58" text-anchor="end">默认（浅）</text>
+  <text class="sm" x="98" y="76" text-anchor="end">只看盒子里</text>
+  <text class="sm" x="98" y="92" text-anchor="end">换没换数组</text>
+  <text class="mono sm" x="98" y="112" text-anchor="end">.value = […]</text>
+
+  <!-- 深：右侧括号 -->
+  <path class="ln-p" d="M640 22 H652 V236 H640"/>
+  <text class="sm on-p" x="662" y="90">deep: true</text>
+  <text class="sm" x="662" y="108">一路检查到</text>
+  <text class="sm" x="662" y="124">每个属性</text>
+  <text class="mono sm" x="662" y="150">push(…)</text>
+  <text class="mono sm" x="662" y="168">splice(…)</text>
+  <text class="mono sm" x="662" y="186">note.title=…</text>
+
+  <rect class="bx-d" x="20" y="260" width="720" height="30" rx="6"/>
+  <text class="sm" x="380" y="280" text-anchor="middle">侦听 ref 时：只有替换 .value 才算“变化”；push、改属性都发生在更深的层级，需要 deep</text>
+</svg>
+<figcaption>图 2-10　浅侦听只看“盒子换没换”，深侦听会检查里面每一层</figcaption>
+</figure>
+
+<p>
+  直接侦听一个 ref，Vue 只关心 <code>notes.value</code> 有没有被<strong>整个替换</strong>。
+  往数组里 <code>push</code>、修改某条笔记的 <code>content</code>，都发生在更深的层级。解决办法是加上 <code>deep</code> 选项：
+</p>
+
+<div class="code" data-lang="js"><pre>
+watch(notes, saveNotes, { deep: true })
+</pre></div>
+
+<p>现在不论是新增、删除还是在编辑器里打字（<code>v-model</code> 修改的是选中笔记的 <code>content</code>），列表都会被保存。</p>
+
+<div class="box note">
+  <div class="t">&#9432; 和原书的差异</div>
+  <p>
+    原书说“push、splice、sort 默认就能被侦听到，只有改嵌套属性才需要 deep”。那是 Vue 2 侦听 <code>data</code> 属性时的行为。
+    在 Vue 3 里侦听一个 <code>ref</code>，连 <code>push</code> 都需要 <code>deep: true</code>（或者直接侦听一个 <code>reactive()</code> 对象，那样默认就是深度的）。
+  </p>
+</div>
+
+<details class="box deep">
+<summary class="t" style="cursor:pointer">&#128269; 另一种写法：watchEffect（点击展开）</summary>
+<p><code>watchEffect</code> 会自动追踪回调里<strong>读到</strong>的所有响应式数据。<code>JSON.stringify</code> 会读遍每一个属性，所以下面这一行天然就是“深度”的：</p>
+<div class="code" data-lang="js"><pre>
+watchEffect(() =&gt; {
+  localStorage.setItem('notes', JSON.stringify(notes.value))
+})
+</pre></div>
+<p>
+  它还会在创建时立即执行一次（相当于 <code>immediate: true</code>）。社区工具库 <a href="https://vueuse.org/">VueUse</a> 更是直接提供了
+  <code>useLocalStorage('notes', [])</code>，一行就能得到一个自动持久化的 ref。
+</p>
+</details>
+
+<h3>保存选中状态</h3>
+
+<p>如果刷新后还能选中上次那条笔记就更好了。同样用侦听器：</p>
+
+<div class="code" data-lang="js"><pre>
+const selectedId = ref(localStorage.getItem('selected-id'))
+
+watch(selectedId, (val) =&gt; {
+  if (val) localStorage.setItem('selected-id', val)
+  else localStorage.removeItem('selected-id')
+})
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; 小心 localStorage 把 null 变成 "null"</div>
+  <p>
+    原书直接 <code>setItem('selected-id', val)</code>。当 <code>val</code> 是 <code>null</code> 时，存进去的是字符串 <code>"null"</code>，
+    下次读出来是一个“真值”，就会去找 id 为 <code>"null"</code> 的笔记。上面的写法在没有选中时把键删掉，避免这个坑。
+  </p>
+</div>
+
+<h2 id="toolbar">笔记工具栏</h2>
+
+<p>在编辑器上方加一个工具栏，放三个功能：重命名、收藏、删除。</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;section class="main"&gt;
+  &lt;div class="toolbar"&gt;
+    &lt;!-- 工具都放这里 --&gt;
+  &lt;/div&gt;
+  &lt;textarea v-model="selectedNote.content"&gt;&lt;/textarea&gt;
+&lt;/section&gt;
+</pre></div>
+
+<h3>重命名</h3>
+
+<p>最简单：一个绑定到 <code>selectedNote.title</code> 的输入框。因为有深度侦听，改名也会自动保存。</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;input v-model="selectedNote.title" placeholder="笔记标题"&gt;
+</pre></div>
+
+<h3>删除</h3>
+
+<div class="code" data-lang="html"><pre>
+&lt;button @click="removeNote" title="删除笔记"&gt;&lt;i class="material-icons"&gt;delete&lt;/i&gt;&lt;/button&gt;
+</pre></div>
+
+<div class="code" data-lang="js"><pre>
+function removeNote() {
+  if (selectedNote.value &amp;&amp; confirm('确定删除这条笔记吗？')) {
+    const index = notes.value.indexOf(selectedNote.value)
+    if (index !== -1) {
+      notes.value.splice(index, 1)
+    }
+  }
+}
+</pre></div>
+
+<p>删除后会同时发生三件事：左侧列表少了一项；中间和右边的面板消失（因为 <code>selectedNote</code> 查不到了）；列表被保存。这就是“数据驱动”的威力 —— 我们只改了一个数组。</p>
+
+<h3>收藏</h3>
+
+<p>收藏按钮根据状态显示实心或空心的星星：</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;button @click="favoriteNote" title="收藏"&gt;
+  &lt;i class="material-icons"&gt;{{ selectedNote.favorite ? 'star' : 'star_border' }}&lt;/i&gt;
+&lt;/button&gt;
+</pre></div>
+
+<div class="code" data-lang="js"><pre>
+function favoriteNote() {
+  selectedNote.value.favorite = !selectedNote.value.favorite
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 关于原书的 ^= true</div>
+  <p>
+    原书最后把它“优化”成了 <code>favorite ^= true</code>（异或）。这会把布尔值变成数字 <code>1</code>/<code>0</code>，
+    读代码的人也要多想一下。用 <code>!</code> 取反更清晰，类型也保持为布尔值。
+  </p>
+</div>
+
+<p>
+  接下来让列表排序：先按创建时间排，再把收藏的放前面。用计算属性 <code>sortedNotes</code>：
+</p>
+
+<div class="code" data-lang="js"><pre>
+const sortedNotes = computed(() =&gt;
+  notes.value
+    .toSorted((a, b) =&gt; a.created - b.created)          // 按创建时间升序
+    .sort((a, b) =&gt; (a.favorite === b.favorite) ? 0     // 都收藏或都没收藏：不动
+                    : a.favorite ? -1                    // a 收藏了：a 排前面
+                    : 1)                                 // 否则 b 排前面
+)
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="两次排序：先按时间，再把收藏的提到前面">
+  <text class="ttl" x="110" y="24" text-anchor="middle">原始 notes</text>
+  <rect class="bx" x="30" y="36" width="160" height="30" rx="6"/><text class="sm" x="44" y="56">C · 3 号创建</text>
+  <rect class="bx-a" x="30" y="72" width="160" height="30" rx="6"/><text class="sm on-a" x="44" y="92">★ B · 2 号创建</text>
+  <rect class="bx" x="30" y="108" width="160" height="30" rx="6"/><text class="sm" x="44" y="128">A · 1 号创建</text>
+  <rect class="bx-a" x="30" y="144" width="160" height="30" rx="6"/><text class="sm on-a" x="44" y="164">★ D · 4 号创建</text>
+
+  <path class="ln" d="M200 105 H266" marker-end="url(#ar)"/>
+  <text class="mono sm" x="233" y="96" text-anchor="middle">toSorted</text>
+  <text class="sm" x="233" y="124" text-anchor="middle">按时间</text>
+
+  <text class="ttl" x="350" y="24" text-anchor="middle">第一次排序后</text>
+  <rect class="bx" x="270" y="36" width="160" height="30" rx="6"/><text class="sm" x="284" y="56">A · 1</text>
+  <rect class="bx-a" x="270" y="72" width="160" height="30" rx="6"/><text class="sm on-a" x="284" y="92">★ B · 2</text>
+  <rect class="bx" x="270" y="108" width="160" height="30" rx="6"/><text class="sm" x="284" y="128">C · 3</text>
+  <rect class="bx-a" x="270" y="144" width="160" height="30" rx="6"/><text class="sm on-a" x="284" y="164">★ D · 4</text>
+
+  <path class="ln" d="M440 105 H506" marker-end="url(#ar)"/>
+  <text class="mono sm" x="473" y="96" text-anchor="middle">sort</text>
+  <text class="sm" x="473" y="124" text-anchor="middle">收藏优先</text>
+
+  <text class="ttl on-g" x="590" y="24" text-anchor="middle">sortedNotes</text>
+  <rect class="bx-a" x="510" y="36" width="160" height="30" rx="6"/><text class="sm on-a" x="524" y="56">★ B · 2</text>
+  <rect class="bx-a" x="510" y="72" width="160" height="30" rx="6"/><text class="sm on-a" x="524" y="92">★ D · 4</text>
+  <rect class="bx" x="510" y="108" width="160" height="30" rx="6"/><text class="sm" x="524" y="128">A · 1</text>
+  <rect class="bx" x="510" y="144" width="160" height="30" rx="6"/><text class="sm" x="524" y="164">C · 3</text>
+
+  <text class="lbl" x="380" y="204" text-anchor="middle">JS 的 sort 是稳定排序：第二次排序时，同为收藏（或同为未收藏）的笔记保持第一次的时间顺序</text>
+</svg>
+<figcaption>图 2-11　两次排序得到“收藏优先、组内按时间”的顺序</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; 不要在计算属性里修改原数组</div>
+  <p>
+    <code>sort()</code> 会<strong>原地修改</strong>数组。如果直接 <code>notes.value.sort(...)</code>，计算属性就会修改它依赖的数据，
+    还会触发深度侦听器白白保存一次。原书用 <code>slice()</code> 先复制一份；现代 JS（ES2023）提供了
+    <code>toSorted()</code>，返回排好序的新数组、不碰原数组。之后的 <code>.sort()</code> 作用在这个新数组上，就无所谓了。
+  </p>
+</div>
+
+<p>然后把列表的 <code>v-for</code> 换成 <code>sortedNotes</code>，并给收藏的笔记加一个星标：</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;div class="notes"&gt;
+  &lt;div class="note" v-for="note of sortedNotes" :key="note.id"
+       :class="{ selected: note === selectedNote }"
+       @click="selectNote(note)"&gt;
+    &lt;i class="icon material-icons" v-if="note.favorite"&gt;star&lt;/i&gt;
+    {{ note.title }}
+  &lt;/div&gt;
+&lt;/div&gt;
+</pre></div>
+
+<h2 id="status">状态栏</h2>
+
+<p>最后，在编辑器下方加一个状态栏，显示创建时间和行数、词数、字符数。</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;section class="main"&gt;
+  &lt;div class="toolbar"&gt;...&lt;/div&gt;
+  &lt;textarea v-model="selectedNote.content"&gt;&lt;/textarea&gt;
+  &lt;div class="toolbar status-bar"&gt;
+    &lt;!-- 状态栏 --&gt;
+  &lt;/div&gt;
+&lt;/section&gt;
+</pre></div>
+
+<h3>创建时间：过滤器没了，用函数</h3>
+
+<p>直接显示 <code>{{ selectedNote.created }}</code> 会得到一串毫秒数，比如 <code>1730800000000</code>，对用户毫无意义。原书的做法是：</p>
+
+<ol>
+  <li>引入 moment.js 日期库；</li>
+  <li>用 <code>Vue.filter('date', ...)</code> 注册一个全局<strong>过滤器</strong>；</li>
+  <li>在模板里用管道符 <code>{{ selectedNote.created | date }}</code>。</li>
+</ol>
+
+<p>这三步在今天都过时了：</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#10060;</span><h4>过滤器被移除</h4><p>Vue 3 删除了过滤器语法。管道符 <code>|</code> 在 JS 里本来是“按位或”，放在模板里容易混淆，而且它做的事普通函数完全能做。</p></div>
+  <div class="card"><span class="ic">&#128164;</span><h4>moment.js 已停止开发</h4><p>moment 官方已进入维护模式并建议新项目不要使用。它体积大、对象可变。</p></div>
+  <div class="card"><span class="ic">&#9989;</span><h4>浏览器自带 Intl</h4><p><code>Intl.DateTimeFormat</code> 零依赖、自动适配语言地区，格式化日期足够了。</p></div>
+</div>
+
+<div class="vs">
+  <div class="old"><div class="h">原书 · Vue 2 过滤器 + moment</div>
+<div class="code" data-lang="js"><pre>
+Vue.filter('date', time =&gt;
+  moment(time).format('DD/MM/YY, HH:mm'))
+
+// 模板：
+// {{ selectedNote.created | date }}
+</pre></div></div>
+  <div class="new"><div class="h">Vue 3 · 普通函数 + Intl</div>
+<div class="code" data-lang="js"><pre>
+const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
+  dateStyle: 'short', timeStyle: 'short',
+})
+const formatDate = (time) =&gt; dateFormatter.format(time)
+
+// 模板：
+// {{ formatDate(selectedNote.created) }}
+</pre></div></div>
+</div>
+
+<div class="code" data-lang="html"><pre>
+&lt;span class="date"&gt;
+  &lt;span class="label"&gt;创建于&lt;/span&gt;
+  &lt;span class="value"&gt;{{ formatDate(selectedNote.created) }}&lt;/span&gt;
+&lt;/span&gt;
+</pre></div>
+
+<p>显示效果类似 <code>2026/11/5 14:30</code>。</p>
+
+<div class="box tip">
+  <div class="t">&#10003; 多处要用？注册成全局属性</div>
+  <p>
+    如果很多组件都要格式化日期，可以挂到应用上：<code>app.config.globalProperties.$date = formatDate</code>，
+    之后任何模板里都能写 <code>{{ $date(x) }}</code>。这是官方推荐的“全局过滤器”替代方案。
+  </p>
+</div>
+
+<h3>文字统计</h3>
+
+<p>三个计算属性，分别统计行数、词数和字符数：</p>
+
+<div class="code" data-lang="js"><pre>
+const linesCount = computed(() =&gt; {
+  if (!selectedNote.value) return 0
+  // 按换行符切分
+  return selectedNote.value.content.split(/\r\n|\r|\n/).length
+})
+
+// Intl.Segmenter 能正确地给中文、日文这类没有空格的语言分词
+const segmenter = new Intl.Segmenter('zh', { granularity: 'word' })
+
+const wordsCount = computed(() =&gt; {
+  if (!selectedNote.value) return 0
+  let n = 0
+  for (const s of segmenter.segment(selectedNote.value.content)) {
+    if (s.isWordLike) n++
+  }
+  return n
+})
+
+const charactersCount = computed(() =&gt; {
+  if (!selectedNote.value) return 0
+  // 展开成数组能正确处理 emoji 等由两个 UTF-16 单元组成的字符
+  return [...selectedNote.value.content].length
+})
+</pre></div>
+
+<div class="box deep">
+  <div class="t">&#128269; 为什么不用原书的空格计数法</div>
+  <p>
+    原书用正则把多个空白合并，再按空格 <code>split</code> 来数单词。这对英文有效，但中文句子里没有空格，
+    “我爱学习 Vue”会被数成 2 个词。<code>Intl.Segmenter</code> 是浏览器内置的分词器，会把它切成“我 / 爱 / 学习 / Vue”共 4 个词。
+    另外 <code>'😀'.length</code> 是 2，<code>[...'😀'].length</code> 才是 1。
+  </p>
+</div>
+
+<div class="code" data-lang="html"><pre>
+&lt;span class="lines"&gt;&lt;span class="label"&gt;行&lt;/span&gt;&lt;span class="value"&gt;{{ linesCount }}&lt;/span&gt;&lt;/span&gt;
+&lt;span class="words"&gt;&lt;span class="label"&gt;词&lt;/span&gt;&lt;span class="value"&gt;{{ wordsCount }}&lt;/span&gt;&lt;/span&gt;
+&lt;span class="characters"&gt;&lt;span class="label"&gt;字符&lt;/span&gt;&lt;span class="value"&gt;{{ charactersCount }}&lt;/span&gt;&lt;/span&gt;
+</pre></div>
+
+<h2 id="demo">在线试一试</h2>
+
+<p>下面是本章应用的精简版（去掉了 Markdown 渲染和本地存储），可以新建、选择、重命名、收藏、删除，状态栏实时统计：</p>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · 迷你笔记本</div>
+  <div class="body">
+    <div id="demo-notebook" v-cloak class="nb-demo">
+      <div>
+        <button @click="addNote" :title="`已有 ${notes.length} 条笔记`" style="width:100%">＋ 新建笔记</button>
+        <div v-for="note of sortedNotes" :key="note.id" @click="selectedId = note.id"
+             :style="{ padding: '6px 10px', marginTop: '6px', borderRadius: '6px', cursor: 'pointer',
+                       background: note === selectedNote ? 'var(--accent-bg)' : 'var(--panel-2)',
+                       color: note === selectedNote ? 'var(--accent-2)' : 'inherit', fontSize: '14px' }">
+          <span v-if="note.favorite">★ </span>{{ note.title }}
+        </div>
+      </div>
+      <div v-if="selectedNote">
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+          <input v-model="selectedNote.title" style="flex:1;min-width:0">
+          <button class="ghost" @click="selectedNote.favorite = !selectedNote.favorite">{{ selectedNote.favorite ? '★' : '☆' }}</button>
+          <button class="ghost" @click="removeNote">删除</button>
+        </div>
+        <textarea v-model="selectedNote.content"></textarea>
+        <div class="muted">创建于 {{ formatDate(selectedNote.created) }} · {{ lines }} 行 · {{ words }} 词 · {{ chars }} 字符</div>
+      </div>
+      <div v-else class="muted" style="align-self:center">← 选择或新建一条笔记</div>
+    </div>
+  </div>
+</div>
+
+<h2 id="full">完整代码</h2>
+
+<div class="code" data-lang="html" data-file="index.html"><pre>
+&lt;!doctype html&gt;
+&lt;html lang="zh-CN"&gt;
+&lt;head&gt;
+  &lt;meta charset="utf-8"&gt;
+  &lt;title&gt;笔记本&lt;/title&gt;
+  &lt;link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"&gt;
+  &lt;link rel="stylesheet" href="style.css"&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;div id="notebook"&gt;
+    &lt;!-- 侧边栏 --&gt;
+    &lt;aside class="side-bar"&gt;
+      &lt;div class="toolbar"&gt;
+        &lt;button @click="addNote" :title="addButtonTitle"&gt;
+          &lt;i class="material-icons"&gt;add&lt;/i&gt; 新建笔记
+        &lt;/button&gt;
+      &lt;/div&gt;
+      &lt;div class="notes"&gt;
+        &lt;div class="note" v-for="note of sortedNotes" :key="note.id"
+             :class="{ selected: note === selectedNote }"
+             @click="selectNote(note)"&gt;
+          &lt;i class="icon material-icons" v-if="note.favorite"&gt;star&lt;/i&gt;
+          {{ note.title }}
+        &lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/aside&gt;
+
+    &lt;template v-if="selectedNote"&gt;
+      &lt;!-- 主区域 --&gt;
+      &lt;section class="main"&gt;
+        &lt;div class="toolbar"&gt;
+          &lt;input v-model="selectedNote.title" placeholder="笔记标题"&gt;
+          &lt;button @click="favoriteNote" title="收藏"&gt;
+            &lt;i class="material-icons"&gt;{{ selectedNote.favorite ? 'star' : 'star_border' }}&lt;/i&gt;
+          &lt;/button&gt;
+          &lt;button @click="removeNote" title="删除笔记"&gt;
+            &lt;i class="material-icons"&gt;delete&lt;/i&gt;
+          &lt;/button&gt;
+        &lt;/div&gt;
+        &lt;textarea v-model="selectedNote.content"&gt;&lt;/textarea&gt;
+        &lt;div class="toolbar status-bar"&gt;
+          &lt;span class="date"&gt;&lt;span class="label"&gt;创建于&lt;/span&gt;&lt;span class="value"&gt;{{ formatDate(selectedNote.created) }}&lt;/span&gt;&lt;/span&gt;
+          &lt;span class="lines"&gt;&lt;span class="label"&gt;行&lt;/span&gt;&lt;span class="value"&gt;{{ linesCount }}&lt;/span&gt;&lt;/span&gt;
+          &lt;span class="words"&gt;&lt;span class="label"&gt;词&lt;/span&gt;&lt;span class="value"&gt;{{ wordsCount }}&lt;/span&gt;&lt;/span&gt;
+          &lt;span class="characters"&gt;&lt;span class="label"&gt;字符&lt;/span&gt;&lt;span class="value"&gt;{{ charactersCount }}&lt;/span&gt;&lt;/span&gt;
+        &lt;/div&gt;
+      &lt;/section&gt;
+
+      &lt;!-- 预览 --&gt;
+      &lt;aside class="preview" v-html="notePreview"&gt;&lt;/aside&gt;
+    &lt;/template&gt;
+  &lt;/div&gt;
+
+  &lt;script src="https://unpkg.com/vue@3/dist/vue.global.js"&gt;&lt;/script&gt;
+  &lt;script src="https://cdn.jsdelivr.net/npm/marked@15/lib/marked.umd.js"&gt;&lt;/script&gt;
+  &lt;script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"&gt;&lt;/script&gt;
+  &lt;script src="script.js"&gt;&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</pre></div>
+
+<div class="code" data-lang="js" data-file="script.js"><pre>
+const { createApp, ref, computed, watch } = Vue
+
+const dateFormatter = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short' })
+const segmenter = new Intl.Segmenter('zh', { granularity: 'word' })
+
+createApp({
+  name: 'Notebook',
+  setup() {
+    // ---------- 状态 ----------
+    const notes = ref(JSON.parse(localStorage.getItem('notes')) || [])
+    const selectedId = ref(localStorage.getItem('selected-id'))
+
+    // ---------- 计算属性 ----------
+    const selectedNote = computed(() =&gt;
+      notes.value.find(note =&gt; note.id === selectedId.value))
+
+    const notePreview = computed(() =&gt; selectedNote.value
+      ? DOMPurify.sanitize(marked.parse(selectedNote.value.content))
+      : '')
+
+    const sortedNotes = computed(() =&gt; notes.value
+      .toSorted((a, b) =&gt; a.created - b.created)
+      .sort((a, b) =&gt; (a.favorite === b.favorite) ? 0 : a.favorite ? -1 : 1))
+
+    const addButtonTitle = computed(() =&gt; `已有 ${notes.value.length} 条笔记`)
+
+    const content = computed(() =&gt; selectedNote.value?.content ?? '')
+    const linesCount = computed(() =&gt; content.value.split(/\r\n|\r|\n/).length)
+    const wordsCount = computed(() =&gt;
+      [...segmenter.segment(content.value)].filter(s =&gt; s.isWordLike).length)
+    const charactersCount = computed(() =&gt; [...content.value].length)
+
+    // ---------- 侦听器：持久化 ----------
+    watch(notes, () =&gt; {
+      localStorage.setItem('notes', JSON.stringify(notes.value))
+    }, { deep: true })
+
+    watch(selectedId, (val) =&gt; {
+      if (val) localStorage.setItem('selected-id', val)
+      else localStorage.removeItem('selected-id')
+    })
+
+    // ---------- 方法 ----------
+    function addNote() {
+      const time = Date.now()
+      const note = {
+        id: crypto.randomUUID(),
+        title: '新笔记 ' + (notes.value.length + 1),
+        content: '**你好！** 这个笔记本支持 [Markdown](https://commonmark.org/help/) 格式！',
+        created: time,
+        favorite: false,
+      }
+      notes.value.push(note)
+      selectNote(note)
+    }
+
+    function selectNote(note) {
+      selectedId.value = note.id
+    }
+
+    function removeNote() {
+      if (selectedNote.value &amp;&amp; confirm('确定删除这条笔记吗？')) {
+        const index = notes.value.indexOf(selectedNote.value)
+        if (index !== -1) notes.value.splice(index, 1)
+      }
+    }
+
+    function favoriteNote() {
+      selectedNote.value.favorite = !selectedNote.value.favorite
+    }
+
+    const formatDate = (time) =&gt; dateFormatter.format(time)
+
+    return {
+      notes, selectedNote, notePreview, sortedNotes, addButtonTitle,
+      linesCount, wordsCount, charactersCount,
+      addNote, selectNote, removeNote, favoriteNote, formatDate,
+    }
+  },
+}).mount('#notebook')
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 返回值好长？</div>
+  <p>
+    <code>setup()</code> 最后那个长长的 <code>return</code> 确实有点烦。第 4 章引入构建工具后，我们会用 <code>&lt;script setup&gt;</code>，
+    顶层声明的变量和函数自动暴露给模板，再也不用手写 <code>return</code>。
+  </p>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<div class="tw"><table>
+<thead><tr><th>概念</th><th>Vue 3 写法</th><th>一句话</th></tr></thead>
+<tbody>
+<tr><td>响应式数据</td><td><code>ref()</code></td><td>JS 里用 <code>.value</code>，模板里直接用</td></tr>
+<tr><td>计算属性</td><td><code>computed(() =&gt; ...)</code></td><td>派生值，有缓存</td></tr>
+<tr><td>侦听器</td><td><code>watch(src, cb, { deep, immediate })</code></td><td>数据变了去做事</td></tr>
+<tr><td>方法</td><td>普通函数</td><td>没有 <code>this</code>，靠闭包</td></tr>
+<tr><td>生命周期</td><td><code>onMounted</code> 等</td><td><code>setup</code> 本身就是 created</td></tr>
+<tr><td>格式化</td><td>函数 / <code>globalProperties</code></td><td>过滤器已移除</td></tr>
+<tr><td>事件</td><td><code>@click</code></td><td><code>v-on:click</code> 的简写</td></tr>
+<tr><td>属性绑定</td><td><code>:title</code>、<code>:class</code></td><td><code>v-bind</code> 的简写，class 支持对象/数组</td></tr>
+<tr><td>列表</td><td><code>v-for</code> + <code>:key</code></td><td>key 用稳定唯一的 id</td></tr>
+<tr><td>条件</td><td><code>v-if</code> / <code>v-else</code> / <code>v-show</code></td><td>移除 vs. 隐藏</td></tr>
+<tr><td>原始 HTML</td><td><code>v-html</code></td><td>用户内容务必先消毒</td></tr>
+</tbody>
+</table></div>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>给侧边栏加一个搜索框，用计算属性过滤出标题或内容包含关键字的笔记（提示：不要在 <code>v-for</code> 的同一元素上写 <code>v-if</code>）。</li>
+    <li>新建笔记后，让光标自动聚焦到编辑器里（提示：模板引用 <code>ref="editor"</code> + <code>nextTick</code>）。</li>
+    <li>在状态栏再加一项“预计阅读时间”：按每分钟 300 字估算。</li>
+    <li>在笔记内容里写 <code>&lt;img src=x onerror="alert(1)"&gt;</code>，先去掉 <code>DOMPurify.sanitize</code> 看看会发生什么，再加回来对比。</li>
+    <li>用 <code>watchEffect</code> 改写保存逻辑，比较两种写法的区别。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+<script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+<script>
+  if (window.Vue) {
+    const { createApp, ref, computed } = Vue
+    const fmt = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short' })
+    const seg = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter('zh', { granularity: 'word' }) : null
+    createApp({
+      setup() {
+        const now = Date.now()
+        const notes = ref([
+          { id: 'a', title: '读书笔记', content: '# 第 2 章\n我爱学习 Vue！\n计算属性有缓存。', created: now - 86400000, favorite: false },
+          { id: 'b', title: '购物清单', content: '- 牛奶\n- 面包\n- 咖啡 ☕', created: now - 3600000, favorite: true },
+        ])
+        const selectedId = ref('a')
+        const selectedNote = computed(() => notes.value.find(n => n.id === selectedId.value))
+        const sortedNotes = computed(() => [...notes.value]
+          .sort((a, b) => a.created - b.created)
+          .sort((a, b) => (a.favorite === b.favorite) ? 0 : a.favorite ? -1 : 1))
+        const text = computed(() => selectedNote.value?.content ?? '')
+        const lines = computed(() => text.value.split(/\r\n|\r|\n/).length)
+        const words = computed(() => seg ? [...seg.segment(text.value)].filter(s => s.isWordLike).length
+                                          : text.value.trim().split(/\s+/).filter(Boolean).length)
+        const chars = computed(() => [...text.value].length)
+        let n = 0
+        function addNote() {
+          const note = { id: 'n' + (++n) + Date.now(), title: '新笔记 ' + (notes.value.length + 1),
+                         content: '**你好！**', created: Date.now(), favorite: false }
+          notes.value.push(note)
+          selectedId.value = note.id
+        }
+        function removeNote() {
+          const i = notes.value.indexOf(selectedNote.value)
+          if (i !== -1) notes.value.splice(i, 1)
+        }
+        return { notes, selectedId, selectedNote, sortedNotes, lines, words, chars, addNote, removeNote,
+                 formatDate: (t) => fmt.format(t) }
+      }
+    }).mount('#demo-notebook')
+  }
+</script>
+</body>
+</html>

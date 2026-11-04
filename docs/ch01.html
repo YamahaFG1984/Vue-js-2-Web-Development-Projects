@@ -1,0 +1,783 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 1 章 · 初识 Vue 3 — Vue 3 项目实战教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="1">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 1 章</span>
+<h1>初识 Vue 3</h1>
+<p class="lede">
+  Vue 是一个专注于构建网页用户界面的 JavaScript 框架。这一章不装任何工具，
+  只用一个 HTML 文件，就把一个“会自己更新”的页面跑起来，顺便弄清 Vue 到底替我们做了什么。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>说清“渐进式框架”和“数据驱动视图”是什么意思</li>
+    <li>知道原书的 Vue 2 生态在今天分别被谁替代了</li>
+    <li>用 <code>&lt;script&gt;</code> 标签引入 Vue 3，用 <code>createApp</code> 创建并挂载应用</li>
+    <li>认识文本插值 <code>{{ }}</code> 和第一个指令 <code>v-model</code></li>
+    <li>理解“响应式”：改数据，页面自己变</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="why">为什么又是一个前端框架？</h2>
+
+<p>
+  先想一个最普通的需求：页面上有个输入框，下面有一行字，要求“输入框里打什么，下面那行字就显示什么”。
+  不用任何框架，你得这么写：
+</p>
+
+<div class="code" data-lang="html" data-file="不用框架：手动同步"><pre>
+&lt;input id="box"&gt;
+&lt;p id="out"&gt;&lt;/p&gt;
+
+&lt;script&gt;
+  const box = document.getElementById('box')
+  const out = document.getElementById('out')
+  // 每次输入，都要自己去找到 &lt;p&gt;，自己改它的内容
+  box.addEventListener('input', () =&gt; {
+    out.textContent = box.value
+  })
+&lt;/script&gt;
+</pre></div>
+
+<p>
+  两个元素还好。可真实页面上有几百个元素、几十种数据，一个数据变了要同步改好几处 DOM，
+  漏掉一处就是 bug。<strong>前端框架要解决的核心问题就是：让你只管数据，DOM 由框架负责同步。</strong>
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="手动操作 DOM 与数据驱动视图的对比">
+  <text class="ttl" x="190" y="26" text-anchor="middle">手动操作 DOM（命令式）</text>
+  <rect class="bx" x="40" y="44" width="110" height="44" rx="8"/>
+  <text x="95" y="71" text-anchor="middle">数据变了</text>
+  <rect class="bx-r" x="230" y="44" width="110" height="34" rx="8"/>
+  <text class="sm on-r" x="285" y="66" text-anchor="middle">找到元素 A，改</text>
+  <rect class="bx-r" x="230" y="90" width="110" height="34" rx="8"/>
+  <text class="sm on-r" x="285" y="112" text-anchor="middle">找到元素 B，改</text>
+  <rect class="bx-r" x="230" y="136" width="110" height="34" rx="8"/>
+  <text class="sm on-r" x="285" y="158" text-anchor="middle">找到元素 C，改</text>
+  <rect class="bx-d" x="230" y="182" width="110" height="34" rx="8"/>
+  <text class="sm" x="285" y="204" text-anchor="middle">……忘了改 D</text>
+  <path class="ln" d="M152 66 H226" marker-end="url(#ar)"/>
+  <path class="ln" d="M152 72 C190 80 190 107 226 107" marker-end="url(#ar)"/>
+  <path class="ln" d="M152 78 C180 100 190 153 226 153" marker-end="url(#ar)"/>
+  <path class="ln-d" d="M152 84 C170 120 190 199 226 199" marker-end="url(#ar)"/>
+  <text class="sm" x="190" y="246" text-anchor="middle">你要记住“谁依赖谁”，每次都手动同步</text>
+
+  <path class="ln-d" d="M380 30 V250"/>
+
+  <text class="ttl on-a" x="570" y="26" text-anchor="middle">Vue（声明式 · 数据驱动）</text>
+  <rect class="bx-b" x="420" y="90" width="110" height="60" rx="8"/>
+  <text class="on-b" x="475" y="116" text-anchor="middle">数据</text>
+  <text class="sm" x="475" y="134" text-anchor="middle">你只改这里</text>
+  <rect class="bx-a" x="600" y="70" width="130" height="100" rx="10"/>
+  <text class="ttl on-a" x="665" y="100" text-anchor="middle">Vue</text>
+  <text class="sm" x="665" y="122" text-anchor="middle">自动追踪依赖</text>
+  <text class="sm" x="665" y="140" text-anchor="middle">只更新变了的 DOM</text>
+  <path class="ln-a" d="M532 120 H596" marker-end="url(#ar-a)"/>
+  <rect class="bx-g" x="600" y="196" width="130" height="34" rx="8"/>
+  <text class="on-g" x="665" y="218" text-anchor="middle">页面</text>
+  <path class="ln-a" d="M665 172 V192" marker-end="url(#ar-a)"/>
+  <text class="sm" x="570" y="258" text-anchor="middle">你描述“页面长什么样”，Vue 负责“怎么变过去”</text>
+</svg>
+<figcaption>图 1-1　命令式地同步 DOM vs. 声明式的数据驱动</figcaption>
+</figure>
+
+<h3>渐进式框架</h3>
+
+<p>
+  Vue 的作者尤雨溪（Evan You）把 Vue 称为<strong>渐进式框架（The Progressive Framework）</strong>。“渐进”有三层意思：
+</p>
+<ul>
+  <li><strong>可以一点点引入</strong>：在已有的老项目里，用一个 <code>&lt;script&gt;</code> 标签就能让某一块区域变成 Vue 管理的。</li>
+  <li><strong>可大可小</strong>：从一个小原型，到有路由、状态管理、服务端渲染的大型应用，都是同一套核心。</li>
+  <li><strong>上手平缓</strong>：新手几分钟就能写出东西，熟手又能马上进入高效状态。</li>
+</ul>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="Vue 渐进式框架的层次：核心、组件、路由、状态管理、构建工具、全栈框架">
+  <circle class="bx-a" cx="380" cy="160" r="52"/>
+  <text class="ttl on-a" x="380" y="156" text-anchor="middle">核心</text>
+  <text class="sm" x="380" y="174" text-anchor="middle">响应式 + 模板</text>
+
+  <circle class="ln-a" cx="380" cy="160" r="88" style="stroke-dasharray:4 4"/>
+  <text class="halo lbl" x="380" y="86" text-anchor="middle">组件系统</text>
+
+  <circle class="ln-b" cx="380" cy="160" r="122" style="stroke-dasharray:4 4"/>
+  <text class="halo lbl on-b" x="380" y="52" text-anchor="middle">路由 Vue Router · 状态 Pinia</text>
+
+  <circle class="ln-p" cx="380" cy="165" r="145" style="stroke-dasharray:4 4;opacity:.7"/>
+  <text class="halo lbl on-p" x="380" y="22" text-anchor="middle">构建工具 Vite · 测试 Vitest · 全栈 Nuxt</text>
+
+  <text class="sm" x="20" y="120">第 1–3 章</text>
+  <text class="lbl" x="20" y="138">只用核心 + 组件</text>
+  <text class="lbl" x="20" y="156">一个 HTML 文件搞定</text>
+  <path class="ln-d" d="M150 140 H300" marker-end="url(#ar)"/>
+
+  <text class="sm" x="600" y="200">第 4–8 章</text>
+  <text class="lbl" x="600" y="218">逐层加上路由、状态、</text>
+  <text class="lbl" x="600" y="236">测试、国际化、SSR</text>
+  <path class="ln-d" d="M596 214 H500" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 1-2　渐进式：需要什么就加一层，不需要就不加</figcaption>
+</figure>
+
+<h3>MVVM：View、Model 和中间人</h3>
+
+<p>
+  Vue 的设计大致遵循 <strong>MVVM</strong>（Model-View-ViewModel）思想：
+  <em>View</em> 是用户看到的界面，<em>Model</em> 是数据，Vue 扮演中间的 <em>ViewModel</em>，
+  负责把两者连起来。数据变了，Vue 决定什么时候、用什么方式更新界面；用户在界面上输入，Vue 把变化写回数据。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="MVVM：View 和 Model 通过 Vue 双向连接">
+  <rect class="bx-g" x="30" y="60" width="180" height="80" rx="12"/>
+  <text class="ttl on-g" x="120" y="94" text-anchor="middle">View 视图</text>
+  <text class="sm" x="120" y="116" text-anchor="middle">模板 / 页面上的 DOM</text>
+
+  <rect class="bx-a" x="290" y="50" width="180" height="100" rx="12"/>
+  <text class="ttl on-a" x="380" y="88" text-anchor="middle">ViewModel</text>
+  <text class="on-a" x="380" y="110" text-anchor="middle">Vue 组件实例</text>
+  <text class="sm" x="380" y="130" text-anchor="middle">响应式系统 · 指令 · 渲染</text>
+
+  <rect class="bx-b" x="550" y="60" width="180" height="80" rx="12"/>
+  <text class="ttl on-b" x="640" y="94" text-anchor="middle">Model 数据</text>
+  <text class="sm" x="640" y="116" text-anchor="middle">JS 对象、数组、字符串</text>
+
+  <path class="ln-a" d="M292 82 H214" marker-end="url(#ar-a)"/>
+  <text class="sm" x="252" y="74" text-anchor="middle">更新 DOM</text>
+  <path class="ln-g" d="M214 118 H286" marker-end="url(#ar)"/>
+  <text class="sm" x="252" y="136" text-anchor="middle">DOM 事件</text>
+
+  <path class="ln-b" d="M472 82 H546" marker-end="url(#ar)"/>
+  <text class="sm" x="510" y="74" text-anchor="middle">写回数据</text>
+  <path class="ln-b" d="M546 118 H474" marker-end="url(#ar)"/>
+  <text class="sm" x="510" y="136" text-anchor="middle">数据变化通知</text>
+
+  <text class="lbl" x="380" y="186" text-anchor="middle">你几乎不需要手写 document.querySelector —— 这些都是 ViewModel 的活</text>
+</svg>
+<figcaption>图 1-3　MVVM 中 Vue 的位置</figcaption>
+</figure>
+
+<p>Vue 的核心能力可以概括为四点：</p>
+<div class="cards">
+  <div class="card"><span class="ic">&#9889;</span><h4>响应式数据</h4><p>数据一变，用到它的界面自动更新；底层有轻量的虚拟 DOM 和编译期优化。</p></div>
+  <div class="card"><span class="ic">&#128221;</span><h4>灵活的视图写法</h4><p>像 HTML 一样的模板（最常用），也可以写 JSX 或纯 JS 渲染函数。</p></div>
+  <div class="card"><span class="ic">&#129513;</span><h4>组件化</h4><p>把界面拆成可复用、可组合的小块，每块自带模板、逻辑和样式。</p></div>
+  <div class="card"><span class="ic">&#128230;</span><h4>官方配套</h4><p>路由、状态管理、构建工具、开发者工具都有官方或官方推荐的方案。</p></div>
+</div>
+
+<h2 id="history">Vue 的成长史：从 Vue 2 到 Vue 3</h2>
+
+<p>
+  原书写于 2017 年，用的是 Vue 2。今天（2026 年）Vue 2 已经停止维护，所有新项目都应该用 Vue 3。
+  先看一眼时间线，你就明白为什么本教程把书里的代码全部换掉了：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="Vue 版本时间线">
+  <path class="ln" d="M30 100 H735" marker-end="url(#ar)"/>
+  <g>
+    <circle class="bx" cx="70" cy="100" r="7"/>
+    <text class="ttl" x="70" y="78" text-anchor="middle">2014.02</text>
+    <text class="sm" x="70" y="128" text-anchor="middle">首次公开发布</text>
+  </g>
+  <g>
+    <circle class="bx" cx="170" cy="100" r="7"/>
+    <text class="ttl" x="170" y="78" text-anchor="middle">2015.10</text>
+    <text class="sm" x="170" y="128" text-anchor="middle">1.0</text>
+  </g>
+  <g>
+    <circle class="bx-d" cx="275" cy="100" r="9"/>
+    <text class="ttl" x="275" y="78" text-anchor="middle">2016.09</text>
+    <text class="sm" x="275" y="128" text-anchor="middle">2.0 · 虚拟 DOM</text>
+    <text class="sm" x="275" y="144" text-anchor="middle">原书使用的版本</text>
+  </g>
+  <g>
+    <circle class="bx-a" cx="390" cy="100" r="9"/>
+    <text class="ttl on-a" x="390" y="78" text-anchor="middle">2020.09</text>
+    <text class="sm" x="390" y="128" text-anchor="middle">3.0 · Proxy 响应式</text>
+    <text class="sm" x="390" y="144" text-anchor="middle">组合式 API</text>
+  </g>
+  <g>
+    <circle class="bx-a" cx="495" cy="100" r="7"/>
+    <text class="ttl on-a" x="495" y="78" text-anchor="middle">2022.02</text>
+    <text class="sm" x="495" y="128" text-anchor="middle">Vue 3 成为默认版本</text>
+  </g>
+  <g>
+    <circle class="bx-r" cx="595" cy="100" r="7"/>
+    <text class="ttl on-r" x="595" y="78" text-anchor="middle">2023.12.31</text>
+    <text class="sm" x="595" y="128" text-anchor="middle">Vue 2 停止维护</text>
+  </g>
+  <g>
+    <circle class="bx-a" cx="695" cy="100" r="9"/>
+    <text class="ttl on-a" x="695" y="78" text-anchor="middle">现在</text>
+    <text class="sm" x="695" y="128" text-anchor="middle">Vue 3.5+</text>
+    <text class="sm" x="695" y="144" text-anchor="middle">本教程使用</text>
+  </g>
+  <rect class="bx-d" x="250" y="166" width="270" height="30" rx="6"/>
+  <text class="sm" x="385" y="186" text-anchor="middle">书中的 Vue 2 写法大多仍能看懂，但要改写才能运行</text>
+</svg>
+<figcaption>图 1-4　Vue 的版本时间线</figcaption>
+</figure>
+
+<h3>原书生态 → 今天的生态</h3>
+
+<p>
+  不只是 Vue 本身升级了，它周围的工具几乎全部换了一代。下表是本教程的“翻译对照表”，
+  后面每一章都会具体讲怎么用新工具：
+</p>
+
+<div class="tw"><table>
+<thead><tr><th>用途</th><th>原书（2017，Vue 2）</th><th>本教程（Vue 3 生态）</th><th>章节</th></tr></thead>
+<tbody>
+<tr><td>创建应用</td><td><code>new Vue({ el })</code></td><td><code>createApp(...).mount()</code></td><td>1</td></tr>
+<tr><td>组织逻辑</td><td>选项式 API（data / methods）</td><td><strong>组合式 API</strong>（<code>ref</code> / <code>computed</code>），选项式仍可用</td><td>1–2</td></tr>
+<tr><td>格式化显示</td><td>过滤器 <code>{{ x | date }}</code></td><td>已移除，改用普通函数或计算属性</td><td>2</td></tr>
+<tr><td>日期库</td><td>moment.js</td><td>浏览器自带的 <code>Intl.DateTimeFormat</code></td><td>2</td></tr>
+<tr><td>脚手架</td><td>vue-cli + webpack</td><td><strong>create-vue + Vite</strong></td><td>4</td></tr>
+<tr><td>组件写法</td><td><code>export default { ... }</code></td><td><code>&lt;script setup&gt;</code> 单文件组件</td><td>4</td></tr>
+<tr><td>路由</td><td>vue-router 2/3</td><td><strong>Vue Router 4</strong></td><td>5</td></tr>
+<tr><td>代码复用</td><td>mixins（混入）</td><td><strong>组合式函数</strong>（composables）</td><td>5</td></tr>
+<tr><td>状态管理</td><td>Vuex</td><td><strong>Pinia</strong></td><td>6</td></tr>
+<tr><td>代码检查</td><td>ESLint + .eslintrc</td><td>ESLint 9 扁平配置 <code>eslint.config.js</code></td><td>7</td></tr>
+<tr><td>单元测试</td><td>Jest + vue-jest</td><td><strong>Vitest</strong> + Vue Test Utils 2</td><td>7</td></tr>
+<tr><td>国际化</td><td>vue-i18n 7</td><td>vue-i18n 11（组合式 <code>useI18n</code>）</td><td>7</td></tr>
+<tr><td>服务端渲染</td><td>vue-server-renderer + 手写 webpack</td><td><strong>Nuxt</strong>（或 Vite SSR）</td><td>7</td></tr>
+<tr><td>实时全栈</td><td>Meteor 1.x + vue-meteor</td><td>Meteor 3 + Vite + vue-meteor-tracker</td><td>8</td></tr>
+<tr><td>调试工具</td><td>Vue.js devtools 浏览器扩展</td><td>Vue DevTools 7（扩展 / Vite 插件）</td><td>1、4</td></tr>
+</tbody>
+</table></div>
+
+<h3>浏览器兼容性</h3>
+
+<p>
+  Vue 2 依赖 <code>Object.defineProperty</code>，因此不支持 IE8。Vue 3 更进一步：
+  它的响应式系统基于 ES2015 的 <code>Proxy</code>，而 <code>Proxy</code> 无法被“补丁”到旧浏览器上，
+  所以 <strong>Vue 3 不支持任何版本的 IE</strong>，只支持现代浏览器（Chrome、Edge、Firefox、Safari 的近几个版本）。
+  好消息是 IE 本身也已退役，这对今天的项目几乎不构成限制。
+</p>
+
+<div class="box note">
+  <div class="t">&#9432; 本教程的代码风格</div>
+  <p>
+    全书使用现代 JavaScript（<code>const</code>/<code>let</code>、箭头函数、模板字符串、解构、<code>async/await</code>、ES 模块）。
+    第 1–3 章直接在浏览器里运行，不需要任何编译；从第 4 章开始引入 Vite。
+  </p>
+</div>
+
+<h2 id="setup">一分钟上手</h2>
+
+<p>
+  Vue 足够灵活，用一个 <code>&lt;script&gt;</code> 标签就能引入。新建一个 <code>index.html</code>，内容如下：
+</p>
+
+<div class="code" data-lang="html" data-file="index.html"><pre>
+&lt;!doctype html&gt;
+&lt;html&gt;
+&lt;head&gt;
+  &lt;meta charset="utf-8"&gt;
+  &lt;title&gt;Vue 3 上手&lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;!-- 一段普通 HTML，稍后交给 Vue 管理 --&gt;
+  &lt;div id="root"&gt;
+    &lt;p&gt;这是 Hello World 吗？&lt;/p&gt;
+  &lt;/div&gt;
+
+  &lt;!-- 引入 Vue 3 的“全局构建版本”：它会在 window 上挂一个 Vue 对象 --&gt;
+  &lt;script src="https://unpkg.com/vue@3/dist/vue.global.js"&gt;&lt;/script&gt;
+
+  &lt;script&gt;
+    console.log('我们正在使用 Vue，版本号：', Vue.version)
+  &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</pre></div>
+
+<p>直接双击用浏览器打开，按 <kbd>F12</kbd> 打开控制台，能看到类似输出：</p>
+
+<div class="code" data-lang="text" data-file="浏览器控制台"><pre>
+我们正在使用 Vue，版本号： 3.5.x
+</pre></div>
+
+<p>
+  和原书相比，有两处细节变了：地址里多了 <code>@3</code>（锁定大版本，避免未来某天突然变成 Vue 4），
+  文件名从 <code>vue.js</code> 变成了 <code>vue.global.js</code>。Vue 3 在 CDN 上提供好几种构建版本，初学者只需要认识两种：
+</p>
+
+<div class="tw"><table>
+<thead><tr><th>文件</th><th>怎么用</th><th>适合</th></tr></thead>
+<tbody>
+<tr><td><code>vue.global.js</code></td><td>普通 <code>&lt;script&gt;</code> 标签，全局变量 <code>Vue</code></td><td>直接双击打开 HTML 文件；本教程第 1–3 章</td></tr>
+<tr><td><code>vue.esm-browser.js</code></td><td><code>&lt;script type="module"&gt;</code> + <code>import</code></td><td>想提前习惯 ES 模块写法（需要本地服务器）</td></tr>
+<tr><td><code>*.prod.js</code></td><td>上面两者的压缩版</td><td>生产环境；去掉了开发警告，体积更小</td></tr>
+</tbody>
+</table></div>
+
+<details class="box deep">
+<summary class="t" style="cursor:pointer">&#128269; 进阶：用 ES 模块 + import map 的写法（点击展开）</summary>
+<p>现代浏览器支持 <em>import map</em>，可以让你在不装任何工具的情况下写 <code>import { createApp } from 'vue'</code>：</p>
+<div class="code" data-lang="html" data-file="index.html（ESM 版）"><pre>
+&lt;script type="importmap"&gt;
+  { "imports": { "vue": "https://unpkg.com/vue@3/dist/vue.esm-browser.js" } }
+&lt;/script&gt;
+
+&lt;div id="root"&gt;{{ message }}&lt;/div&gt;
+
+&lt;script type="module"&gt;
+  import { createApp, ref } from 'vue'
+  createApp({
+    setup() {
+      return { message: ref('Hello Vue!') }
+    }
+  }).mount('#root')
+&lt;/script&gt;
+</pre></div>
+<p>
+  注意：浏览器出于安全考虑，不允许在 <code>file://</code> 协议下加载 ES 模块，所以这种写法必须用本地服务器打开，
+  比如在文件所在目录运行 <code>npx serve</code>。这也是本教程前几章选择全局版本的原因 —— 双击就能跑。
+</p>
+</details>
+
+<h2 id="create">创建一个应用</h2>
+
+<p>
+  现在页面上有了 Vue，但还没有任何“Vue 应用”在运行。我们需要用 <code>createApp</code> 创建一个应用，
+  再把它<strong>挂载（mount）</strong>到页面的某个元素上：
+</p>
+
+<div class="code" data-lang="js" data-file="&lt;script&gt; 里的代码"><pre>
+// 从全局 Vue 对象里取出需要的函数
+const { createApp, ref } = Vue
+
+const app = createApp({
+  // setup() 是组合式 API 的入口：在这里准备数据和函数
+  setup() {
+    // ref() 创建一个“响应式”的值
+    const message = ref('Hello Vue.js!')
+
+    // 返回的东西，模板里都能直接用
+    return { message }
+  }
+})
+
+// 把应用挂载到 id="root" 的元素上
+app.mount('#root')
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="createApp 创建应用，mount 挂载到 DOM 元素">
+  <rect class="bx-b" x="20" y="60" width="200" height="110" rx="12"/>
+  <text class="ttl on-b" x="120" y="88" text-anchor="middle">根组件（选项对象）</text>
+  <text class="mono" x="120" y="114" text-anchor="middle">{ setup() { ... } }</text>
+  <text class="sm" x="120" y="136" text-anchor="middle">描述数据、逻辑</text>
+  <text class="sm" x="120" y="152" text-anchor="middle">（以及可选的模板）</text>
+
+  <path class="ln-b" d="M222 115 H286" marker-end="url(#ar)"/>
+  <text class="mono sm" x="254" y="105" text-anchor="middle">createApp</text>
+
+  <rect class="bx-a" x="290" y="60" width="180" height="110" rx="12"/>
+  <text class="ttl on-a" x="380" y="92" text-anchor="middle">应用实例 app</text>
+  <text class="sm" x="380" y="116" text-anchor="middle">app.component() 注册组件</text>
+  <text class="sm" x="380" y="134" text-anchor="middle">app.use() 安装插件</text>
+  <text class="sm" x="380" y="152" text-anchor="middle">app.config 全局配置</text>
+
+  <path class="ln-a" d="M472 115 H536" marker-end="url(#ar-a)"/>
+  <text class="mono sm" x="504" y="105" text-anchor="middle">.mount</text>
+
+  <rect class="bx-g" x="540" y="40" width="200" height="150" rx="12"/>
+  <text class="ttl on-g" x="640" y="66" text-anchor="middle">页面 DOM</text>
+  <rect class="bx" x="565" y="80" width="150" height="90" rx="8"/>
+  <text class="mono" x="640" y="104" text-anchor="middle">&lt;div id="root"&gt;</text>
+  <text class="sm" x="640" y="126" text-anchor="middle">里面的 HTML 被当作模板</text>
+  <text class="sm" x="640" y="144" text-anchor="middle">编译、渲染、接管</text>
+
+  <text class="lbl" x="380" y="216" text-anchor="middle">一个页面可以有多个应用：各自 createApp，挂到不同元素上，互不干扰</text>
+</svg>
+<figcaption>图 1-5　从选项对象到页面：createApp → app → mount</figcaption>
+</figure>
+
+<div class="vs">
+  <div class="old"><div class="h">原书 · Vue 2</div>
+<div class="code" data-lang="js"><pre>
+var app = new Vue({
+  el: '#root',
+  data () {
+    return {
+      message: 'Hello Vue.js!'
+    }
+  }
+})
+</pre></div></div>
+  <div class="new"><div class="h">本教程 · Vue 3</div>
+<div class="code" data-lang="js"><pre>
+const { createApp, ref } = Vue
+
+createApp({
+  setup() {
+    const message = ref('Hello Vue.js!')
+    return { message }
+  }
+}).mount('#root')
+</pre></div></div>
+</div>
+
+<p>两个关键变化：</p>
+<ol>
+  <li><strong>没有 <code>new Vue</code> 了</strong>。Vue 2 的 <code>new Vue</code> 会修改一个全局的 Vue 构造器，
+    所有应用共享配置，容易互相污染。Vue 3 的 <code>createApp</code> 返回一个独立的应用实例，全局配置都挂在它身上。</li>
+  <li><strong>没有 <code>el</code> 选项了</strong>，统一用 <code>.mount('#root')</code>。（Vue 2 里的 <code>$mount</code> 方法是它的前身。）</li>
+</ol>
+
+<h3>选项式 API 与组合式 API</h3>
+
+<p>
+  上面用的 <code>setup()</code> + <code>ref()</code> 叫<strong>组合式 API（Composition API）</strong>，是 Vue 3 引入的新写法。
+  原书用的 <code>data / methods / computed</code> 写法叫<strong>选项式 API（Options API）</strong>，它在 Vue 3 里<em>依然完全可用</em>：
+</p>
+
+<div class="code" data-lang="js" data-file="选项式 API：Vue 3 里同样能跑"><pre>
+Vue.createApp({
+  data() {
+    return { message: 'Hello Vue.js!' }
+  }
+}).mount('#root')
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 272" role="img" aria-label="选项式 API 按选项类型分组代码，组合式 API 按功能分组代码">
+  <text class="ttl" x="190" y="24" text-anchor="middle">选项式：按“代码种类”分组</text>
+  <rect class="bx" x="40" y="36" width="300" height="46" rx="8"/>
+  <text class="mono sm" x="56" y="54">data</text>
+  <rect class="bx-b" x="110" y="44" width="60" height="14" rx="3"/><rect class="bx-g" x="176" y="44" width="60" height="14" rx="3"/><rect class="bx-p" x="242" y="44" width="60" height="14" rx="3"/>
+  <rect class="bx" x="40" y="90" width="300" height="46" rx="8"/>
+  <text class="mono sm" x="56" y="108">computed</text>
+  <rect class="bx-b" x="130" y="98" width="70" height="14" rx="3"/><rect class="bx-p" x="206" y="98" width="70" height="14" rx="3"/>
+  <rect class="bx" x="40" y="144" width="300" height="46" rx="8"/>
+  <text class="mono sm" x="56" y="162">methods</text>
+  <rect class="bx-g" x="130" y="152" width="50" height="14" rx="3"/><rect class="bx-b" x="186" y="152" width="50" height="14" rx="3"/><rect class="bx-p" x="242" y="152" width="50" height="14" rx="3"/>
+  <rect class="bx" x="40" y="198" width="300" height="46" rx="8"/>
+  <text class="mono sm" x="56" y="216">watch</text>
+  <rect class="bx-g" x="130" y="206" width="80" height="14" rx="3"/>
+  <text class="sm" x="190" y="258" text-anchor="middle">同一个功能（同色）散落在各处</text>
+
+  <text class="ttl on-a" x="570" y="24" text-anchor="middle">组合式：按“功能”分组</text>
+  <rect class="bx-b" x="420" y="36" width="300" height="62" rx="8"/>
+  <text class="sm on-b" x="436" y="56">功能 A：笔记列表</text>
+  <text class="mono sm" x="436" y="80">ref · computed · function</text>
+  <rect class="bx-g" x="420" y="108" width="300" height="62" rx="8"/>
+  <text class="sm on-g" x="436" y="128">功能 B：本地保存</text>
+  <text class="mono sm" x="436" y="152">watch · function</text>
+  <rect class="bx-p" x="420" y="180" width="300" height="62" rx="8"/>
+  <text class="sm on-p" x="436" y="200">功能 C：统计信息</text>
+  <text class="mono sm" x="436" y="224">computed</text>
+  <text class="sm" x="570" y="258" text-anchor="middle">相关代码放在一起，还能整块抽成函数复用</text>
+</svg>
+<figcaption>图 1-6　两种 API 组织代码的方式</figcaption>
+</figure>
+
+<div class="box key">
+  <div class="t">&#9733; 本教程的选择</div>
+  <p>
+    本教程以<strong>组合式 API</strong>为主，因为它是 Vue 官方文档、新版生态（Pinia、VueUse、Nuxt）的默认写法，
+    逻辑复用也更自然（第 5 章会用它取代原书的 mixins）。遇到书中原有的选项式写法，我们会用左右对照的方式给出 Vue 3 版本，
+    两种你都能看懂。
+  </p>
+</div>
+
+<h2 id="devtools">Vue DevTools</h2>
+
+<p>
+  Vue 有官方的调试工具 <strong>Vue DevTools</strong>，可以看到应用的组件树、每个组件的数据，甚至直接修改数据观察界面变化。
+  现在有两种用法：
+</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#129513;</span><h4>浏览器扩展</h4><p>在 Chrome 网上应用店 / Firefox 附加组件里搜索 “Vue.js devtools” 安装（选 Vue 3 版本）。适合本章这种直接打开的页面。</p></div>
+  <div class="card"><span class="ic">&#9881;&#65039;</span><h4>Vite 插件</h4><p><code>vite-plugin-vue-devtools</code>，把调试面板直接嵌进页面，不依赖浏览器。第 4 章用 create-vue 建项目时可以一键勾选。</p></div>
+</div>
+
+<ol class="steps">
+  <li>安装扩展后，在扩展设置里打开 <strong>“允许访问文件网址”</strong>，否则它检测不到用 <code>file://</code> 打开的页面。</li>
+  <li>打开页面，按 <kbd>F12</kbd>，在开发者工具顶部的标签里找到 <strong>Vue</strong>（可能藏在 <code>&gt;&gt;</code> 菜单里）。</li>
+  <li>左侧是组件树，根组件默认叫 <code>App</code>；点击它，右侧会列出 <code>setup</code> 里返回的数据。</li>
+</ol>
+
+<div class="box tip">
+  <div class="t">&#10003; 给根组件起个名字</div>
+  <p>选项对象里加一个 <code>name: 'MyApp'</code>，DevTools 里就会显示这个名字。组件多了以后很有用。</p>
+</div>
+
+<div class="box warn">
+  <div class="t">&#9888; 只有开发版才能被调试</div>
+  <p>用 <code>vue.global.prod.js</code> 这种生产版本时，DevTools 默认不会显示 Vue 标签 —— 这是有意为之。</p>
+</div>
+
+<h2 id="template">模板让 DOM 动起来</h2>
+
+<p>
+  Vue 有好几种描述视图的方式，最简单的是<strong>模板（template）</strong>：它看起来几乎就是 HTML，
+  只是多了一些特殊语法，让 DOM 能随数据自动更新。
+</p>
+
+<h3>文本插值</h3>
+
+<p>
+  第一个模板语法是<strong>文本插值</strong>：用两对花括号 <code>{{ }}</code> 包住一个 JavaScript 表达式，
+  Vue 处理模板时会把它替换成表达式的结果。把 <code>&lt;div id="root"&gt;</code> 改成：
+</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;div id="root"&gt;
+  &lt;p&gt;{{ message }}&lt;/p&gt;
+&lt;/div&gt;
+</pre></div>
+
+<p>
+  页面上会显示 <em>Hello Vue.js!</em>。看起来平平无奇，但 Vue 已经把这段 DOM 和数据“接上线”了。
+  打开控制台，试试修改数据：
+</p>
+
+<div class="code" data-lang="js" data-file="浏览器控制台"><pre>
+// mount() 的返回值是根组件实例，先在代码里把它存下来：
+// const vm = app.mount('#root')
+vm.message = '太棒了！'
+</pre></div>
+
+<p>
+  页面上的文字立刻变了。这叫<strong>数据绑定（data binding）</strong>：数据一变，Vue 自动更新 DOM，你一行 DOM 代码都不用写。
+</p>
+
+<div class="box note">
+  <div class="t">&#9432; 花括号里能写什么</div>
+  <p>
+    任何<strong>单个表达式</strong>都行：<code>{{ count + 1 }}</code>、<code>{{ ok ? '是' : '否' }}</code>、
+    <code>{{ message.split('').reverse().join('') }}</code>。但不能写语句，比如 <code>{{ if (ok) {...} }}</code> 或 <code>{{ let a = 1 }}</code>。
+  </p>
+</div>
+
+<h3>ref：响应式的“盒子”</h3>
+
+<p>
+  在 <code>setup()</code> 里，普通变量是不会触发界面更新的。必须用 <code>ref()</code> 把值包成一个<strong>响应式引用</strong>。
+  你可以把 <code>ref</code> 想象成一个带“报警器”的盒子：值放在 <code>.value</code> 里，谁读了它、谁改了它，Vue 都知道。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 280" role="img" aria-label="ref 的工作方式：读取时收集依赖，写入时触发更新">
+  <rect class="bx-a" x="300" y="80" width="160" height="110" rx="14"/>
+  <text class="ttl on-a" x="380" y="108" text-anchor="middle">message = ref(...)</text>
+  <rect class="bx" x="325" y="122" width="110" height="46" rx="8"/>
+  <text class="mono sm" x="380" y="141" text-anchor="middle">.value</text>
+  <text class="mono" x="380" y="160" text-anchor="middle">'Hello'</text>
+
+  <rect class="bx-g" x="30" y="40" width="190" height="60" rx="10"/>
+  <text class="on-g" x="125" y="65" text-anchor="middle">模板渲染</text>
+  <text class="mono sm" x="125" y="86" text-anchor="middle">&lt;p&gt;{{ message }}&lt;/p&gt;</text>
+  <path class="ln-g" d="M222 70 C260 70 270 110 298 115" marker-end="url(#ar)"/>
+  <text class="halo sm on-g" x="256" y="62">① 读取</text>
+
+  <rect class="bx-p" x="30" y="180" width="190" height="56" rx="10"/>
+  <text class="on-p" x="125" y="204" text-anchor="middle">依赖列表</text>
+  <text class="sm" x="125" y="224" text-anchor="middle">“这段模板用到了 message”</text>
+  <path class="ln-p" d="M300 150 C260 160 250 200 224 205" marker-end="url(#ar)"/>
+  <text class="halo sm on-p" x="236" y="172">② 记下来（track）</text>
+
+  <rect class="bx-b" x="540" y="40" width="190" height="60" rx="10"/>
+  <text class="on-b" x="635" y="65" text-anchor="middle">某处修改数据</text>
+  <text class="mono sm" x="635" y="86" text-anchor="middle">message.value = 'Hi'</text>
+  <path class="ln-b" d="M538 70 C500 70 490 110 462 115" marker-end="url(#ar)"/>
+  <text class="halo sm on-b" x="470" y="62">③ 写入</text>
+
+  <rect class="bx-g" x="540" y="180" width="190" height="56" rx="10"/>
+  <text class="on-g" x="635" y="204" text-anchor="middle">重新渲染</text>
+  <text class="sm" x="635" y="224" text-anchor="middle">只更新 &lt;p&gt; 的文字</text>
+  <path class="ln-a" d="M462 150 C500 160 510 200 536 205" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="478" y="172">④ 通知（trigger）</text>
+
+  <text class="lbl" x="380" y="268" text-anchor="middle">模板里写 {{ message }} 即可，Vue 会自动帮你取 .value；在 JS 里则要写 message.value</text>
+</svg>
+<figcaption>图 1-7　响应式的四步：读取 → 记录依赖 → 写入 → 通知更新</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; 新手最常见的错误：忘了 .value</div>
+  <p>
+    在 JavaScript 里，<code>message</code> 是那个盒子，<code>message.value</code> 才是里面的字符串。
+    写成 <code>message = 'Hi'</code> 会直接把盒子扔掉，界面不会有任何反应。<em>模板里</em>则不用写 <code>.value</code>，Vue 会自动“拆箱”。
+  </p>
+</div>
+
+<details class="box deep">
+<summary class="t" style="cursor:pointer">&#128269; 深入：Vue 2 和 Vue 3 的响应式有什么不同（点击展开）</summary>
+<p>
+  Vue 2 用 <code>Object.defineProperty</code> 把对象的每个属性改造成 getter/setter。它的缺点是只能拦截<strong>已经存在</strong>的属性：
+  给对象新增属性、用下标给数组赋值（<code>arr[0] = x</code>）都检测不到，必须用 <code>Vue.set</code> 这种补救 API。
+</p>
+<p>
+  Vue 3 改用 <code>Proxy</code>：它代理的是整个对象，任何读、写、新增、删除操作都能拦截。
+  所以 Vue 3 里<strong>不再需要 <code>Vue.set</code> / <code>this.$set</code></strong>，这些“响应式陷阱”基本消失了。
+  代价就是放弃了 IE 支持。
+</p>
+</details>
+
+<h2 id="directives">用指令添加交互</h2>
+
+<p>
+  现在给页面加一点交互：一个输入框，让用户修改显示的消息。在模板里，这要靠一种叫<strong>指令（directive）</strong>的特殊属性。
+</p>
+
+<div class="box note">
+  <div class="t">&#9432; 指令的命名规则</div>
+  <p>
+    Vue 的所有指令都以 <code>v-</code> 开头，单词之间用短横线连接（kebab-case），例如 <code>v-model</code>、<code>v-on</code>。
+    因为 HTML 属性名不区分大小写，<code>v-Model</code> 和 <code>v-model</code> 在浏览器眼里是一回事。
+  </p>
+</div>
+
+<p>
+  我们需要的指令是 <code>v-model</code>，它把 <code>&lt;input&gt;</code> 的值和数据<strong>双向绑定</strong>：
+</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;div id="root"&gt;
+  &lt;p&gt;{{ message }}&lt;/p&gt;
+  &lt;!-- 新增：输入框，和 message 双向绑定 --&gt;
+  &lt;input v-model="message"&gt;
+&lt;/div&gt;
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="v-model 双向绑定：输入框和数据互相同步">
+  <rect class="bx-g" x="40" y="60" width="200" height="80" rx="12"/>
+  <text class="on-g ttl" x="140" y="88" text-anchor="middle">&lt;input&gt;</text>
+  <rect class="bx" x="70" y="100" width="140" height="26" rx="5"/>
+  <text class="mono sm" x="80" y="118">Hello Vue|</text>
+
+  <rect class="bx-a" x="300" y="60" width="160" height="80" rx="12"/>
+  <text class="ttl on-a" x="380" y="96" text-anchor="middle">message</text>
+  <text class="mono sm" x="380" y="118" text-anchor="middle">ref('Hello Vue')</text>
+
+  <rect class="bx-g" x="520" y="60" width="200" height="80" rx="12"/>
+  <text class="on-g ttl" x="620" y="88" text-anchor="middle">&lt;p&gt;</text>
+  <text class="mono" x="620" y="118" text-anchor="middle">Hello Vue</text>
+
+  <path class="ln-g" d="M242 88 H296" marker-end="url(#ar)"/>
+  <text class="sm" x="270" y="80" text-anchor="middle">input 事件</text>
+  <path class="ln-a" d="M298 114 H244" marker-end="url(#ar-a)"/>
+  <text class="sm" x="270" y="132" text-anchor="middle">设置 value</text>
+  <path class="ln-a" d="M462 100 H516" marker-end="url(#ar-a)"/>
+  <text class="sm" x="490" y="92" text-anchor="middle">插值</text>
+
+  <text class="lbl" x="380" y="180" text-anchor="middle">v-model="message" ≈ :value="message" + @input="message = $event.target.value"</text>
+</svg>
+<figcaption>图 1-8　v-model：一个指令，两个方向</figcaption>
+</figure>
+
+<p>现在在输入框里打字，上面的文字会实时跟着变，DevTools 里的 <code>message</code> 也同步变化。来亲手试一下：</p>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · 这就是上面那几行代码</div>
+  <div class="body">
+    <div id="demo-1" v-cloak>
+      <p style="margin-top:0">{{ message }}</p>
+      <input v-model="message" style="width:100%;max-width:340px">
+      <p class="muted">字符数：{{ message.length }}　·　倒过来：{{ message.split('').reverse().join('') }}</p>
+    </div>
+  </div>
+</div>
+
+<p>
+  Vue 内置了很多指令（<code>v-if</code>、<code>v-for</code>、<code>v-on</code>、<code>v-bind</code>……），你甚至可以自己写指令。别急，下一章会一个个用到。
+</p>
+
+<h3>完整代码</h3>
+
+<div class="code" data-lang="html" data-file="index.html（本章最终版）"><pre>
+&lt;!doctype html&gt;
+&lt;html&gt;
+&lt;head&gt;
+  &lt;meta charset="utf-8"&gt;
+  &lt;title&gt;Vue 3 上手&lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;div id="root"&gt;
+    &lt;p&gt;{{ message }}&lt;/p&gt;
+    &lt;input v-model="message"&gt;
+  &lt;/div&gt;
+
+  &lt;script src="https://unpkg.com/vue@3/dist/vue.global.js"&gt;&lt;/script&gt;
+  &lt;script&gt;
+    const { createApp, ref } = Vue
+
+    const app = createApp({
+      name: 'MyApp',
+      setup() {
+        const message = ref('Hello Vue.js!')
+        return { message }
+      }
+    })
+
+    // 存到 window 上，方便在控制台里玩
+    window.vm = app.mount('#root')
+  &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 为什么 &lt;script&gt; 放在 &lt;body&gt; 末尾</div>
+  <p>
+    <code>mount('#root')</code> 执行时，页面上必须已经有 <code>#root</code> 元素。脚本放在末尾，浏览器先解析完 HTML 再执行它，就不会找不到元素。
+  </p>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li>Vue 是<strong>渐进式</strong>框架：一个 <code>&lt;script&gt;</code> 就能用，也能一路扩展到大型应用。</li>
+  <li>它的核心思想是<strong>数据驱动视图</strong>：你改数据，Vue 负责更新 DOM。</li>
+  <li>Vue 3 用 <code>createApp(根组件).mount('#选择器')</code> 创建应用，取代了 Vue 2 的 <code>new Vue({ el })</code>。</li>
+  <li><code>ref()</code> 创建响应式值，JS 里读写用 <code>.value</code>，模板里直接用名字。</li>
+  <li>模板中 <code>{{ 表达式 }}</code> 显示文本，<code>v-model</code> 把表单元素和数据双向绑定。</li>
+  <li>原书的 Vue 2 生态已全面换代：Vite、Pinia、Vue Router 4、Vitest、Nuxt……后续章节逐一介绍。</li>
+</ul>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>在同一个页面里创建<strong>两个</strong>独立的 Vue 应用，分别挂载到 <code>#a</code> 和 <code>#b</code>，确认修改一个不会影响另一个。</li>
+    <li>在插值里显示 <code>message</code> 的大写形式和长度，例如 <code>HELLO (5)</code>。</li>
+    <li>把本章的例子改写成<strong>选项式 API</strong>（<code>data()</code> 返回对象），确认效果一样。</li>
+    <li>故意在 <code>setup()</code> 里写一个普通变量 <code>let count = 0</code> 并在模板中显示，再在控制台修改 <code>vm.count</code>，观察页面为什么不更新；然后把它改成 <code>ref(0)</code>。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+<script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+<script>
+  if (window.Vue) {
+    Vue.createApp({
+      setup() { return { message: Vue.ref('Hello Vue.js!') } }
+    }).mount('#demo-1')
+  }
+</script>
+</body>
+</html>
