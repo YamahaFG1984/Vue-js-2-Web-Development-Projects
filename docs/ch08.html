@@ -44,6 +44,8 @@
     <li>用集合（Collection）存数据，用方法（Method）修改数据并获得乐观更新</li>
     <li>用发布/订阅（Pub/Sub）把数据实时同步到 Vue 组件</li>
     <li>自己用 SVG 画一个半圆进度仪表组件</li>
+    <li>数据涨到上万条时：用 <code>v-memo</code>、虚拟滚动和数据裁剪保持流畅<span class="sup">补充</span></li>
+    <li>不用 Meteor，用 Express + SSE 写一个完整可运行的实时版本<span class="sup">补充</span></li>
   </ul>
 </div>
 
@@ -754,6 +756,127 @@ defineProps({
   </div>
 </div>
 
+<h2 id="big-list">数据很多时：大列表的性能<span class="sup">补充</span></h2>
+
+<p>
+  打开“每秒自动生成”跑上几个小时，测量记录会涨到上万条。这时你会发现仪表盘越来越卡：每来一条新数据，Vue 都要重新比较一万个列表项；浏览器要维护一万组 DOM 节点。
+  解决思路有三层，从简单到复杂：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="大列表优化的三层：少要数据、少比较、少渲染">
+  <rect class="bx-g" x="20" y="30" width="230" height="200" rx="12"/>
+  <text class="ttl on-g" x="135" y="56" text-anchor="middle">① 少要数据</text>
+  <text class="sm" x="135" y="84" text-anchor="middle">发布 / 查询时就限制数量</text>
+  <text class="mono sm" x="135" y="110" text-anchor="middle">find({}, { limit: 200 })</text>
+  <text class="sm" x="135" y="140" text-anchor="middle">统计值交给服务器算</text>
+  <text class="sm" x="135" y="160" text-anchor="middle">（平均值不需要一万条原始数据）</text>
+  <text class="sm on-g" x="135" y="200" text-anchor="middle">最有效，永远先考虑</text>
+  <rect class="bx-a" x="265" y="30" width="230" height="200" rx="12"/>
+  <text class="ttl on-a" x="380" y="56" text-anchor="middle">② 少比较</text>
+  <text class="sm" x="380" y="84" text-anchor="middle">没变的列表项跳过 diff</text>
+  <text class="mono sm" x="380" y="110" text-anchor="middle">v-memo="[item._id]"</text>
+  <text class="sm" x="380" y="140" text-anchor="middle">数据整体替换时用</text>
+  <text class="mono sm" x="380" y="160" text-anchor="middle">shallowRef</text>
+  <text class="sm on-a" x="380" y="200" text-anchor="middle">改动小，收益中等</text>
+  <rect class="bx-b" x="510" y="30" width="230" height="200" rx="12"/>
+  <text class="ttl on-b" x="625" y="56" text-anchor="middle">③ 少渲染</text>
+  <text class="sm" x="625" y="84" text-anchor="middle">只渲染看得见的几十行</text>
+  <text class="sm" x="625" y="110" text-anchor="middle">虚拟滚动</text>
+  <text class="mono sm" x="625" y="140" text-anchor="middle">useVirtualList</text>
+  <text class="mono sm" x="625" y="160" text-anchor="middle">vue-virtual-scroller</text>
+  <text class="sm on-b" x="625" y="200" text-anchor="middle">列表必须很长时才用</text>
+  <text class="lbl" x="380" y="258" text-anchor="middle">先用 DevTools Performance 面板确认瓶颈在哪里，再选择对应的手段</text>
+</svg>
+<figcaption>图 8-7　大列表优化的三个层次</figcaption>
+</figure>
+
+<h3>① 少要数据</h3>
+
+<p>仪表盘上的列表，用户其实只会看最近的几十条。在发布函数里就限制数量，客户端的数据量直接降两个数量级：</p>
+
+<div class="code" data-lang="js" data-file="imports/api/publications.js"><pre>
+Meteor.publish('measures.recent', function (limit = 200) {
+  check(limit, Number)
+  return Measures.find({}, { sort: { date: -1 }, limit: Math.min(limit, 1000) })
+})
+</pre></div>
+
+<p>至于“平均值”“错误率”这类统计，应该由服务器基于全部数据计算后发布一个汇总结果（或者定时写进一个 <code>stats</code> 集合），而不是把一万条原始数据都发给浏览器去算。</p>
+
+<h3>② v-memo：跳过没变的列表项</h3>
+
+<p>
+  <code>v-memo</code> 接收一个依赖数组：重新渲染时，如果数组里的值都没变，Vue 会<strong>直接复用</strong>这个元素上次的结果，连虚拟 DOM 都不生成、不比较。
+  测量记录一旦写入就不会再修改，正好适合：
+</p>
+
+<div class="code" data-lang="vue"><pre>
+&lt;div v-for="item of measures" :key="item._id" v-memo="[item._id]"&gt;
+  &lt;div class="date"&gt;{{ item.date.toLocaleString() }}&lt;/div&gt;
+  &lt;div class="error"&gt;{{ item.error ? '错误' : '' }}&lt;/div&gt;
+  &lt;div class="value"&gt;{{ item.value }}&lt;/div&gt;
+&lt;/div&gt;
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; 依赖写漏了，界面就不更新</div>
+  <p>
+    <code>v-memo</code> 是一把“手动挡”的刀：如果某一项的 <code>value</code> 后来真的改了，但它不在依赖数组里，界面就不会更新。
+    只在确认存在性能问题、而且依赖清晰的大列表上使用。相关的还有 <code>v-once</code>：只渲染一次，之后永远不更新。
+  </p>
+</div>
+
+<h3>③ 虚拟滚动：只渲染看得见的部分</h3>
+
+<p>如果确实需要展示上万行（比如可以无限往下翻的日志），就用<strong>虚拟滚动</strong>：容器高度按全部数据计算（滚动条正常），但只真正渲染可视区域内的几十行：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="虚拟滚动：只渲染视口内的行，用占位高度撑出滚动条">
+  <rect class="bx-d" x="60" y="20" width="220" height="230" rx="8"/>
+  <text class="sm" x="170" y="40" text-anchor="middle">10000 行的总高度</text>
+  <text class="sm" x="170" y="56" text-anchor="middle">（只是一个撑高度的空 div）</text>
+  <rect class="bx-a" x="40" y="90" width="260" height="96" rx="8" style="stroke-width:2.2"/>
+  <text class="sm on-a" x="310" y="104">← 视口</text>
+  <rect class="bx" x="70" y="100" width="200" height="18" rx="3"/><text class="mono sm" x="80" y="113">第 3201 行</text>
+  <rect class="bx" x="70" y="122" width="200" height="18" rx="3"/><text class="mono sm" x="80" y="135">第 3202 行</text>
+  <rect class="bx" x="70" y="144" width="200" height="18" rx="3"/><text class="mono sm" x="80" y="157">第 3203 行</text>
+  <rect class="bx" x="70" y="166" width="200" height="14" rx="3" style="opacity:.6"/>
+  <text class="sm" x="170" y="226" text-anchor="middle">视口外：不渲染</text>
+  <rect class="bx-g" x="400" y="40" width="340" height="180" rx="12"/>
+  <text class="ttl on-g" x="570" y="66" text-anchor="middle">滚动时发生什么</text>
+  <text class="sm" x="420" y="96">① 监听容器的 scroll 事件</text>
+  <text class="sm" x="420" y="120">② 根据 scrollTop 和行高算出可见范围</text>
+  <text class="sm" x="420" y="144">③ 只渲染这一段（再多渲染几行作缓冲）</text>
+  <text class="sm" x="420" y="168">④ 用 transform 把它们放到正确的位置</text>
+  <text class="sm on-g" x="420" y="200">DOM 节点始终只有几十个</text>
+</svg>
+<figcaption>图 8-8　虚拟滚动的原理</figcaption>
+</figure>
+
+<div class="code" data-lang="vue" data-file="使用 VueUse 的 useVirtualList"><pre>
+&lt;script setup&gt;
+import { useVirtualList } from '@vueuse/core'
+
+const { list, containerProps, wrapperProps } = useVirtualList(measures, {
+  itemHeight: 32,          // 每行固定高度（像素）
+  overscan: 10,            // 可视区域外多渲染几行，滚动更顺滑
+})
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div v-bind="containerProps" class="list" style="height: 400px"&gt;
+    &lt;div v-bind="wrapperProps"&gt;
+      &lt;div v-for="{ data: item } in list" :key="item._id" class="row" style="height: 32px"&gt;
+        {{ item.date.toLocaleString() }} · {{ item.value }}
+      &lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>行高不固定、或者需要更多功能（动态高度、网格布局）时，可以用 <code>vue-virtual-scroller</code>，它的作者正是原书作者 Guillaume Chau。</p>
+
 <h2 id="alternatives">不用 Meteor，怎么做实时？</h2>
 
 <p>
@@ -795,28 +918,129 @@ defineProps({
   <text class="mono sm" x="657" y="170" text-anchor="middle">Supabase Realtime</text>
   <text class="mono sm" x="657" y="190" text-anchor="middle">Firebase / Convex</text>
 </svg>
-<figcaption>图 8-7　常见的实时数据方案</figcaption>
+<figcaption>图 8-9　常见的实时数据方案</figcaption>
 </figure>
 
-<p>以 SSE 为例，配合第 6 章的 Pinia，前端只需要几行：</p>
+<h3>完整示例：Express + SSE 实时仪表盘<span class="sup">补充</span></h3>
 
-<div class="code" data-lang="js" data-file="stores/measures.js（示意）"><pre>
-import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+<p>
+  下面用最少的代码实现和 Meteor 版本相同的效果。<strong>SSE（Server-Sent Events）</strong>是浏览器原生支持的“服务器推送”：
+  客户端发起一个普通的 HTTP 请求，服务器不结束响应，而是一条一条地往里写 <code>data: ...</code>，浏览器每收到一条就触发一次事件，断线还会自动重连。
+</p>
 
-export const useMeasuresStore = defineStore('measures', () =&gt; {
-  const measures = ref([])
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="SSE：浏览器保持一个长连接，服务器在有新数据时推送，其他客户端通过 POST 写入">
+  <rect class="bx-g" x="20" y="30" width="200" height="80" rx="12"/>
+  <text class="ttl on-g" x="120" y="56" text-anchor="middle">仪表盘页</text>
+  <text class="mono sm" x="120" y="80" text-anchor="middle">new EventSource(</text>
+  <text class="mono sm" x="120" y="98" text-anchor="middle">'/api/stream')</text>
+  <rect class="bx-p" x="20" y="160" width="200" height="70" rx="12"/>
+  <text class="ttl on-p" x="120" y="186" text-anchor="middle">生成页</text>
+  <text class="mono sm" x="120" y="210" text-anchor="middle">POST /api/measures</text>
+  <rect class="bx-b" x="300" y="70" width="200" height="120" rx="12"/>
+  <text class="ttl on-b" x="400" y="96" text-anchor="middle">Express 服务器</text>
+  <text class="sm" x="400" y="120" text-anchor="middle">保存数据</text>
+  <text class="sm" x="400" y="140" text-anchor="middle">记住所有打开的 SSE 连接</text>
+  <text class="sm" x="400" y="160" text-anchor="middle">新数据 → 写给每个连接</text>
+  <path class="ln-g" d="M222 60 C260 60 270 90 296 100" marker-end="url(#ar)"/>
+  <text class="halo sm on-g" x="258" y="50">① 建立长连接</text>
+  <path class="ln-p" d="M222 195 C260 195 270 170 296 160" marker-end="url(#ar)"/>
+  <text class="halo sm on-p" x="258" y="222">② 写入新数据</text>
+  <path class="ln-a" d="M296 120 C260 120 250 100 224 92" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="244" y="132">③ data: {...}</text>
+  <rect class="bx" x="560" y="60" width="180" height="140" rx="12"/>
+  <text class="ttl" x="650" y="86" text-anchor="middle">SSE 的特点</text>
+  <text class="sm" x="650" y="112" text-anchor="middle">普通 HTTP，代理友好</text>
+  <text class="sm" x="650" y="134" text-anchor="middle">浏览器自动重连</text>
+  <text class="sm" x="650" y="156" text-anchor="middle">单向：服务器 → 浏览器</text>
+  <text class="sm" x="650" y="178" text-anchor="middle">客户端写入用普通 POST</text>
+</svg>
+<figcaption>图 8-10　用 SSE 实现实时推送</figcaption>
+</figure>
 
-  // 服务器每产生一条新测量，就推送一条 SSE 消息
-  const source = new EventSource('/api/measures/stream')
-  source.onmessage = (e) =&gt; {
-    measures.value.unshift(JSON.parse(e.data))
-  }
+<div class="code" data-lang="js" data-file="server.js（npm i express）"><pre>
+import express from 'express'
 
-  const average = computed(() =&gt; /* ...同上... */ 0)
-  return { measures, average }
+const app = express()
+app.use(express.json())
+
+const measures = []            // 演示用：存在内存里
+const clients = new Set()      // 所有打开的 SSE 连接
+
+// 客户端订阅：保持连接不断开
+app.get('/api/stream', (req, res) =&gt; {
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  })
+  res.flushHeaders()
+  // 先把最近 50 条发过去，作为初始数据
+  res.write(`event: init\ndata: ${JSON.stringify(measures.slice(-50))}\n\n`)
+  clients.add(res)
+  req.on('close', () =&gt; clients.delete(res))     // 断开时移除
 })
+
+// 写入新数据，并推送给所有订阅者
+app.post('/api/measures', (req, res) =&gt; {
+  const { value, error } = req.body
+  if (typeof value !== 'number' || typeof error !== 'boolean') return res.sendStatus(400)
+  const measure = { id: crypto.randomUUID(), value, error, date: new Date() }
+  measures.push(measure)
+  for (const client of clients) client.write(`data: ${JSON.stringify(measure)}\n\n`)
+  res.status(201).json(measure)
+})
+
+app.listen(3000)
 </pre></div>
+
+<div class="code" data-lang="js" data-file="src/composables/useMeasuresStream.js"><pre>
+import { ref, onMounted, onBeforeUnmount } from 'vue'
+
+export function useMeasuresStream(url = '/api/stream') {
+  const measures = ref([])
+  const connected = ref(false)
+  let source
+
+  onMounted(() =&gt; {
+    source = new EventSource(url)
+    source.onopen = () =&gt; { connected.value = true }
+    source.onerror = () =&gt; { connected.value = false }     // 浏览器会自动重连
+    source.addEventListener('init', (e) =&gt; {               // 自定义事件：初始数据
+      measures.value = JSON.parse(e.data).reverse()
+    })
+    source.onmessage = (e) =&gt; {                             // 默认事件：每条新数据
+      measures.value = [JSON.parse(e.data), ...measures.value].slice(0, 500)   // 只保留最近 500 条
+    }
+  })
+
+  onBeforeUnmount(() =&gt; source?.close())                   // 离开页面时断开
+
+  return { measures, connected }
+}
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="仪表盘组件里"><pre>
+&lt;script setup&gt;
+import { computed } from 'vue'
+import { useMeasuresStream } from '../composables/useMeasuresStream'
+
+const { measures, connected } = useMeasuresStream()
+const average = computed(() =&gt;
+  measures.value.length ? measures.value.reduce((s, m) =&gt; s + m.value, 0) / measures.value.length : 0)
+// 生成页：fetch('/api/measures', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+//                                  body: JSON.stringify({ value, error }) })
+&lt;/script&gt;
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 和 Meteor 版本比一比</div>
+  <p>
+    SSE 版本需要自己处理：数据存储、连接管理、初始数据、断线重连后的数据补齐（这里简单地用 <code>init</code> 事件重发最近 50 条）、多台服务器之间的消息同步（需要 Redis 等）。
+    Meteor 把这些全部包办了，但代价是绑定它的整套技术栈。两种方式没有绝对的好坏，取决于项目规模和团队熟悉的技术。
+    VueUse 也提供了 <code>useEventSource</code> 和 <code>useWebSocket</code>，可以进一步简化客户端代码。
+  </p>
+</div>
 
 <h2 id="summary">小结</h2>
 
@@ -832,6 +1056,8 @@ export const useMeasuresStore = defineStore('measures', () =&gt; {
 <tr><td>组件里订阅</td><td><code>meteor: { $subscribe, measures() }</code></td><td><code>subscribe()</code> + <code>autorun().result</code></td></tr>
 <tr><td>半圆进度条</td><td>vue-progress-path（仅 Vue 2）</td><td>自己用 SVG 实现</td></tr>
 <tr><td><code>.vueignore</code></td><td>需要</td><td>不需要</td></tr>
+<tr><td>大列表 <span class="sup">补充</span></td><td>—</td><td>限制数据量、<code>v-memo</code>、虚拟滚动</td></tr>
+<tr><td>不用 Meteor <span class="sup">补充</span></td><td>—</td><td>Express + SSE + 组合式函数</td></tr>
 </tbody>
 </table></div>
 
@@ -842,7 +1068,8 @@ export const useMeasuresStore = defineStore('measures', () =&gt; {
     <li>加一个 <code>measure.clear</code> 方法清空所有数据，并在生成页加一个按钮（想一想：这个方法应该允许任何人调用吗？）。</li>
     <li>给仪表组件加一个 <code>max</code> prop，让它能显示 0~max 而不只是 0~1 的值；再加上刻度。</li>
     <li>让发布接收一个参数 <code>onlyErrors</code>，仪表盘上加一个复选框，勾选时只订阅错误记录（提示：<code>subscribe('measures', () =&gt; [onlyErrors.value])</code> 这类写法能让参数变化时重新订阅，具体以 vue-meteor-tracker 文档为准）。</li>
-    <li>（进阶）不用 Meteor，用 Express + SSE 或 Supabase 实现同样的实时仪表盘，对比两种方案的代码量。</li>
+    <li>把本章的 Express + SSE 示例跑起来，打开两个浏览器窗口验证实时效果；再加一个“连接状态”指示灯（用 <code>connected</code>）。</li>
+    <li>用 <code>useVirtualList</code> 渲染 10000 条模拟数据，在 Performance 面板里对比使用前后的渲染时间。</li>
   </ol>
 </div>
 
@@ -888,7 +1115,7 @@ export const useMeasuresStore = defineStore('measures', () =&gt; {
   <path class="ln-a" d="M20 186 H736" marker-end="url(#ar-a)"/>
   <text class="sm" x="380" y="204" text-anchor="middle">从“一个 script 标签”到“全栈应用”——这就是“渐进式”的含义</text>
 </svg>
-<figcaption>图 8-8　六个项目，一条渐进的学习路线</figcaption>
+<figcaption>图 8-11　六个项目，一条渐进的学习路线</figcaption>
 </figure>
 
 <p>接下来可以做的事：</p>
@@ -899,7 +1126,11 @@ export const useMeasuresStore = defineStore('measures', () =&gt; {
   <li>加入社区：参与开源、回答别人的问题。教别人是巩固知识最好的方法。</li>
 </ul>
 
-<p>本教程最后还附了一份 <a href="ch09.html">Vue 2 → Vue 3 速查表</a>，阅读其他 Vue 2 时代的资料时可以随时对照。</p>
+<p>
+  想继续深入？第四部分的五个进阶专题从这里接着讲：<a href="adv01.html">深入响应式原理</a>、<a href="adv02.html">组件库与设计系统</a>、
+  <a href="adv03.html">大型项目架构</a>、<a href="adv04.html">跨端</a>和 <a href="adv05.html">AI 应用前端</a>。
+  教程最后还附了一份 <a href="ch09.html">Vue 2 → Vue 3 速查表</a>，阅读其他 Vue 2 时代的资料时可以随时对照。
+</p>
 
 <div id="pager"></div>
 </main>

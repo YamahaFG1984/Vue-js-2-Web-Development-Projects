@@ -13,18 +13,20 @@
 <main>
 
 <div class="hero">
-  <span class="chapter-eyebrow">面向初学者的 8 章 + 附录</span>
+  <span class="chapter-eyebrow">面向初学者的 8 章 + 5 个进阶专题 + 附录</span>
   <h1>Vue 3 项目实战：用 6 个应用学会现代 Vue</h1>
   <p class="sub">
     这套教程改编自 Packt 出版的《Vue.js 2 Web Development Projects》（Guillaume Chau 著）。
     原书“边做项目边学”的结构被完整保留 —— Markdown 笔记本、卡牌游戏、客服中心、地图博客、在线商店、实时仪表盘 ——
     但书中的 <strong>Vue 2 代码全部改写为 Vue 3</strong>，2017 年的工具链也全部换成了今天的生态。
     每一处改动都配有“原书写法 / 现在写法”的对照，并配有大量示意图。
+    原书没有、但今天的 Vue 开发必不可少的内容（TypeScript、表单校验、E2E 测试、CI/CD 等）被编排进了各个项目，
+    更深入的主题则放在第四部分的 5 个进阶专题里。
   </p>
   <p style="margin-top:14px">
     <span class="pill">Vue 3.5+</span><span class="pill">组合式 API</span><span class="pill">&lt;script setup&gt;</span>
     <span class="pill">Vite</span><span class="pill">Vue Router 4</span><span class="pill">Pinia</span>
-    <span class="pill">Vitest</span><span class="pill">vue-i18n</span><span class="pill">Nuxt</span><span class="pill">Meteor 3</span>
+    <span class="pill">TypeScript</span><span class="pill">Vitest</span><span class="pill">Playwright</span><span class="pill">vue-i18n</span><span class="pill">Nuxt</span><span class="pill">Meteor 3</span>
   </p>
   <p style="margin-top:10px"><a href="react/index.html">&#8644; 同样的六个项目也有 React 19 版本</a></p>
 </div>
@@ -105,10 +107,41 @@
   <text class="sm" x="20" y="326">一个 HTML 文件、一个 script 标签</text>
   <text class="sm" x="736" y="326" text-anchor="end">构建工具 → 路由 → 状态管理 → 测试 / SSR → 全栈实时</text>
   <text class="lbl" x="20" y="30">第 1 章：先用 5 分钟认识 Vue</text>
-  <text class="lbl" x="20" y="50">附录：Vue 2 → Vue 3 速查表</text>
+  <text class="lbl" x="20" y="50">第 9–13 章：进阶专题</text>
+  <text class="lbl" x="20" y="70">附录：Vue 2 → Vue 3 速查表</text>
 </svg>
 <figcaption>图 0-2　六个项目，从简单到复杂</figcaption>
 </figure>
+
+<h2 id="extra">补充内容与进阶专题</h2>
+
+<p>
+  原书写于 Vue 2 时代，有些今天的“标配”当时还不存在或不流行。我们没有把它们堆在书的末尾，而是放进最适合的项目里，
+  让你在真实场景中学会它们。这些小节都带有 <span class="sup">补充</span> 标记：
+</p>
+
+<div class="tw"><table>
+<thead><tr><th>章节</th><th>补充的内容</th></tr></thead>
+<tbody>
+<tr><td>第 2 章 · 笔记本</td><td>响应式的常见陷阱、<code>nextTick</code>、模板引用、自定义指令</td></tr>
+<tr><td>第 3 章 · 卡牌游戏</td><td><code>readonly</code> 保护全局状态、<code>Teleport</code></td></tr>
+<tr><td>第 4 章 · 工程化</td><td>环境变量与模式、TypeScript、项目组织方式</td></tr>
+<tr><td>第 5 章 · 客服中心（拆为上下两篇）</td><td>点击外部指令、Session 与 JWT、<code>KeepAlive</code>、VeeValidate + Zod、provide/inject、错误处理与监控</td></tr>
+<tr><td>第 6 章 · 地图博客</td><td>Pinia 插件与持久化、<code>shallowRef</code>、移动端 Teleport 抽屉</td></tr>
+<tr><td>第 7 章 · 在线商店</td><td>Playwright E2E 与 MSW、Nuxt 服务端接口与 routeRules、GitHub Actions、Docker、Sentry</td></tr>
+<tr><td>第 8 章 · 实时仪表盘</td><td>大列表性能（<code>v-memo</code>、虚拟滚动）、完整的 Express + SSE 实时方案</td></tr>
+</tbody>
+</table></div>
+
+<p>学完六个项目后，第四部分的进阶专题帮你走得更远：</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#9881;</span><h4>第 9 章 · 深入响应式原理</h4><p>亲手写一个迷你响应式系统，理解 effectScope、customRef 和 Vapor Mode。</p></div>
+  <div class="card"><span class="ic">&#127912;</span><h4>第 10 章 · 组件库与设计系统</h4><p>组件库选型、设计令牌与主题、无障碍、Storybook。</p></div>
+  <div class="card"><span class="ic">&#127959;</span><h4>第 11 章 · 大型项目架构</h4><p>按功能分模块、TanStack Query、pnpm monorepo、发布组件库。</p></div>
+  <div class="card"><span class="ic">&#128241;</span><h4>第 12 章 · 跨端</h4><p>PWA 离线应用、Capacitor 手机 App、Tauri 桌面程序。</p></div>
+  <div class="card"><span class="ic">&#129302;</span><h4>第 13 章 · AI 应用前端</h4><p>Hono + DeepSeek 的流式聊天界面：SSE、停止生成、思考过程、安全渲染 Markdown。</p></div>
+</div>
 
 <h2 id="who">这套教程写给谁</h2>
 
@@ -116,6 +149,7 @@
   <li><strong>会一点 HTML / CSS / JavaScript，想学一个前端框架</strong>的人。每个概念都从“为什么需要它”讲起，配图解释原理。</li>
   <li><strong>手里有 Vue 2 书籍或老项目</strong>的人。每一处改动都有“原书 Vue 2 / 现在 Vue 3”的左右对照，附录还有一份完整的速查表。</li>
   <li><strong>想系统了解 Vue 3 生态</strong>的人。路由、状态管理、测试、国际化、SSR、全栈实时，覆盖了一个真实项目会遇到的大部分环节。</li>
+  <li><strong>已经会写 Vue、想再进一步</strong>的人。第四部分的进阶专题讲原理、架构和跨端，可以单独阅读。</li>
 </ul>
 
 <div class="box note">
@@ -143,6 +177,8 @@
 <div class="box key"><div class="t">&#9733; 重点</div><p>本章最核心的概念或与原书的关键差异。</p></div>
 <div class="box deep"><div class="t">&#128269; 深入</div><p>原理性的内容，初次阅读可以跳过。</p></div>
 
+<p>标题后面带 <span class="sup">补充</span> 标记的小节是原书没有、为今天的 Vue 生态新增的内容。</p>
+
 <h2 id="toc">目录</h2>
 
 <div id="toc-grid"></div>
@@ -150,7 +186,7 @@
 <h2 id="notes">版本说明</h2>
 
 <p>
-  本教程基于 <strong>Vue 3.5+</strong>、Vite、Vue Router 4、Pinia 3、Vitest、vue-i18n 11、Nuxt 4、Meteor 3 编写。
+  本教程基于 <strong>Vue 3.5+</strong>、Vite、Vue Router 4、Pinia 3、Vitest、Playwright、vue-i18n 11、Nuxt 4、Meteor 3 编写。
   前端生态更新很快，命令行提示、配置文件的细节可能和你看到的略有不同，遇到差异时以各工具的官方文档为准；
   本教程讲解的核心概念（响应式、组件、路由、状态管理、测试、SSR）是稳定的。
 </p>

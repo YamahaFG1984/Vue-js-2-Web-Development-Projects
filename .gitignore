@@ -1,0 +1,8 @@
+# 密钥等本地环境变量，不要提交
+.env
+.env.*
+!.env.example
+
+# 依赖与构建产物
+node_modules/
+dist/

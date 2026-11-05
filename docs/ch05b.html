@@ -1,0 +1,1212 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 5 章（下）· 项目三：工单与表单 — Vue 3 项目实战教程</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="5B">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 5 章（下）· 项目三</span>
+<h1>客服支持中心（下）：工单与表单</h1>
+<p class="lede">
+  接着<a href="ch05.html">上篇</a>：路由、API 调用、登录和导航守卫都已就绪。这一篇完成工单功能 —— 列表、提交、详情，
+  并借此深入嵌套路由、表单（校验、复合组件）、页面缓存、高级路由特性和错误处理。
+</p>
+
+<div class="goals">
+  <h4>本篇目标</h4>
+  <ul>
+    <li>处理会话过期；用嵌套路由组织工单页面</li>
+    <li>用 <code>KeepAlive</code> 在页面切换时保留组件状态<span class="sup">补充</span></li>
+    <li>透传属性 <code>$attrs</code>、表单备份；用 VeeValidate + Zod 做表单校验<span class="sup">补充</span></li>
+    <li>用 <code>provide/inject</code> 编写复合组件，用 <code>defineExpose</code> 暴露组件方法<span class="sup">补充</span></li>
+    <li>动态参数、用 props 解耦、404、路由过渡、滚动行为、懒加载</li>
+    <li>建立分层的错误处理<span class="sup">补充</span></li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="tickets">工单列表</h2>
+
+<p>工单列表和 FAQ 页面几乎一样，用同一个组合式函数：</p>
+
+<div class="code" data-lang="vue" data-file="src/components/Tickets.vue"><pre>
+&lt;script setup&gt;
+import { useRemoteData } from '../composables/useRemoteData'
+import { formatDate } from '../utils/format'
+
+const { data: tickets, loading } = useRemoteData('tickets')
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="tickets"&gt;
+    &lt;Loading v-if="loading" /&gt;
+    &lt;div class="empty" v-else-if="!tickets?.length"&gt;你还没有任何工单。&lt;/div&gt;
+    &lt;section v-else class="tickets-list"&gt;
+      &lt;div v-for="ticket of tickets" :key="ticket._id" class="ticket-item"&gt;
+        &lt;span&gt;{{ ticket.title }}&lt;/span&gt;
+        &lt;span class="badge"&gt;{{ ticket.status }}&lt;/span&gt;
+        &lt;span class="date"&gt;{{ formatDate(ticket.date) }}&lt;/span&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>日期格式化：原书安装 moment 并注册过滤器 <code>{{ ticket.date | date }}</code>。我们用一个普通的工具函数：</p>
+
+<div class="code" data-lang="js" data-file="src/utils/format.js"><pre>
+const dateFormatter = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium' })
+
+export function formatDate(value) {
+  return dateFormatter.format(new Date(value))
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; tickets?.length 是什么</div>
+  <p>
+    <code>?.</code> 是<strong>可选链</strong>：如果 <code>tickets</code> 是 <code>null</code> 或 <code>undefined</code>，整个表达式直接得到 <code>undefined</code> 而不会报错。
+    数据还没回来时 <code>tickets</code> 是 <code>null</code>，这样写就很安全。
+  </p>
+</div>
+
+<h3>会话过期</h3>
+
+<p>
+  会话过一段时间会失效（这个服务器设置为 3 小时），服务器重启也会让会话丢失。这时请求私有接口会返回 <strong>403</strong>，
+  而页面还以为自己处于登录状态，加载动画永远转下去。最合适的处理位置是所有请求的必经之路 —— <code>$fetch</code>：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="收到 403 时登出用户，如果在私有页面则跳转到登录页">
+  <rect class="bx-b" x="20" y="70" width="140" height="60" rx="10"/>
+  <text class="on-b" x="90" y="96" text-anchor="middle">$fetch('tickets')</text>
+  <text class="sm" x="90" y="116" text-anchor="middle">会话已过期</text>
+  <path class="ln" d="M162 100 H210" marker-end="url(#ar)"/>
+  <rect class="bx-r" x="214" y="76" width="100" height="48" rx="10"/>
+  <text class="on-r ttl" x="264" y="105" text-anchor="middle">403</text>
+  <path class="ln" d="M316 100 H360" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="364" y="70" width="150" height="60" rx="10"/>
+  <text class="on-a" x="439" y="96" text-anchor="middle">state.user = null</text>
+  <text class="sm" x="439" y="116" text-anchor="middle">菜单立即变成“登录”</text>
+  <path class="ln" d="M516 100 H560" marker-end="url(#ar)"/>
+  <text class="halo sm" x="538" y="90" text-anchor="middle">在私有页?</text>
+  <rect class="bx-g" x="564" y="70" width="176" height="60" rx="10"/>
+  <text class="on-g mono sm" x="652" y="96" text-anchor="middle">router.replace(login)</text>
+  <text class="sm" x="652" y="116" text-anchor="middle">带上 redirect</text>
+  <text class="lbl" x="380" y="170" text-anchor="middle">重新登录后，会回到原来的页面 —— 第 5.10 节的表单备份还能把刚才写了一半的内容恢复回来</text>
+</svg>
+<figcaption>图 5-14　在请求层统一处理会话过期</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="src/plugins/fetch.js"><pre>
+import state from '../state'
+import router from '../router'
+
+export async function $fetch(url, options) {
+  // ...
+  const response = await fetch(`${baseUrl}${url}`, finalOptions)
+  if (response.ok) {
+    return await response.json()
+  } else if (response.status === 403) {
+    // 会话失效：登出
+    state.user = null
+    // 如果当前在私有页面，去登录页
+    const current = router.currentRoute.value     // Vue Router 4：currentRoute 是一个 ref
+    if (current.meta.private) {
+      router.replace({ name: 'login', query: { redirect: current.fullPath } })
+    }
+    throw new Error('会话已过期，请重新登录')
+  } else {
+    const message = await response.text()
+    const error = new Error(message)
+    error.response = response
+    throw error
+  }
+}
+</pre></div>
+
+<p>用 <code>replace</code> 而不是 <code>push</code>：否则用户点“后退”会再次进入私有页、再次被送回登录页，陷入循环。</p>
+
+<h2 id="nested">嵌套路由</h2>
+
+<p>
+  工单页面里还要能切换到“新建工单”表单和“工单详情”。用<strong>嵌套路由</strong>来组织：<code>/tickets</code> 路由有自己的子路由，
+  而 <code>TicketsLayout</code> 组件里放第二个 <code>&lt;RouterView&gt;</code> 来显示它们：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="嵌套路由：外层 RouterView 显示 TicketsLayout，内层 RouterView 显示子路由组件">
+  <rect class="bx" x="20" y="20" width="440" height="250" rx="12"/>
+  <text class="mono sm" x="36" y="42">AppLayout</text>
+  <rect class="bx" x="36" y="52" width="408" height="26" rx="5"/>
+  <text class="sm" x="240" y="70" text-anchor="middle">header + NavMenu</text>
+  <rect class="bx-a" x="36" y="88" width="408" height="168" rx="10"/>
+  <text class="mono sm on-a" x="50" y="108">&lt;RouterView /&gt; ① → TicketsLayout</text>
+  <rect class="bx" x="56" y="118" width="368" height="26" rx="5"/>
+  <text class="sm" x="240" y="136" text-anchor="middle">“我的工单”标题 + 切换按钮</text>
+  <rect class="bx-g" x="56" y="152" width="368" height="92" rx="8"/>
+  <text class="mono sm on-g" x="70" y="172">&lt;RouterView /&gt; ② → 子路由组件</text>
+  <text class="sm" x="240" y="200" text-anchor="middle">Tickets / NewTicket / Ticket</text>
+  <text class="sm" x="240" y="222" text-anchor="middle">随 URL 切换，外层保持不动</text>
+
+  <text class="ttl" x="490" y="44">URL → 两层 RouterView 的内容</text>
+  <text class="mono sm" x="490" y="80">/tickets</text>
+  <text class="sm" x="590" y="80">① TicketsLayout ② Tickets</text>
+  <text class="mono sm" x="490" y="108">/tickets/new</text>
+  <text class="sm" x="590" y="108">① TicketsLayout ② NewTicket</text>
+  <text class="mono sm" x="490" y="136">/tickets/abc</text>
+  <text class="sm" x="590" y="136">① TicketsLayout ② Ticket</text>
+  <text class="mono sm" x="490" y="164">/faq</text>
+  <text class="sm" x="590" y="164">① FAQ</text>
+  <text class="lbl" x="490" y="210">每一层 RouterView 显示</text>
+  <text class="lbl" x="490" y="230">路由树中对应层级的组件</text>
+</svg>
+<figcaption>图 5-15　嵌套路由与嵌套的 RouterView</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="src/router.js"><pre>
+import Tickets from './components/Tickets.vue'
+import NewTicket from './components/NewTicket.vue'
+
+const routes = [
+  // ...
+  {
+    path: '/tickets',
+    component: TicketsLayout,
+    meta: { private: true },
+    children: [
+      { path: '', name: 'tickets', component: Tickets },          // 默认子路由
+      { path: 'new', name: 'new-ticket', component: NewTicket },  // /tickets/new
+    ],
+  },
+]
+</pre></div>
+
+<p>空字符串路径的子路由是默认子路由，所以 <code>name: 'tickets'</code> 要从父路由移到它身上。</p>
+
+<div class="code" data-lang="vue" data-file="src/components/TicketsLayout.vue"><pre>
+&lt;script setup&gt;
+import { useRouter } from 'vue-router'
+const router = useRouter()
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;main class="tickets-layout"&gt;
+    &lt;h1&gt;我的工单&lt;/h1&gt;
+    &lt;div class="actions"&gt;
+      &lt;button v-if="$route.name !== 'tickets'" class="secondary"
+              @click="router.push({ name: 'tickets' })"&gt;查看所有工单&lt;/button&gt;
+      &lt;button v-if="$route.name !== 'new-ticket'"
+              @click="router.push({ name: 'new-ticket' })"&gt;新建工单&lt;/button&gt;
+    &lt;/div&gt;
+    &lt;RouterView /&gt;
+  &lt;/main&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; Vue Router 4 变化：RouterLink 的 tag 属性被移除</div>
+  <p>
+    原书用 <code>&lt;router-link tag="button"&gt;</code> 把链接渲染成按钮。<code>tag</code> 在 Vue Router 4 中被移除了。
+    可以像上面那样用普通按钮 + <code>router.push</code>；或者用 <code>custom</code> + 作用域插槽完全自定义渲染：
+  </p>
+<div class="code" data-lang="html"><pre>
+&lt;RouterLink :to="{ name: 'tickets' }" custom v-slot="{ navigate }"&gt;
+  &lt;button class="secondary" @click="navigate"&gt;查看所有工单&lt;/button&gt;
+&lt;/RouterLink&gt;
+</pre></div>
+  <p>（从语义上讲，“跳到另一个页面”本来就应该是链接 <code>&lt;a&gt;</code>，用 CSS 把它做成按钮的样子通常是更好的选择。）</p>
+</div>
+
+<h3>嵌套路由与守卫：原书的 bug 在 v4 里自动消失了</h3>
+
+<p>
+  原书在这里发现了一个漏洞：登出后仍能进入工单页！因为 Vue Router 3 中 <code>to</code> 是目标子路由（<code>''</code>），它自己没有 <code>private</code> 标记，
+  标记在父路由上。原书的解决办法是检查所有匹配的路由记录：<code>to.matched.some(r =&gt; r.meta.private)</code>。
+</p>
+
+<div class="box key">
+  <div class="t">&#9733; Vue Router 4：to.meta 会合并所有父级的 meta</div>
+  <p>
+    在 Vue Router 4 中，<code>to.meta</code> 是从父到子所有匹配记录的 meta <strong>合并</strong>后的结果。所以我们一开始写的
+    <code>to.meta.private</code> 对子路由同样生效，不需要改。<code>to.matched</code> 依然存在，需要逐层检查时仍可使用。
+  </p>
+</div>
+
+<h3>返回列表时保留状态：KeepAlive<span class="sup">补充</span></h3>
+
+<p>
+  试一下这个操作：在工单列表里往下滚动一段（或者在搜索框里输入了筛选关键字），点开一张工单，再点“查看所有工单”返回。
+  列表回到了顶部，筛选条件也没了，还重新显示了一次加载动画 —— 因为离开列表页时 <code>Tickets</code> 组件被<strong>销毁</strong>了，回来时是一个全新的实例。
+</p>
+
+<p>Vue 内置的 <code>&lt;KeepAlive&gt;</code> 组件可以把切换出去的组件<strong>缓存</strong>起来，而不是销毁，下次切回来时直接复用：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="没有 KeepAlive 时组件被销毁重建，有 KeepAlive 时组件被缓存并在激活和失活之间切换">
+  <text class="ttl on-r" x="190" y="22" text-anchor="middle">没有 KeepAlive</text>
+  <rect class="bx" x="40" y="40" width="130" height="50" rx="8"/>
+  <text class="sm" x="105" y="62" text-anchor="middle">Tickets</text>
+  <text class="sm" x="105" y="80" text-anchor="middle">滚动到第 30 条</text>
+  <path class="ln-r" d="M172 65 H210" marker-end="url(#ar)"/>
+  <text class="halo sm on-r" x="191" y="56" text-anchor="middle">销毁</text>
+  <rect class="bx" x="214" y="40" width="130" height="50" rx="8"/>
+  <text class="sm" x="279" y="70" text-anchor="middle">Ticket 详情</text>
+  <path class="ln" d="M279 92 V120 H105 V140" marker-end="url(#ar)"/>
+  <text class="halo sm" x="192" y="124" text-anchor="middle">返回</text>
+  <rect class="bx-r" x="40" y="144" width="130" height="50" rx="8"/>
+  <text class="sm on-r" x="105" y="166" text-anchor="middle">全新的 Tickets</text>
+  <text class="sm" x="105" y="184" text-anchor="middle">重新请求、回到顶部</text>
+
+  <path class="ln-d" d="M380 14 V256"/>
+
+  <text class="ttl on-a" x="570" y="22" text-anchor="middle">有 KeepAlive</text>
+  <rect class="bx" x="420" y="40" width="130" height="50" rx="8"/>
+  <text class="sm" x="485" y="62" text-anchor="middle">Tickets</text>
+  <text class="sm" x="485" y="80" text-anchor="middle">滚动到第 30 条</text>
+  <path class="ln-a" d="M552 65 H590" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="571" y="56" text-anchor="middle">失活</text>
+  <rect class="bx" x="594" y="40" width="130" height="50" rx="8"/>
+  <text class="sm" x="659" y="70" text-anchor="middle">Ticket 详情</text>
+  <rect class="bx-d" x="420" y="110" width="130" height="40" rx="8"/>
+  <text class="sm" x="485" y="135" text-anchor="middle">缓存区：Tickets</text>
+  <path class="ln-d" d="M485 92 V108"/>
+  <path class="ln" d="M659 92 V170 H552" marker-end="url(#ar)"/>
+  <text class="halo sm" x="640" y="164" text-anchor="middle">返回</text>
+  <rect class="bx-g" x="420" y="154" width="130" height="50" rx="8"/>
+  <text class="sm on-g" x="485" y="176" text-anchor="middle">同一个 Tickets</text>
+  <text class="sm" x="485" y="194" text-anchor="middle">状态原样保留 ✓</text>
+  <text class="sm" x="570" y="236" text-anchor="middle">失活时触发 onDeactivated，再次显示时触发 onActivated</text>
+</svg>
+<figcaption>图 5-16　KeepAlive 缓存组件实例</figcaption>
+</figure>
+
+<p>配合 <code>&lt;RouterView&gt;</code> 的作用域插槽使用（和后面“路由过渡”一节的写法类似）：</p>
+
+<div class="code" data-lang="vue" data-file="src/components/TicketsLayout.vue（模板片段）"><pre>
+&lt;RouterView v-slot="{ Component }"&gt;
+  &lt;KeepAlive include="Tickets" :max="5"&gt;
+    &lt;component :is="Component" /&gt;
+  &lt;/KeepAlive&gt;
+&lt;/RouterView&gt;
+</pre></div>
+
+<ul>
+  <li><code>include</code> / <code>exclude</code>：按组件名决定缓存哪些。使用 <code>&lt;script setup&gt;</code> 的单文件组件会自动以文件名作为组件名（<code>Tickets.vue</code> → <code>Tickets</code>）；也可以用 <code>defineOptions({ name: 'Tickets' })</code> 显式指定。</li>
+  <li><code>max</code>：最多缓存几个实例，超出时淘汰最久没用的那个（LRU）。</li>
+</ul>
+
+<p>被缓存的组件不会再执行 <code>setup</code>，但有两个专门的生命周期钩子。比如每次回到列表时，悄悄刷新一下数据：</p>
+
+<div class="code" data-lang="js" data-file="src/components/Tickets.vue（script 片段）"><pre>
+import { onActivated, onDeactivated } from 'vue'
+
+const { data: tickets, loading, refresh } = useRemoteData('tickets')
+
+onActivated(() =&gt; {
+  refresh()          // 回到列表：后台刷新（旧数据先显示着，不会闪加载动画）
+})
+onDeactivated(() =&gt; {
+  // 离开列表：可以在这里暂停定时器、轮询等
+})
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; 缓存不是免费的</div>
+  <p>
+    被缓存的组件会一直占用内存，它里面的定时器、事件监听也不会因为“离开页面”而停止（要在 <code>onDeactivated</code> 里暂停）。
+    只缓存那些重新创建代价高、或者用户希望保留状态的页面（列表、长表单、多标签页），并用 <code>max</code> 限制数量。
+  </p>
+</div>
+
+<h2 id="form">提交新工单</h2>
+
+<div class="code" data-lang="vue" data-file="src/components/NewTicket.vue"><pre>
+&lt;script setup&gt;
+import { ref, computed } from 'vue'
+import { $fetch } from '../plugins/fetch'
+
+const title = ref('')
+const description = ref('')
+
+const valid = computed(() =&gt; !!title.value &amp;&amp; !!description.value)
+
+async function operation() {
+  await $fetch('tickets/new', {
+    method: 'POST',
+    body: JSON.stringify({
+      title: title.value,
+      description: description.value,
+    }),
+  })
+  title.value = description.value = ''
+}
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;SmartForm title="新工单" :operation="operation" :valid="valid"&gt;
+    &lt;FormInput name="title" v-model="title"
+               placeholder="简短描述（最多 100 字）" maxlength="100" required /&gt;
+    &lt;FormInput type="textarea" name="description" v-model="description"
+               placeholder="详细描述你遇到的问题" rows="4" /&gt;
+
+    &lt;template #actions&gt;
+      &lt;RouterLink :to="{ name: 'tickets' }" class="button secondary"&gt;返回&lt;/RouterLink&gt;
+      &lt;button type="submit" :disabled="!valid"&gt;提交工单&lt;/button&gt;
+    &lt;/template&gt;
+  &lt;/SmartForm&gt;
+&lt;/template&gt;
+</pre></div>
+
+<h3>让 FormInput 支持多行文本</h3>
+
+<p>描述需要 <code>&lt;textarea&gt;</code>。让 <code>FormInput</code> 在 <code>type="textarea"</code> 时渲染 textarea —— 又见动态组件 <code>&lt;component :is&gt;</code>，它的 <code>is</code> 也可以是 HTML 标签名：</p>
+
+<div class="code" data-lang="js"><pre>
+const element = computed(() =&gt; props.type === 'textarea' ? 'textarea' : 'input')
+</pre></div>
+
+<div class="code" data-lang="html"><pre>
+&lt;component :is="element" v-model="model" class="input" :class="inputClass"
+           :name="name" :type="type" :placeholder="placeholder" /&gt;
+</pre></div>
+
+<h3>透传属性 $attrs</h3>
+
+<p>
+  <code>textarea</code> 有 <code>rows</code>，<code>input</code> 有 <code>maxlength</code>、<code>required</code>……给每个都声明一个 prop 太繁琐了。
+  没有被声明为 prop 的属性会进入 <code>$attrs</code>，我们可以用 <code>v-bind="$attrs"</code> 把它们一股脑儿转给内部的输入元素：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="inheritAttrs false 后，未声明的属性通过 v-bind attrs 转交给内部元素">
+  <rect class="bx-a" x="20" y="30" width="300" height="70" rx="10"/>
+  <text class="mono sm" x="36" y="56">&lt;FormInput type="textarea"</text>
+  <text class="mono sm" x="52" y="78"><tspan class="on-b">v-model="d"</tspan> <tspan class="on-p">rows="4" maxlength="100"</tspan>/&gt;</text>
+
+  <rect class="bx" x="420" y="20" width="320" height="200" rx="12"/>
+  <text class="ttl" x="580" y="44" text-anchor="middle">FormInput 内部</text>
+  <rect class="bx-d" x="440" y="58" width="280" height="40" rx="6"/>
+  <text class="mono sm" x="580" y="76" text-anchor="middle">&lt;div class="row"&gt;　根元素</text>
+  <text class="sm" x="580" y="92" text-anchor="middle">默认情况下 $attrs 会落在这里 ✗</text>
+  <rect class="bx-g" x="460" y="110" width="240" height="56" rx="6"/>
+  <text class="mono sm on-g" x="580" y="132" text-anchor="middle">&lt;textarea v-bind="$attrs"&gt;</text>
+  <text class="sm" x="580" y="152" text-anchor="middle">rows、maxlength 应该在这里 ✓</text>
+  <text class="mono sm on-a" x="580" y="196" text-anchor="middle">defineOptions({ inheritAttrs: false })</text>
+
+  <path class="ln-p" d="M322 80 C390 84 410 134 456 136" marker-end="url(#ar)"/>
+  <text class="halo sm on-p" x="360" y="100">$attrs</text>
+  <text class="sm on-b" x="20" y="130">v-model → modelValue：已声明，不进 $attrs</text>
+  <text class="sm on-p" x="20" y="150">rows、maxlength：未声明 → 进入 $attrs</text>
+</svg>
+<figcaption>图 5-17　关闭自动透传，手动把 $attrs 交给真正的输入元素</figcaption>
+</figure>
+
+<div class="code" data-lang="vue" data-file="src/components/FormInput.vue（最终版）"><pre>
+&lt;script setup&gt;
+import { computed } from 'vue'
+
+// 不要把未声明的属性自动加到根元素 div 上
+defineOptions({ inheritAttrs: false })
+
+const model = defineModel({ required: true })
+const props = defineProps({
+  name: { type: String },
+  type: { type: String, default: 'text' },
+  placeholder: { type: String },
+  invalid: { type: Boolean, default: false },
+})
+
+const inputClass = computed(() =&gt; ({ invalid: props.invalid }))
+const element = computed(() =&gt; props.type === 'textarea' ? 'textarea' : 'input')
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="row"&gt;
+    &lt;component
+      :is="element"
+      v-model="model"
+      class="input"
+      :class="inputClass"
+      :name="name"
+      :type="element === 'input' ? type : undefined"
+      :placeholder="placeholder"
+      v-bind="$attrs"
+    /&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 和原书的两处不同</div>
+  <ul>
+    <li>原书只写了 <code>v-bind="$attrs"</code>，但没有关掉 <code>inheritAttrs</code>，于是 <code>rows</code> 等属性会<strong>同时</strong>出现在外层 <code>div</code> 和 textarea 上。</li>
+    <li>Vue 3 的 <code>$attrs</code> 还包含 <code>class</code>、<code>style</code> 和事件监听器（Vue 2 里它们是分开的 <code>$listeners</code>），所以透传更彻底。</li>
+  </ul>
+</div>
+
+<h3>备份用户输入</h3>
+
+<p>
+  为了更好的体验，自动把用户正在填写的内容备份到 localStorage：浏览器崩溃、误刷新、甚至会话过期被踢到登录页，回来后内容都还在。
+  原书写了一个 <code>PersistantData</code> mixin，我们写成组合式函数：
+</p>
+
+<div class="code" data-lang="js" data-file="src/composables/usePersistentRef.js"><pre>
+import { ref, watch } from 'vue'
+
+// 一个会自动存到 localStorage 的 ref
+export function usePersistentRef(key, defaultValue) {
+  const saved = localStorage.getItem(key)
+  const value = ref(saved !== null ? JSON.parse(saved) : defaultValue)
+
+  watch(value, (val) =&gt; {
+    localStorage.setItem(key, JSON.stringify(val))
+  }, { deep: true })
+
+  return value
+}
+</pre></div>
+
+<p>在 <code>NewTicket.vue</code> 里，只需要把两个 <code>ref('')</code> 换掉：</p>
+
+<div class="code" data-lang="js"><pre>
+import { usePersistentRef } from '../composables/usePersistentRef'
+
+const title = usePersistentRef('NewTicket.title', '')
+const description = usePersistentRef('NewTicket.description', '')
+</pre></div>
+
+<div class="vs">
+  <div class="old"><div class="h">原书 · mixin（约 30 行）</div>
+<div class="code" data-lang="js"><pre>
+mixins: [
+  PersistantData('NewTicket', [
+    'title',
+    'description',
+  ]),
+],
+// mixin 内部：用 reduce 动态生成 watch 对象，
+// 再加 created 恢复、beforeDestroy 保存……
+</pre></div></div>
+  <div class="new"><div class="h">Vue 3 · 组合式函数（约 10 行）</div>
+<div class="code" data-lang="js"><pre>
+const title =
+  usePersistentRef('NewTicket.title', '')
+const description =
+  usePersistentRef('NewTicket.description', '')
+// 就是两个 ref，用法和普通 ref 完全一样
+</pre></div></div>
+</div>
+
+<div class="box tip">
+  <div class="t">&#10003; VueUse 里有现成的</div>
+  <p><code>import { useLocalStorage } from '@vueuse/core'</code>，<code>const title = useLocalStorage('NewTicket.title', '')</code>，还会同步多个标签页之间的修改。</p>
+</div>
+
+<h2 id="form-pro">表单进阶：校验与复合组件<span class="sup">补充</span></h2>
+
+<p>
+  回头看看上篇写的登录表单和这一篇的新工单表单，还有几个不够好的地方：
+</p>
+
+<ul>
+  <li>校验规则散落在一堆计算属性里（<code>retypePasswordError</code>、<code>signupValid</code>、<code>valid</code>……），规则一多就很难维护；</li>
+  <li>只有“两次密码不一致”有提示，其他错误（用户名太短、邮箱格式不对）用户根本不知道错在哪；</li>
+  <li>提交过程中，输入框还能继续编辑，按钮也不知道表单正在提交。</li>
+</ul>
+
+<p>这一节用三个工具解决它们：<strong>VeeValidate + Zod</strong> 负责校验，<strong>provide/inject</strong> 让表单的子组件自动知道表单状态，<strong>defineExpose</strong> 让父组件可以调用表单的方法。</p>
+
+<h3>用 Zod 描述规则，用 VeeValidate 管理表单</h3>
+
+<div class="code" data-lang="bash"><pre>
+npm install vee-validate @vee-validate/zod zod
+</pre></div>
+
+<p>
+  <a href="https://zod.dev/">Zod</a> 用一个“模式（schema）”声明数据应该长什么样；<a href="https://vee-validate.logaretm.com/">VeeValidate</a> 根据模式管理每个字段的值、错误、是否被碰过，以及整个表单的提交状态：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="Zod 模式定义规则，VeeValidate 管理字段值和错误，模板显示错误信息">
+  <rect class="bx-p" x="20" y="40" width="230" height="170" rx="12"/>
+  <text class="ttl on-p" x="135" y="64" text-anchor="middle">Zod 模式（规则）</text>
+  <text class="mono sm" x="36" y="92">z.object({</text>
+  <text class="mono sm" x="52" y="112">username: z.string().min(3),</text>
+  <text class="mono sm" x="52" y="132">email: z.email(),</text>
+  <text class="mono sm" x="52" y="152">password: z.string().min(8),</text>
+  <text class="mono sm" x="36" y="172">}).refine(两次密码一致)</text>
+  <path class="ln-p" d="M252 125 H306" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="310" y="40" width="200" height="170" rx="12"/>
+  <text class="ttl on-a" x="410" y="64" text-anchor="middle">useForm（VeeValidate）</text>
+  <text class="sm" x="410" y="92" text-anchor="middle">每个字段：值、是否碰过</text>
+  <text class="sm" x="410" y="114" text-anchor="middle">errors：字段 → 错误信息</text>
+  <text class="sm" x="410" y="136" text-anchor="middle">isSubmitting、meta.valid</text>
+  <text class="sm" x="410" y="158" text-anchor="middle">handleSubmit：先校验</text>
+  <text class="sm" x="410" y="176" text-anchor="middle">通过了才调用你的函数</text>
+  <path class="ln-a" d="M512 125 H566" marker-end="url(#ar-a)"/>
+  <rect class="bx-g" x="570" y="40" width="170" height="170" rx="12"/>
+  <text class="ttl on-g" x="655" y="64" text-anchor="middle">模板</text>
+  <rect class="bx" x="586" y="80" width="138" height="26" rx="5"/>
+  <text class="sm" x="598" y="98">ab</text>
+  <text class="sm on-r" x="590" y="124">用户名至少 3 个字符</text>
+  <rect class="bx" x="586" y="136" width="138" height="26" rx="5"/>
+  <text class="sm" x="598" y="154">a@b</text>
+  <text class="sm on-r" x="590" y="180">邮箱格式不正确</text>
+  <text class="lbl" x="380" y="244" text-anchor="middle">规则集中在一个地方；同一个 Zod 模式还可以在服务器上复用，前后端校验一致</text>
+</svg>
+<figcaption>图 5-18　规则、状态、显示三者分离</figcaption>
+</figure>
+
+<div class="code" data-lang="vue" data-file="src/components/Login.vue（注册表单，script 部分）"><pre>
+&lt;script setup&gt;
+import { useForm } from 'vee-validate'
+import { toTypedSchema } from '@vee-validate/zod'
+import { z } from 'zod'
+
+const signupSchema = toTypedSchema(
+  z.object({
+    username: z.string().min(3, '用户名至少 3 个字符'),
+    email: z.email('邮箱格式不正确'),
+    password: z.string().min(8, '密码至少 8 位'),
+    password2: z.string(),
+  }).refine((data) =&gt; data.password === data.password2, {
+    message: '两次输入的密码不一致',
+    path: ['password2'],                // 错误显示在哪个字段上
+  })
+)
+
+const { defineField, errors, handleSubmit, isSubmitting, meta } = useForm({
+  validationSchema: signupSchema,
+})
+
+// 每个字段：一个 ref（绑定 v-model）+ 一组属性（失焦时触发校验等）
+const [username, usernameAttrs] = defineField('username')
+const [email, emailAttrs] = defineField('email')
+const [password, passwordAttrs] = defineField('password')
+const [password2, password2Attrs] = defineField('password2')
+
+// handleSubmit：先完整校验，全部通过才调用；values 就是校验后的数据
+const signup = handleSubmit(async (values) =&gt; {
+  await $fetch('signup', { method: 'POST', body: JSON.stringify(values) })
+})
+&lt;/script&gt;
+</pre></div>
+
+<p>给 <code>FormInput</code> 加一个 <code>error</code> prop 来显示错误信息，模板就很直观了：</p>
+
+<div class="code" data-lang="vue" data-file="src/components/Login.vue（注册表单，template 部分）"><pre>
+&lt;form @submit="signup"&gt;
+  &lt;FormInput name="username" v-model="username" v-bind="usernameAttrs"
+             placeholder="用户名" :error="errors.username" /&gt;
+  &lt;FormInput name="email" type="email" v-model="email" v-bind="emailAttrs"
+             placeholder="邮箱" :error="errors.email" /&gt;
+  &lt;FormInput name="password" type="password" v-model="password" v-bind="passwordAttrs"
+             placeholder="密码" :error="errors.password" /&gt;
+  &lt;FormInput name="verify-password" type="password" v-model="password2" v-bind="password2Attrs"
+             placeholder="再次输入密码" :error="errors.password2" /&gt;
+  &lt;button type="submit" :disabled="isSubmitting"&gt;创建账号&lt;/button&gt;
+&lt;/form&gt;
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="src/components/FormInput.vue（新增 error）"><pre>
+&lt;!-- props 里加上 error: String，invalid 改为由 error 推导 --&gt;
+&lt;div class="row"&gt;
+  &lt;component :is="element" v-model="model" class="input" :class="{ invalid: error }" v-bind="$attrs" /&gt;
+  &lt;div v-if="error" class="field-error"&gt;{{ error }}&lt;/div&gt;
+&lt;/div&gt;
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 什么时候显示错误</div>
+  <p>
+    VeeValidate 默认在字段<strong>失焦</strong>和<strong>提交</strong>时校验，而不是用户每敲一个字就报错 —— 还没输完就满屏红字的体验很差。
+    <code>v-bind="usernameAttrs"</code> 正是把这些事件（<code>onBlur</code> 等）绑定到输入框上。另外，Zod 4 起邮箱写作 <code>z.email()</code>，老版本写作 <code>z.string().email()</code>。
+  </p>
+</div>
+
+<div class="box tip">
+  <div class="t">&#10003; 另一个选择：FormKit</div>
+  <p><a href="https://formkit.com/">FormKit</a> 走的是“组件化表单”路线：用 <code>&lt;FormKit type="email" validation="required|email" /&gt;</code> 一个组件搞定输入框、标签、校验和错误提示，适合表单特别多的后台系统。</p>
+</div>
+
+<h3>复合组件：用 provide/inject 共享表单状态</h3>
+
+<p>
+  第三个问题：提交过程中，所有输入框都应该被禁用。最直接的办法是给每个 <code>FormInput</code> 传一个 <code>:disabled="busy"</code> —— 重复又容易漏。
+  更好的做法是让 <code>SmartForm</code> 把自己的状态 <strong>provide</strong> 出去，里面的每个 <code>FormInput</code> 自己 <strong>inject</strong>：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="SmartForm 通过 provide 提供表单状态，内部任意深度的 FormInput 用 inject 读取">
+  <rect class="bx-a" x="240" y="20" width="280" height="64" rx="12"/>
+  <text class="ttl on-a" x="380" y="44" text-anchor="middle">SmartForm</text>
+  <text class="mono sm" x="380" y="66" text-anchor="middle">provide(FormKey, { busy, error })</text>
+  <rect class="bx" x="240" y="104" width="280" height="40" rx="8"/>
+  <text class="sm" x="380" y="129" text-anchor="middle">slot：父组件放进来的任意内容（可能包了好几层 div）</text>
+  <path class="ln" d="M380 86 V102"/>
+  <path class="ln" d="M300 146 V166 H130 V180"/>
+  <path class="ln" d="M380 146 V180"/>
+  <path class="ln" d="M460 146 V166 H630 V180"/>
+  <rect class="bx-g" x="40" y="182" width="180" height="52" rx="10"/>
+  <text class="sm on-g" x="130" y="204" text-anchor="middle">FormInput</text>
+  <text class="mono sm" x="130" y="222" text-anchor="middle">inject(FormKey)</text>
+  <rect class="bx-g" x="290" y="182" width="180" height="52" rx="10"/>
+  <text class="sm on-g" x="380" y="204" text-anchor="middle">FormInput</text>
+  <text class="mono sm" x="380" y="222" text-anchor="middle">inject(FormKey)</text>
+  <rect class="bx" x="540" y="182" width="180" height="52" rx="10"/>
+  <text class="sm" x="630" y="204" text-anchor="middle">普通的 &lt;p&gt; 说明文字</text>
+  <text class="sm" x="630" y="222" text-anchor="middle">不关心，不受影响</text>
+  <text class="sm" x="20" y="40">像 &lt;select&gt; 和 &lt;option&gt; 一样：</text>
+  <text class="sm" x="20" y="58">几个组件配合使用，</text>
+  <text class="sm" x="20" y="76">通过“隐式的通道”交换状态</text>
+</svg>
+<figcaption>图 5-19　复合组件：外层 provide，内层 inject</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="src/components/formContext.js"><pre>
+// 用 Symbol 作为 key，避免和别的 provide 撞名
+export const FormKey = Symbol('form')
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="src/components/SmartForm.vue（script 新增）"><pre>
+import { provide, readonly } from 'vue'
+import { FormKey } from './formContext'
+
+// busy、error 是前面已有的 ref；只读地提供出去，子组件不能改
+provide(FormKey, {
+  busy: readonly(busy),
+  error: readonly(error),
+})
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="src/components/FormInput.vue（script 新增）"><pre>
+import { inject, computed } from 'vue'
+import { FormKey } from './formContext'
+
+// 第二个参数是默认值：FormInput 不在 SmartForm 里使用时也不会报错
+const form = inject(FormKey, null)
+const disabled = computed(() =&gt; form?.busy.value ?? false)
+// 模板里：&lt;component :is="element" … :disabled="disabled" /&gt;
+</pre></div>
+
+<details class="box deep">
+<summary class="t" style="cursor:pointer">&#128269; TypeScript：带类型的 InjectionKey（点击展开）</summary>
+<div class="code" data-lang="ts"><pre>
+import type { InjectionKey, Ref } from 'vue'
+
+export interface FormContext {
+  busy: Readonly&lt;Ref&lt;boolean&gt;&gt;
+  error: Readonly&lt;Ref&lt;string | null&gt;&gt;
+}
+export const FormKey: InjectionKey&lt;FormContext&gt; = Symbol('form')
+
+// inject(FormKey) 的返回值会被自动推断为 FormContext | undefined
+</pre></div>
+</details>
+
+<h3>作用域插槽 + defineExpose：让父组件更灵活</h3>
+
+<p>还有两个小改进。第一，“提交”按钮写在父组件的 <code>#actions</code> 插槽里，它也想知道表单是否正在提交（显示“提交中……”）。把状态通过<strong>作用域插槽</strong>传出去：</p>
+
+<div class="code" data-lang="vue"><pre>
+&lt;!-- SmartForm.vue 里 --&gt;
+&lt;slot name="actions" :busy="busy" :valid="valid" /&gt;
+
+&lt;!-- 使用时 --&gt;
+&lt;template #actions="{ busy }"&gt;
+  &lt;button type="submit" :disabled="busy"&gt;{{ busy ? '提交中……' : '提交工单' }}&lt;/button&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>
+  第二，提交成功后父组件想清空表单的错误信息。<code>&lt;script setup&gt;</code> 组件默认是<strong>封闭</strong>的：父组件通过模板引用拿到它，也访问不到里面的任何东西。
+  需要对外开放的方法，用 <code>defineExpose</code> 明确列出：
+</p>
+
+<div class="code" data-lang="vue" data-file="SmartForm.vue"><pre>
+&lt;script setup&gt;
+function reset() {
+  error.value = null
+}
+defineExpose({ reset })          // 只暴露 reset，其他内部状态仍然是私有的
+&lt;/script&gt;
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="NewTicket.vue"><pre>
+&lt;script setup&gt;
+import { useTemplateRef } from 'vue'
+const form = useTemplateRef('form')
+
+async function operation() {
+  await $fetch('tickets/new', { /* ... */ })
+  form.value.reset()             // 调用子组件暴露的方法
+}
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;SmartForm ref="form" title="新工单" :operation="operation" :valid="valid"&gt;…&lt;/SmartForm&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="box key">
+  <div class="t">&#9733; 组件之间的几种通信方式，怎么选</div>
+  <div class="tw" style="margin:6px 0 0"><table>
+  <thead><tr><th>方式</th><th>方向</th><th>适合</th></tr></thead>
+  <tbody>
+  <tr><td>props / emit</td><td>父 ⇄ 子</td><td>绝大多数情况，首选</td></tr>
+  <tr><td>v-model / defineModel</td><td>父 ⇄ 子（双向）</td><td>表单类组件</td></tr>
+  <tr><td>作用域插槽</td><td>子 → 父提供的内容</td><td>让使用者定制某块内容时，把数据也交给它</td></tr>
+  <tr><td>provide / inject</td><td>祖先 → 任意后代</td><td>复合组件、主题、跨很多层的配置</td></tr>
+  <tr><td>defineExpose + 模板引用</td><td>父 → 子（命令式调用）</td><td>聚焦、重置、滚动等“动作”，少用</td></tr>
+  <tr><td>Pinia（第 6 章）</td><td>任意组件</td><td>真正的全局共享状态</td></tr>
+  </tbody>
+  </table></div>
+</div>
+
+<h2 id="advanced">高级路由功能</h2>
+
+<h3>动态路由参数</h3>
+
+<p>最后一个页面是工单详情，显示某一张工单。URL 里要带上工单的 id，这就要用到<strong>动态路由匹配</strong>：路径中以冒号开头的段是参数，会出现在 <code>route.params</code> 里。</p>
+
+<div class="tw"><table>
+<thead><tr><th>路由模式</th><th>示例路径</th><th><code>route.params</code></th></tr></thead>
+<tbody>
+<tr><td><code>/tickets/:id</code></td><td><code>/tickets/abc</code></td><td><code>{ id: 'abc' }</code></td></tr>
+<tr><td><code>/tickets/:id/comments/:comId</code></td><td><code>/tickets/abc/comments/42</code></td><td><code>{ id: 'abc', comId: '42' }</code></td></tr>
+<tr><td><code>/files/:path(.*)</code></td><td><code>/files/a/b/c.txt</code></td><td><code>{ path: 'a/b/c.txt' }</code>（自定义正则）</td></tr>
+<tr><td><code>/users/:id?</code></td><td><code>/users</code></td><td><code>{ id: '' }</code>（可选参数）</td></tr>
+</tbody>
+</table></div>
+
+<div class="code" data-lang="js" data-file="src/router.js"><pre>
+children: [
+  { path: '', name: 'tickets', component: Tickets },
+  { path: 'new', name: 'new-ticket', component: NewTicket },
+  { path: ':id', name: 'ticket', component: Ticket, props: true },
+],
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 顺序不再重要</div>
+  <p><code>new</code> 和 <code>:id</code> 都能匹配 <code>/tickets/new</code>。Vue Router 4 会按“具体程度”自动排序：静态路径优先于动态参数，所以 <code>new</code> 总是赢，和书写顺序无关。</p>
+</div>
+
+<p>列表里的标题改成指向详情页的链接：</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;RouterLink :to="{ name: 'ticket', params: { id: ticket._id } }"&gt;
+  {{ ticket.title }}
+&lt;/RouterLink&gt;
+</pre></div>
+
+<h3>用 props 解耦组件和路由</h3>
+
+<p>
+  <code>Ticket</code> 组件可以直接读 <code>route.params.id</code>，但那样它就和路由绑死了，没法在别处复用（比如在弹窗里显示一张工单）。
+  更好的做法是让组件接收一个普通的 <code>id</code> prop，由路由把参数“喂”给它 —— 这就是路由配置里 <code>props: true</code> 的作用：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 180" role="img" aria-label="路由参数通过 props: true 转为组件 prop">
+  <rect class="bx-b" x="20" y="50" width="200" height="70" rx="10"/>
+  <text class="mono sm on-b" x="120" y="78" text-anchor="middle">URL /tickets/abc</text>
+  <text class="mono sm" x="120" y="100" text-anchor="middle">params: { id: 'abc' }</text>
+  <path class="ln-a" d="M222 85 H316" marker-end="url(#ar-a)"/>
+  <text class="halo mono sm on-a" x="269" y="76" text-anchor="middle">props: true</text>
+  <rect class="bx-g" x="320" y="50" width="200" height="70" rx="10"/>
+  <text class="on-g ttl" x="420" y="78" text-anchor="middle">Ticket.vue</text>
+  <text class="mono sm" x="420" y="100" text-anchor="middle">defineProps({ id })</text>
+  <text class="sm" x="540" y="66">也可以用函数自定义：</text>
+  <text class="mono sm" x="540" y="88">props: route =&gt; ({</text>
+  <text class="mono sm" x="556" y="106">id: route.params.id })</text>
+  <text class="lbl" x="380" y="160" text-anchor="middle">组件只认 prop，不知道路由的存在 —— 可以在任何地方复用、也更容易测试</text>
+</svg>
+<figcaption>图 5-20　路由参数 → 组件 prop</figcaption>
+</figure>
+
+<p><code>props</code> 的三种写法：</p>
+<ul>
+  <li><code>props: true</code>：把所有 <code>params</code> 作为 props 传入；</li>
+  <li><code>props: route =&gt; ({ id: route.params.id, page: Number(route.query.page) })</code>：函数，最灵活，可以组合静态值、转换类型、改名；</li>
+  <li><code>props: { id: 'abc' }</code>：静态对象。</li>
+</ul>
+
+<h3>参数变化时重新加载</h3>
+
+<p>
+  现在 <code>useRemoteData</code> 只接受固定字符串。但工单 id 会变（从一张工单点到另一张时，Vue Router 会<strong>复用</strong>同一个 <code>Ticket</code> 组件实例，只改 prop），
+  我们需要在 id 变化时重新请求。让组合式函数也接受一个<strong>getter 函数</strong>或 <strong>ref</strong>：
+</p>
+
+<div class="code" data-lang="js" data-file="src/composables/useRemoteData.js（最终版）"><pre>
+import { ref, watch, toValue } from 'vue'
+import { $fetch } from '../plugins/fetch'
+
+// url 可以是：字符串 / ref / getter 函数
+export function useRemoteData(url) {
+  const data = ref(null)
+  const error = ref(null)
+  const loading = ref(false)
+
+  async function load(currentUrl) {
+    loading.value = true
+    error.value = null
+    try {
+      data.value = await $fetch(currentUrl)
+    } catch (e) {
+      console.error(e)
+      error.value = e
+    } finally {
+      loading.value = false
+    }
+  }
+
+  // toValue：统一取出“当前的值”；它依赖的响应式数据变化时，watch 会重新执行
+  watch(() =&gt; toValue(url), load, { immediate: true })
+
+  return { data, error, loading, refresh: () =&gt; load(toValue(url)) }
+}
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="src/components/Ticket.vue"><pre>
+&lt;script setup&gt;
+import { useRemoteData } from '../composables/useRemoteData'
+import { formatDate } from '../utils/format'
+
+const props = defineProps({
+  id: { type: String, required: true },
+})
+
+// 传入 getter：props.id 变化时自动重新请求
+const { data: ticket, loading } = useRemoteData(() =&gt; `ticket/${props.id}`)
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="ticket"&gt;
+    &lt;h2&gt;工单&lt;/h2&gt;
+    &lt;Loading v-if="loading" /&gt;
+    &lt;div class="empty" v-else-if="!ticket"&gt;找不到这张工单。&lt;/div&gt;
+    &lt;template v-else&gt;
+      &lt;section class="infos"&gt;
+        &lt;div class="info"&gt;创建于 &lt;strong&gt;{{ formatDate(ticket.date) }}&lt;/strong&gt;&lt;/div&gt;
+        &lt;div class="info"&gt;作者 &lt;strong&gt;{{ ticket.user.username }}&lt;/strong&gt;&lt;/div&gt;
+        &lt;div class="info"&gt;状态 &lt;span class="badge"&gt;{{ ticket.status }}&lt;/span&gt;&lt;/div&gt;
+      &lt;/section&gt;
+      &lt;section class="content"&gt;
+        &lt;h3&gt;{{ ticket.title }}&lt;/h3&gt;
+        &lt;p&gt;{{ ticket.description }}&lt;/p&gt;
+      &lt;/section&gt;
+    &lt;/template&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>这对应原书在 mixin 里用 <code>this.$watch(fn, ..., { immediate: true })</code> 支持动态路径的做法。</p>
+
+<details class="box deep">
+<summary class="t" style="cursor:pointer">&#128269; 进阶：竞态条件（点击展开）</summary>
+<p>
+  用户快速从工单 A 点到工单 B：A 的请求还没回来，B 的请求已经发出。如果 A 的响应<em>后</em>到，页面上就会显示 A 的内容 —— 这叫<strong>竞态条件</strong>。
+  Vue 3.5 的 <code>onWatcherCleanup</code> 配合 <code>AbortController</code> 可以在 id 变化时取消旧请求：
+</p>
+<div class="code" data-lang="js"><pre>
+import { watch, onWatcherCleanup } from 'vue'
+
+watch(() =&gt; toValue(url), async (currentUrl) =&gt; {
+  const controller = new AbortController()
+  onWatcherCleanup(() =&gt; controller.abort())   // 下次触发前先取消上一次
+  data.value = await $fetch(currentUrl, { signal: controller.signal })
+}, { immediate: true })
+</pre></div>
+<p>这正是 TanStack Query 这类库替你处理掉的细节之一。</p>
+</details>
+
+<h3>404 页面</h3>
+
+<div class="code" data-lang="vue" data-file="src/components/NotFound.vue"><pre>
+&lt;template&gt;
+  &lt;main class="not-found"&gt;
+    &lt;h1&gt;页面不存在&lt;/h1&gt;
+    &lt;p class="more-info"&gt;
+      抱歉，你要找的页面不存在，可能已被移动或删除。&lt;br&gt;
+      请检查拼写，或点击下面的按钮返回首页。
+    &lt;/p&gt;
+    &lt;div class="actions"&gt;
+      &lt;RouterLink :to="{ name: 'home' }" class="button"&gt;返回首页&lt;/RouterLink&gt;
+    &lt;/div&gt;
+  &lt;/main&gt;
+&lt;/template&gt;
+
+&lt;style lang="stylus" scoped&gt;
+.more-info
+  text-align center
+&lt;/style&gt;
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/router.js"><pre>
+import NotFound from './components/NotFound.vue'
+
+const routes = [
+  // ...
+  // 匹配所有其他路径，并把路径放进 params.pathMatch
+  { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFound },
+]
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; Vue Router 4 变化：不再支持 path: '*'</div>
+  <p>原书的 <code>{ path: '*' }</code> 在 Vue Router 4 中会报错，必须写成带自定义正则的参数 <code>'/:pathMatch(.*)*'</code>。因为路由会按具体程度自动排序，它放在哪里都行。</p>
+</div>
+
+<h3>路由过渡动画</h3>
+
+<p>
+  原书直接把 <code>&lt;router-view&gt;</code> 包在 <code>&lt;transition&gt;</code> 里。Vue Router 4 中 <code>&lt;RouterView&gt;</code> 不能再直接被 <code>&lt;Transition&gt;</code> 包裹，
+  而是通过作用域插槽把当前组件交给你，你自己用 <code>&lt;component :is&gt;</code> 渲染：
+</p>
+
+<div class="code" data-lang="vue" data-file="src/components/AppLayout.vue"><pre>
+&lt;RouterView v-slot="{ Component }"&gt;
+  &lt;Transition name="fade" mode="out-in"&gt;
+    &lt;component :is="Component" /&gt;
+  &lt;/Transition&gt;
+&lt;/RouterView&gt;
+</pre></div>
+
+<p><code>mode="out-in"</code> 表示先让旧页面离开、再让新页面进入，避免两个页面同时出现挤在一起。</p>
+
+<div class="box tip">
+  <div class="t">&#10003; 这个插槽还能做更多事</div>
+  <p>同样的模式可以包一层 <code>&lt;KeepAlive&gt;</code> 来缓存页面状态，或者根据 <code>route.meta.transition</code> 给不同页面设置不同的过渡效果。</p>
+</div>
+
+<h3>滚动行为</h3>
+
+<p>切换路由时，可以控制页面滚动位置：回到顶部、跳到锚点，或者在用户点“后退”时恢复之前的位置。</p>
+
+<div class="code" data-lang="js" data-file="src/router.js"><pre>
+const router = createRouter({
+  history: createWebHistory(),
+  routes,
+  scrollBehavior(to, from, savedPosition) {
+    if (savedPosition) {
+      return savedPosition            // 前进/后退：恢复之前的位置
+    }
+    if (to.hash) {
+      return { el: to.hash }          // 有锚点：滚到对应元素
+    }
+    return { top: 0 }                 // 其他：回到顶部
+  },
+})
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 返回值的格式变了</div>
+  <p>原书返回 <code>{ x: 0, y: 0 }</code> 和 <code>{ selector: '#foo' }</code>；Vue Router 4 对齐了浏览器原生的 <code>scrollTo</code>，改为 <code>{ left, top }</code> 和 <code>{ el: '#foo' }</code>，还可以加 <code>behavior: 'smooth'</code>。</p>
+</div>
+
+<h3>路由懒加载</h3>
+
+<p>
+  原书没有提到，但对真实项目非常重要：把 <code>component</code> 写成一个返回 <code>import()</code> 的函数，这个页面就会被打包成单独的文件，
+  <strong>第一次访问时才下载</strong>。用户打开首页时，不需要下载工单页的代码：
+</p>
+
+<div class="code" data-lang="js" data-file="src/router.js"><pre>
+const routes = [
+  { path: '/', name: 'home', component: Home },                       // 首页：直接导入
+  { path: '/faq', name: 'faq', component: () =&gt; import('./components/FAQ.vue') },
+  {
+    path: '/tickets',
+    component: () =&gt; import('./components/TicketsLayout.vue'),
+    meta: { private: true },
+    children: [ /* 子路由也可以懒加载 */ ],
+  },
+]
+</pre></div>
+
+<h3>最终的路由配置</h3>
+
+<div class="code" data-lang="js" data-file="src/router.js"><pre>
+import { createRouter, createWebHistory } from 'vue-router'
+import state from './state'
+import Home from './components/Home.vue'
+
+const routes = [
+  { path: '/', name: 'home', component: Home },
+  { path: '/faq', name: 'faq', component: () =&gt; import('./components/FAQ.vue') },
+  { path: '/login', name: 'login', component: () =&gt; import('./components/Login.vue'), meta: { guest: true } },
+  {
+    path: '/tickets',
+    component: () =&gt; import('./components/TicketsLayout.vue'),
+    meta: { private: true },
+    children: [
+      { path: '', name: 'tickets', component: () =&gt; import('./components/Tickets.vue') },
+      { path: 'new', name: 'new-ticket', component: () =&gt; import('./components/NewTicket.vue') },
+      { path: ':id', name: 'ticket', component: () =&gt; import('./components/Ticket.vue'), props: true },
+    ],
+  },
+  { path: '/:pathMatch(.*)*', name: 'not-found', component: () =&gt; import('./components/NotFound.vue') },
+]
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes,
+  scrollBehavior(to, from, savedPosition) {
+    if (savedPosition) return savedPosition
+    if (to.hash) return { el: to.hash }
+    return { top: 0 }
+  },
+})
+
+router.beforeEach((to) =&gt; {
+  if (to.meta.private &amp;&amp; !state.user) {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
+  if (to.meta.guest &amp;&amp; state.user) {
+    return { name: 'home' }
+  }
+})
+
+export default router
+</pre></div>
+
+<h2 id="errors">错误处理<span class="sup">补充</span></h2>
+
+<p>
+  到目前为止，我们只在 <code>SmartForm</code> 和 <code>useRemoteData</code> 里处理了请求错误。但应用里还可能发生其他错误：组件渲染时访问了 <code>undefined</code> 的属性、
+  某个第三方库抛出异常、部署新版本后用户浏览器里的旧页面加载不到懒加载的代码块……不处理的话，轻则控制台报错，重则整个页面白屏。
+  一个稳健的应用应该<strong>分层</strong>处理错误：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="三层错误处理：局部 try/catch，组件边界 onErrorCaptured，全局 errorHandler，以及路由加载失败">
+  <rect class="bx-g" x="20" y="20" width="720" height="60" rx="10"/>
+  <text class="ttl on-g" x="40" y="44">① 就地处理：try/catch</text>
+  <text class="sm" x="40" y="66">请求失败、用户输入有误 —— 预料之中的错误，在发生的地方处理并给用户友好提示（SmartForm、useRemoteData 已经这样做了）</text>
+  <path class="ln" d="M380 82 V98" marker-end="url(#ar)"/>
+  <text class="halo sm" x="390" y="94">没被捕获的，继续往上冒泡</text>
+  <rect class="bx-a" x="20" y="102" width="720" height="60" rx="10"/>
+  <text class="ttl on-a" x="40" y="126">② 组件边界：onErrorCaptured</text>
+  <text class="sm" x="40" y="148">后代组件渲染、生命周期、事件处理中抛出的错误 —— 由 ErrorBoundary 组件捕获，只把出错的那一块替换成“出错了”，其余页面照常工作</text>
+  <path class="ln" d="M380 164 V180" marker-end="url(#ar)"/>
+  <rect class="bx-r" x="20" y="184" width="720" height="60" rx="10"/>
+  <text class="ttl on-r" x="40" y="208">③ 全局兜底：app.config.errorHandler</text>
+  <text class="sm" x="40" y="230">所有没被处理的 Vue 错误最终都到这里 —— 记录日志、上报监控（Sentry 等）、必要时提示用户刷新</text>
+  <rect class="bx-d" x="20" y="256" width="720" height="34" rx="8"/>
+  <text class="sm" x="380" y="278" text-anchor="middle">另外：router.onError 处理“懒加载代码块下载失败”；window 的 unhandledrejection 兜底未处理的 Promise 拒绝</text>
+</svg>
+<figcaption>图 5-21　分层的错误处理</figcaption>
+</figure>
+
+<h3>组件级：错误边界</h3>
+
+<div class="code" data-lang="vue" data-file="src/components/ErrorBoundary.vue"><pre>
+&lt;script setup&gt;
+import { ref, onErrorCaptured } from 'vue'
+
+const error = ref(null)
+
+onErrorCaptured((err, instance, info) =&gt; {
+  error.value = err
+  console.error('组件出错：', info, err)
+  return false              // 返回 false：错误到此为止，不再向上传播
+})
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div v-if="error" class="error-box"&gt;
+    &lt;p&gt;这部分内容出了点问题。&lt;/p&gt;
+    &lt;button @click="error = null"&gt;重试&lt;/button&gt;
+  &lt;/div&gt;
+  &lt;slot v-else /&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="code" data-lang="vue"><pre>
+&lt;!-- 工单详情出错，不会影响外面的布局和菜单 --&gt;
+&lt;ErrorBoundary :key="$route.fullPath"&gt;     &lt;!-- 换页面时用 key 重置错误状态 --&gt;
+  &lt;RouterView /&gt;
+&lt;/ErrorBoundary&gt;
+</pre></div>
+
+<h3>全局：errorHandler 与路由错误</h3>
+
+<div class="code" data-lang="js" data-file="src/main.js"><pre>
+app.config.errorHandler = (err, instance, info) =&gt; {
+  console.error('[全局错误]', info, err)
+  // 生产环境上报到监控服务，例如：Sentry.captureException(err)
+}
+
+// 部署新版本后，旧页面去请求已被删除的代码块会失败：直接刷新页面加载新版本
+router.onError((error, to) =&gt; {
+  if (/Failed to fetch dynamically imported module|Loading chunk/i.test(error.message)) {
+    window.location.assign(to.fullPath)
+  }
+})
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 生产环境的错误监控</div>
+  <p>
+    用户遇到的错误你在自己的电脑上看不到。<a href="https://sentry.io/">Sentry</a> 等服务提供了 Vue 专用的 SDK（<code>@sentry/vue</code>），
+    会自动挂到 <code>errorHandler</code> 上，收集错误堆栈、发生在哪个组件、用户之前做了什么操作，配合 source map 还能直接定位到源码行。
+  </p>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<div class="tw"><table>
+<thead><tr><th>主题</th><th>原书（Vue 2 + Router 3）</th><th>本教程（Vue 3 + Router 4）</th></tr></thead>
+<tbody>
+<tr><td>创建路由器</td><td><code>new VueRouter({ mode })</code></td><td><code>createRouter({ history: createWebHistory() })</code></td></tr>
+<tr><td>安装</td><td><code>Vue.use(VueRouter)</code> + <code>new Vue({ router })</code></td><td><code>app.use(router)</code></td></tr>
+<tr><td>激活链接</td><td>需要 <code>exact</code></td><td>按路由记录判断，<code>exact</code> 移除</td></tr>
+<tr><td>链接渲染成按钮</td><td><code>tag="button"</code></td><td><code>custom</code> + <code>v-slot</code></td></tr>
+<tr><td>守卫</td><td><code>next()</code> 回调</td><td>返回值（<code>next</code> 仍可用但不推荐）</td></tr>
+<tr><td>附带跳转数据</td><td>非路径 params</td><td>query</td></tr>
+<tr><td>子路由 meta</td><td>要查 <code>to.matched</code></td><td><code>to.meta</code> 自动合并</td></tr>
+<tr><td>404</td><td><code>path: '*'</code></td><td><code>path: '/:pathMatch(.*)*'</code></td></tr>
+<tr><td>路由过渡</td><td><code>&lt;transition&gt;&lt;router-view/&gt;</code></td><td><code>&lt;RouterView v-slot="{ Component }"&gt;</code></td></tr>
+<tr><td>滚动</td><td><code>{ x, y }</code> / <code>{ selector }</code></td><td><code>{ top, left }</code> / <code>{ el }</code></td></tr>
+<tr><td>插件</td><td><code>Vue.prototype.$fetch</code></td><td><code>app.config.globalProperties</code> / <code>provide</code></td></tr>
+<tr><td>逻辑复用</td><td>mixins</td><td>组合式函数 <code>useXxx()</code></td></tr>
+<tr><td>组件 v-model</td><td><code>value</code> + <code>input</code>，<code>model</code> 选项</td><td><code>defineModel()</code>，<code>v-model:name</code></td></tr>
+<tr><td>具名插槽</td><td><code>slot="actions"</code></td><td><code>#actions</code></td></tr>
+<tr><td>样式穿透</td><td><code>&gt;&gt;&gt;</code> / <code>/deep/</code></td><td><code>:deep()</code></td></tr>
+<tr><td>页面缓存 <span class="sup">补充</span></td><td>—</td><td><code>&lt;KeepAlive&gt;</code>、<code>onActivated</code></td></tr>
+<tr><td>表单校验 <span class="sup">补充</span></td><td>手写计算属性</td><td>VeeValidate + Zod</td></tr>
+<tr><td>复合组件 <span class="sup">补充</span></td><td>—</td><td><code>provide</code> / <code>inject</code> + <code>InjectionKey</code></td></tr>
+<tr><td>暴露方法 <span class="sup">补充</span></td><td><code>this.$refs.form.reset()</code></td><td><code>defineExpose</code> + <code>useTemplateRef</code></td></tr>
+<tr><td>错误处理 <span class="sup">补充</span></td><td>—</td><td><code>onErrorCaptured</code>、<code>app.config.errorHandler</code>、<code>router.onError</code></td></tr>
+</tbody>
+</table></div>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>给工单详情加上评论列表和评论表单（需要在后端加接口，或者先用假数据），评论表单同样用 VeeValidate 校验“不能为空、最多 500 字”。</li>
+    <li>给工单列表加一个关键字筛选框，配合 <code>KeepAlive</code>，确认从详情页返回时关键字和滚动位置都还在。</li>
+    <li>故意在 <code>Ticket.vue</code> 的模板里访问一个不存在的属性（如 <code>ticket.foo.bar</code>），观察 <code>ErrorBoundary</code> 如何把错误限制在局部。</li>
+    <li>工单列表支持按状态筛选，筛选条件放在 URL 的 query 里（<code>/tickets?status=open</code>），刷新后仍然保留。</li>
+    <li>把 <code>useRemoteData</code> 改为支持“请求失败后自动重试 3 次”。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

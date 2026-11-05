@@ -1,0 +1,711 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 10 章 · 组件库与设计系统 — Vue 3 项目实战教程</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .ds-demo { --ds-hue: 200; --ds-primary: oklch(0.58 0.15 var(--ds-hue)); --ds-primary-bg: oklch(0.58 0.15 var(--ds-hue) / .12); --ds-radius: 8px; }
+  .ds-demo .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+  .ds-demo .ds-btn { font: inherit; font-size: 14px; cursor: pointer; border-radius: var(--ds-radius); padding: 6px 14px; border: 1px solid var(--ds-primary); }
+  .ds-demo .ds-btn.solid { background: var(--ds-primary); color: #fff; }
+  .ds-demo .ds-btn.soft { background: var(--ds-primary-bg); color: var(--ds-primary); }
+  .ds-demo .ds-btn.ghost { background: transparent; color: var(--ds-primary); }
+  .ds-demo .ds-btn:focus-visible, .ds-demo [role=menuitem]:focus-visible { outline: 3px solid var(--ds-primary); outline-offset: 2px; }
+  .ds-menu-wrap { position: relative; display: inline-block; }
+  .ds-menu { position: absolute; top: calc(100% + 6px); left: 0; min-width: 170px; z-index: 5; list-style: none; margin: 0; padding: 4px;
+    background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--ds-radius); box-shadow: 0 8px 24px rgb(0 0 0 / .15); }
+  .ds-menu [role=menuitem] { padding: 6px 10px; border-radius: 6px; cursor: pointer; outline: none; }
+  .ds-menu [role=menuitem]:focus { background: var(--ds-primary-bg); color: var(--ds-primary); }
+  .ds-log { font-family: var(--mono); font-size: 12px; color: var(--fg-soft); }
+  .ds-demo kbd { font-size: 11px; }
+</style>
+</head>
+<body data-chapter="10">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 10 章 · 进阶专题</span>
+<h1>组件库与设计系统</h1>
+<p class="lede">
+  书里的项目大多手写样式，这对学习很好。真实项目里，团队通常会选一个<strong>组件库</strong>来加速开发，或者在它的基础上搭一套自己的<strong>设计系统</strong>。
+  本章讨论怎么选组件库、怎么定制主题、怎么写出可复用而且<strong>人人都能用</strong>（无障碍）的基础组件，以及怎么用 Storybook 给组件写文档。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>理解设计系统的层次：设计令牌 → 基础组件 → 业务组件 → 页面</li>
+    <li>了解 Element Plus、Naive UI、Vuetify、PrimeVue 和 shadcn-vue / Reka UI 的定位，学会选型</li>
+    <li>用 <code>unplugin-vue-components</code> 按需引入组件</li>
+    <li>用 CSS 变量做主题和暗色模式，并定制各家组件库的主题</li>
+    <li>写一个带变体、透传属性和插槽类型的基础按钮组件</li>
+    <li>掌握无障碍（a11y）的核心：语义化标签、键盘操作、焦点管理和 ARIA</li>
+    <li>用 Storybook 开发和展示组件</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="layers">设计系统的四层结构</h2>
+
+<p>
+  “设计系统”听起来很大，其实就是一套<strong>大家共同遵守的规则 + 实现这些规则的组件</strong>。从下往上可以分成四层，下层越稳定，上层越容易保持一致：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="设计系统的四层：设计令牌、基础组件、业务组件、页面，越往下越稳定、复用范围越广">
+  <rect class="bx-g" x="120" y="20" width="520" height="52" rx="10"/>
+  <text class="ttl on-g" x="140" y="51">页面</text>
+  <text class="sm" x="620" y="51" text-anchor="end">工单列表页、登录页…  变化最频繁</text>
+  <rect class="bx-b" x="90" y="84" width="580" height="52" rx="10"/>
+  <text class="ttl on-b" x="110" y="115">业务组件</text>
+  <text class="sm" x="650" y="115" text-anchor="end">TicketCard、UserMenu、PostForm…  只在本项目用</text>
+  <rect class="bx-p" x="60" y="148" width="640" height="52" rx="10"/>
+  <text class="ttl on-p" x="80" y="179">基础组件</text>
+  <text class="sm" x="680" y="179" text-anchor="end">Button、Input、Dialog、Menu…  组件库提供或自己写</text>
+  <rect class="bx-a" x="30" y="212" width="700" height="52" rx="10"/>
+  <text class="ttl on-a" x="50" y="243">设计令牌</text>
+  <text class="sm" x="710" y="243" text-anchor="end">颜色、字号、间距、圆角、阴影、动效时长…  用 CSS 变量表达</text>
+  <path class="ln-a" d="M14 24 V258" marker-end="url(#ar-a)"/>
+  <text class="lbl halo" x="16" y="282">越往下越稳定，复用范围越广</text>
+</svg>
+<figcaption>图 10-1　设计系统的层次</figcaption>
+</figure>
+
+<p>
+  组件库帮你解决的是第二层（再附带一套默认的第一层）。选组件库，本质上是在选“基础组件和设计令牌，我要自己掌控多少”。
+</p>
+
+<h2 id="choose">组件库选型</h2>
+
+<p>Vue 3 生态里的组件库大致落在一条光谱上：一头是“开箱即用、样式全包”，另一头是“只给行为、样式全归你”。</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="组件库光谱：样式全包的 Element Plus、Vuetify、Naive UI、PrimeVue；无样式的 Reka UI、Headless UI；复制源码到项目的 shadcn-vue">
+  <path class="ln" d="M30 120 H730" marker-start="url(#ar)" marker-end="url(#ar)"/>
+  <text class="lbl halo" x="30" y="108">开箱即用，风格统一</text>
+  <text class="lbl halo" x="730" y="108" text-anchor="end">完全掌控外观</text>
+
+  <rect class="bx-b" x="20" y="140" width="250" height="90" rx="12"/>
+  <text class="ttl on-b" x="145" y="164" text-anchor="middle">样式全包的组件库</text>
+  <text class="sm" x="145" y="188" text-anchor="middle">Element Plus · Naive UI</text>
+  <text class="sm" x="145" y="206" text-anchor="middle">Vuetify · PrimeVue · Ant Design Vue</text>
+
+  <rect class="bx-p" x="290" y="140" width="210" height="90" rx="12"/>
+  <text class="ttl on-p" x="395" y="164" text-anchor="middle">复制源码</text>
+  <text class="sm" x="395" y="188" text-anchor="middle">shadcn-vue</text>
+  <text class="sm" x="395" y="206" text-anchor="middle">代码进你的仓库，随便改</text>
+
+  <rect class="bx-g" x="520" y="140" width="220" height="90" rx="12"/>
+  <text class="ttl on-g" x="630" y="164" text-anchor="middle">无样式（headless）</text>
+  <text class="sm" x="630" y="188" text-anchor="middle">Reka UI · Headless UI</text>
+  <text class="sm" x="630" y="206" text-anchor="middle">只提供行为和无障碍</text>
+
+  <rect class="bx" x="140" y="20" width="480" height="62" rx="10"/>
+  <text class="sm" x="380" y="44" text-anchor="middle">shadcn-vue 的组件 = Reka UI（行为）+ Tailwind CSS（样式）</text>
+  <text class="sm" x="380" y="64" text-anchor="middle">所以它处在中间：有现成外观，但外观代码归你所有</text>
+</svg>
+<figcaption>图 10-2　从“样式全包”到“只给行为”</figcaption>
+</figure>
+
+<div class="tw"><table>
+<thead><tr><th>库</th><th>风格与特点</th><th>适合</th></tr></thead>
+<tbody>
+<tr><td><strong>Element Plus</strong></td><td>国内最流行的后台风格组件库，表单、表格、日期组件齐全，中文文档完善</td><td>管理后台、内部系统</td></tr>
+<tr><td><strong>Naive UI</strong></td><td>TypeScript 编写，主题定制基于 JS 对象，性能和类型体验好</td><td>想要现代外观、重视类型的项目</td></tr>
+<tr><td><strong>Vuetify</strong></td><td>Material Design 实现，组件最全，自带栅格和主题系统</td><td>喜欢 Material 风格、需要大量现成组件</td></tr>
+<tr><td><strong>PrimeVue</strong></td><td>组件数量多，可切换“有样式 / 无样式”两种模式，主题预设丰富</td><td>需要灵活度的企业应用</td></tr>
+<tr><td><strong>shadcn-vue</strong></td><td>不是依赖包，而是用 CLI 把组件源码复制进项目；基于 Reka UI + Tailwind</td><td>品牌感强、要求完全掌控外观的产品</td></tr>
+<tr><td><strong>Reka UI</strong>（原 Radix Vue）</td><td>无样式组件：只负责交互逻辑、键盘操作和 ARIA</td><td>从零搭自己的设计系统</td></tr>
+</tbody>
+</table></div>
+
+<div class="box key">
+  <div class="t">&#9733; 选型时问自己三个问题</div>
+  <p>
+    ① 设计稿是<strong>贴近某个现成风格</strong>，还是有强烈的品牌设计？前者选样式全包的库，后者选 shadcn-vue 或 headless。<br>
+    ② 最复杂的组件是什么？大数据表格、树形选择、日期区间这类组件自己写成本很高，确认候选库里有，并且好用。<br>
+    ③ 团队会维护多久？看 GitHub 活跃度、Vue 新版本的跟进速度、TypeScript 类型和无障碍支持。
+  </p>
+</div>
+
+<h2 id="on-demand">按需引入</h2>
+
+<p>
+  组件库通常有几十上百个组件，全量引入会让包体积变大。推荐用 <code>unplugin-vue-components</code>：你在模板里直接写 <code>&lt;el-button&gt;</code>，
+  它在<strong>编译时</strong>自动加上对应的 import（连样式一起），没用到的组件不会打包进来。以 Element Plus 为例：
+</p>
+
+<div class="code" data-lang="bash"><pre>
+npm i element-plus
+npm i -D unplugin-vue-components unplugin-auto-import
+</pre></div>
+
+<div class="code" data-lang="js" data-file="vite.config.js"><pre>
+import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
+import Components from 'unplugin-vue-components/vite'
+import AutoImport from 'unplugin-auto-import/vite'
+import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
+
+export default defineConfig({
+  plugins: [
+    vue(),
+    // 模板里的 &lt;el-xxx&gt; 组件自动导入
+    Components({ resolvers: [ElementPlusResolver()] }),
+    // ElMessage、ElMessageBox 这类在 JS 里调用的 API 自动导入
+    AutoImport({ resolvers: [ElementPlusResolver()] }),
+  ],
+})
+</pre></div>
+
+<p>Naive UI、Vuetify、PrimeVue、Ant Design Vue 都有对应的 resolver 或官方插件，用法相同。</p>
+
+<div class="box note">
+  <div class="t">&#9432; 和第 4 章的自动导入是同一件事</div>
+  <p>第 4 章讨论过自动导入的利弊。组件库的按需引入是它最没有争议的用法：组件名带统一前缀（<code>el-</code>、<code>n-</code>），一眼就能看出来源。</p>
+</div>
+
+<h2 id="theme">主题与设计令牌</h2>
+
+<h3>设计令牌的三层</h3>
+
+<p>
+  不要在组件里直接写 <code>#3b82f6</code>。把颜色、间距等值定义成<strong>令牌</strong>（token），再分层引用。
+  这样换品牌色、做暗色模式时，只需要改一处：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="令牌三层：原始令牌是色板，语义令牌描述用途并在暗色模式下改指向，组件令牌引用语义令牌">
+  <rect class="bx-a" x="20" y="40" width="210" height="160" rx="12"/>
+  <text class="ttl on-a" x="125" y="66" text-anchor="middle">原始令牌（色板）</text>
+  <text class="mono sm" x="40" y="96">--blue-500: #3b82f6</text>
+  <text class="mono sm" x="40" y="118">--blue-400: #60a5fa</text>
+  <text class="mono sm" x="40" y="140">--gray-900: #111827</text>
+  <text class="mono sm" x="40" y="162">--gray-50:  #f9fafb</text>
+  <text class="sm" x="125" y="188" text-anchor="middle">只描述“是什么颜色”</text>
+
+  <rect class="bx-b" x="275" y="40" width="210" height="160" rx="12"/>
+  <text class="ttl on-b" x="380" y="66" text-anchor="middle">语义令牌</text>
+  <text class="mono sm" x="295" y="96">--color-primary</text>
+  <text class="mono sm" x="295" y="118">--color-bg</text>
+  <text class="mono sm" x="295" y="140">--color-text</text>
+  <text class="sm" x="380" y="166" text-anchor="middle">描述“用在哪里”</text>
+  <text class="sm" x="380" y="186" text-anchor="middle">暗色模式只改这一层</text>
+
+  <rect class="bx-p" x="530" y="40" width="210" height="160" rx="12"/>
+  <text class="ttl on-p" x="635" y="66" text-anchor="middle">组件令牌</text>
+  <text class="mono sm" x="550" y="96">--btn-bg</text>
+  <text class="mono sm" x="550" y="118">--btn-radius</text>
+  <text class="mono sm" x="550" y="140">--input-border</text>
+  <text class="sm" x="635" y="166" text-anchor="middle">某个组件专用</text>
+  <text class="sm" x="635" y="186" text-anchor="middle">默认引用语义令牌</text>
+
+  <path class="ln" d="M275 120 H234" marker-end="url(#ar)"/>
+  <path class="ln" d="M530 120 H489" marker-end="url(#ar)"/>
+  <text class="lbl" x="380" y="226" text-anchor="middle">箭头 = “引用”：var(--btn-bg) → var(--color-primary) → var(--blue-500)</text>
+</svg>
+<figcaption>图 10-3　原始令牌、语义令牌与组件令牌</figcaption>
+</figure>
+
+<div class="code" data-lang="css" data-file="src/styles/tokens.css"><pre>
+:root {
+  /* 原始令牌 */
+  --blue-500: #3b82f6;
+  --blue-400: #60a5fa;
+  --gray-50: #f9fafb;
+  --gray-900: #111827;
+
+  /* 语义令牌 */
+  --color-primary: var(--blue-500);
+  --color-bg: var(--gray-50);
+  --color-text: var(--gray-900);
+  --radius: 8px;
+}
+
+/* 暗色模式：只改语义层 */
+:root.dark {
+  --color-primary: var(--blue-400);
+  --color-bg: var(--gray-900);
+  --color-text: var(--gray-50);
+}
+</pre></div>
+
+<p>
+  本教程网站的配色也是这么做的：所有颜色都是 CSS 变量，用 <code>light-dark()</code> 函数同时给出亮色和暗色的值，你可以在浏览器开发者工具里看到。
+  切换暗色模式的逻辑可以直接用 VueUse 的 <code>useDark()</code>，它会在 <code>&lt;html&gt;</code> 上切换 <code>dark</code> 类并记住用户的选择。
+</p>
+
+<h3>定制各家组件库</h3>
+
+<p>主流组件库都把自己的设计令牌暴露成了 CSS 变量或 JS 对象，覆盖它们就能换成你的品牌色：</p>
+
+<div class="code" data-lang="css" data-file="Element Plus：覆盖 CSS 变量"><pre>
+/* main.js 里：import 'element-plus/theme-chalk/dark/css-vars.css' 后，给 html 加 dark 类即可切换暗色 */
+:root {
+  --el-color-primary: #7c3aed;
+  --el-border-radius-base: 8px;
+}
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="Naive UI：用 JS 对象覆盖"><pre>
+&lt;script setup&gt;
+import { NConfigProvider, darkTheme } from 'naive-ui'
+import { useDark } from '@vueuse/core'
+
+const isDark = useDark()
+const overrides = { common: { primaryColor: '#7c3aed', borderRadius: '8px' } }
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;n-config-provider :theme="isDark ? darkTheme : null" :theme-overrides="overrides"&gt;
+    &lt;RouterView /&gt;
+  &lt;/n-config-provider&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="code" data-lang="css" data-file="Tailwind CSS v4（shadcn-vue）：@theme 定义令牌"><pre>
+@import "tailwindcss";
+
+@theme {
+  --color-brand: #7c3aed;     /* 自动生成 bg-brand、text-brand 等工具类 */
+  --radius-card: 12px;
+}
+</pre></div>
+
+<h2 id="base">写一个基础组件</h2>
+
+<p>不管用不用组件库，你迟早要写自己的基础组件。下面这个按钮展示了一个好的基础组件应该具备的几个特征：</p>
+
+<div class="code" data-lang="vue" data-file="src/components/base/BaseButton.vue"><pre>
+&lt;script setup lang="ts"&gt;
+type Variant = 'solid' | 'soft' | 'ghost'
+
+const props = withDefaults(defineProps&lt;{
+  variant?: Variant
+  size?: 'sm' | 'md'
+  loading?: boolean
+  disabled?: boolean
+}&gt;(), { variant: 'solid', size: 'md', loading: false, disabled: false })
+
+// 声明插槽的类型：默认插槽 + 可选的图标插槽
+defineSlots&lt;{
+  default(): any
+  icon?(): any
+}&gt;()
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;!-- 没声明为 prop 的属性（type、@click、aria-*）会自动透传到根元素 button 上 --&gt;
+  &lt;button
+    class="btn"
+    :class="[`btn-${props.variant}`, `btn-${props.size}`]"
+    :disabled="props.disabled || props.loading"
+    :aria-busy="loading || undefined"
+  &gt;
+    &lt;span v-if="loading" class="spinner" aria-hidden="true" /&gt;
+    &lt;slot v-else name="icon" /&gt;
+    &lt;slot /&gt;
+  &lt;/button&gt;
+&lt;/template&gt;
+
+&lt;style scoped&gt;
+.btn {
+  border-radius: var(--btn-radius, var(--radius));
+  border: 1px solid var(--btn-color, var(--color-primary));
+  padding: 6px 14px;
+}
+.btn-solid { background: var(--btn-color, var(--color-primary)); color: #fff; }
+.btn-soft  { background: color-mix(in oklch, var(--btn-color, var(--color-primary)) 12%, transparent); }
+.btn-ghost { background: transparent; }
+.btn:focus-visible { outline: 3px solid var(--color-primary); outline-offset: 2px; }
+&lt;/style&gt;
+</pre></div>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#127912;</span><h4>变体而不是样式参数</h4><p>用 <code>variant="soft"</code> 这样有限的选项，而不是让调用方传颜色、边框，保证全站一致。</p></div>
+  <div class="card"><span class="ic">&#128279;</span><h4>属性透传</h4><p>原生 <code>button</code> 的属性和事件不用一一声明，调用方写的 <code>type</code>、<code>@click</code> 自动落到根元素上。</p></div>
+  <div class="card"><span class="ic">&#127919;</span><h4>样式钩子</h4><p>组件内部只引用令牌，并留出 <code>--btn-color</code> 这样的组件级变量，特殊场景可以局部覆盖。</p></div>
+  <div class="card"><span class="ic">&#9000;</span><h4>键盘友好</h4><p>用真正的 <code>&lt;button&gt;</code>，保留 <code>:focus-visible</code> 焦点样式。下一节详细说。</p></div>
+</div>
+
+<div class="box tip">
+  <div class="t">&#10003; 根元素不是你想透传的元素时</div>
+  <p>
+    比如 <code>BaseInput</code> 的根元素是包住 label 和 input 的 <code>div</code>，你希望 <code>placeholder</code> 落到 input 上。
+    这时用 <code>defineOptions({ inheritAttrs: false })</code> 关闭自动透传，再在 input 上写 <code>v-bind="$attrs"</code>。
+  </p>
+</div>
+
+<h2 id="a11y">无障碍：让每个人都能用</h2>
+
+<p>
+  无障碍（accessibility，常缩写为 a11y）是指让使用屏幕阅读器、只用键盘、视力不佳的用户也能使用你的应用。
+  这不只是“照顾少数人”：手腕受伤的人、在阳光下看手机的人、喜欢键盘快捷操作的高级用户，都会受益。很多国家和地区对公共服务网站有无障碍的法律要求。
+</p>
+
+<h3>第一原则：优先用原生的语义化标签</h3>
+
+<div class="vs">
+  <div class="old"><div class="h">✗ 看起来像按钮</div>
+<div class="code" data-lang="html"><pre>
+&lt;div class="btn" @click="save"&gt;保存&lt;/div&gt;
+&lt;!-- 不能用 Tab 聚焦，不能按回车触发，
+     屏幕阅读器不知道它是按钮 --&gt;
+</pre></div></div>
+  <div class="new"><div class="h">✓ 本来就是按钮</div>
+<div class="code" data-lang="html"><pre>
+&lt;button type="button" class="btn" @click="save"&gt;
+  保存
+&lt;/button&gt;
+&lt;!-- 焦点、键盘、读屏全部免费获得 --&gt;
+</pre></div></div>
+</div>
+
+<p>同理：跳转用 <code>&lt;a&gt;</code> / <code>RouterLink</code>，输入框配 <code>&lt;label&gt;</code>，标题按层级用 <code>h1</code>~<code>h6</code>，列表用 <code>ul</code>/<code>li</code>。只有原生标签做不到时，才需要 ARIA。</p>
+
+<h3>复杂组件：把第 5 章的下拉菜单做完整</h3>
+
+<p>
+  第 5 章的用户菜单只处理了“点外面关闭”。按照 <a href="https://www.w3.org/WAI/ARIA/apg/patterns/menu-button/">WAI-ARIA 菜单按钮模式</a>，一个完整的下拉菜单需要这样的键盘行为和 ARIA 属性：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="菜单按钮的键盘交互：按钮上按回车或下箭头打开并聚焦第一项；菜单内上下箭头移动，Home/End 跳到首尾，回车选择，Esc 关闭并把焦点还给按钮">
+  <rect class="bx-b" x="20" y="60" width="210" height="150" rx="12"/>
+  <text class="ttl on-b" x="125" y="86" text-anchor="middle">按钮（菜单关闭）</text>
+  <text class="mono sm" x="40" y="114">aria-haspopup="menu"</text>
+  <text class="mono sm" x="40" y="134">aria-expanded="false"</text>
+  <text class="mono sm" x="40" y="154">aria-controls="m1"</text>
+  <text class="sm" x="40" y="186">Enter / Space / ↓ 打开</text>
+
+  <rect class="bx-p" x="380" y="30" width="360" height="210" rx="12"/>
+  <text class="ttl on-p" x="560" y="56" text-anchor="middle">菜单 role="menu" id="m1"</text>
+  <rect class="bx-a" x="400" y="72" width="150" height="30" rx="6"/>
+  <text class="sm on-a" x="475" y="92" text-anchor="middle">个人资料（焦点）</text>
+  <rect class="bx" x="400" y="108" width="150" height="30" rx="6"/>
+  <text class="sm" x="475" y="128" text-anchor="middle">设置</text>
+  <rect class="bx" x="400" y="144" width="150" height="30" rx="6"/>
+  <text class="sm" x="475" y="164" text-anchor="middle">退出登录</text>
+  <text class="sm" x="475" y="196" text-anchor="middle">每项 role="menuitem"</text>
+  <text class="sm" x="475" y="214" text-anchor="middle">tabindex="-1"</text>
+  <text class="sm" x="570" y="92">↑ ↓  上一项 / 下一项</text>
+  <text class="sm" x="570" y="118">Home / End  首项 / 末项</text>
+  <text class="sm" x="570" y="144">Enter  选择并关闭</text>
+  <text class="sm" x="570" y="170">Esc  关闭</text>
+  <text class="sm" x="570" y="196">Tab  关闭并继续</text>
+
+  <path class="ln-a" d="M230 100 H376" marker-end="url(#ar-a)"/>
+  <text class="lbl halo" x="303" y="90" text-anchor="middle">打开，聚焦第一项</text>
+  <path class="ln-r" d="M376 190 H234" marker-end="url(#ar)"/>
+  <text class="lbl halo" x="305" y="180" text-anchor="middle">Esc：焦点还给按钮</text>
+</svg>
+<figcaption>图 10-4　菜单按钮的键盘交互与 ARIA 属性</figcaption>
+</figure>
+
+<p>把这套逻辑写成一个组合式函数，任何下拉菜单都能复用：</p>
+
+<div class="code" data-lang="js" data-file="src/composables/useMenu.js"><pre>
+import { ref, nextTick, useId } from 'vue'
+
+export function useMenu() {
+  const open = ref(false)
+  const buttonEl = ref(null)
+  const itemEls = ref([])           // 在模板里用 :ref 函数收集
+  const menuId = useId()            // 3.5+：SSR 安全的唯一 id
+
+  const focusItem = (i) =&gt; {
+    const items = itemEls.value
+    items[(i + items.length) % items.length]?.focus()   // 首尾循环
+  }
+
+  async function show(index = 0) {
+    open.value = true
+    await nextTick()                // 等菜单渲染出来再移焦点
+    focusItem(index)
+  }
+  function hide(returnFocus = true) {
+    open.value = false
+    if (returnFocus) buttonEl.value?.focus()
+  }
+
+  function onButtonKeydown(e) {
+    if (['Enter', ' ', 'ArrowDown'].includes(e.key)) { e.preventDefault(); show(0) }
+    if (e.key === 'ArrowUp') { e.preventDefault(); show(-1) }
+  }
+  function onMenuKeydown(e) {
+    const current = itemEls.value.indexOf(document.activeElement)
+    const actions = {
+      ArrowDown: () =&gt; focusItem(current + 1),
+      ArrowUp: () =&gt; focusItem(current - 1),
+      Home: () =&gt; focusItem(0),
+      End: () =&gt; focusItem(-1),
+      Escape: () =&gt; hide(),
+      Tab: () =&gt; hide(false),       // 不阻止默认行为，让焦点自然移走
+    }
+    if (actions[e.key]) {
+      if (e.key !== 'Tab') e.preventDefault()
+      actions[e.key]()
+    }
+  }
+
+  return { open, buttonEl, itemEls, menuId, show, hide, onButtonKeydown, onMenuKeydown }
+}
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="src/components/UserMenu.vue"><pre>
+&lt;script setup&gt;
+import { useMenu } from '@/composables/useMenu'
+import { vClickOutside } from '@/directives/clickOutside'
+
+const items = [{ label: '个人资料', to: '/profile' }, { label: '设置', to: '/settings' }, { label: '退出登录', action: 'logout' }]
+const { open, buttonEl, itemEls, menuId, show, hide, onButtonKeydown, onMenuKeydown } = useMenu()
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="user-menu" v-click-outside="() =&gt; open &amp;&amp; hide(false)"&gt;
+    &lt;button ref="buttonEl" type="button" aria-haspopup="menu"
+      :aria-expanded="open" :aria-controls="menuId"
+      @click="open ? hide() : show()" @keydown="onButtonKeydown"&gt;
+      我的账户
+    &lt;/button&gt;
+    &lt;ul v-if="open" :id="menuId" role="menu" @keydown="onMenuKeydown"&gt;
+      &lt;li v-for="(item, i) in items" :key="item.label" role="menuitem" tabindex="-1"
+        :ref="(el) =&gt; (itemEls[i] = el)" @click="select(item)" @keydown.enter="select(item)"&gt;
+        {{ item.label }}
+      &lt;/li&gt;
+    &lt;/ul&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>试试用键盘操作下面的演示（先用 <kbd>Tab</kbd> 把焦点移到按钮上），再拖动滑块换一个主题色，体会“只改一个令牌，所有组件跟着变”：</p>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · 无障碍菜单 + 主题令牌</div>
+  <div class="body">
+    <div id="demo-ds" class="ds-demo" v-cloak :style="{ '--ds-hue': hue, '--ds-radius': radius + 'px' }">
+      <div class="row">
+        <label>主题色相 <input type="range" min="0" max="360" v-model.number="hue" aria-label="主题色相"></label>
+        <label>圆角 <input type="range" min="0" max="20" v-model.number="radius" aria-label="圆角大小"></label>
+      </div>
+      <div class="row">
+        <button class="ds-btn solid" type="button">solid</button>
+        <button class="ds-btn soft" type="button">soft</button>
+        <button class="ds-btn ghost" type="button">ghost</button>
+        <div class="ds-menu-wrap" ref="wrap">
+          <button ref="buttonEl" class="ds-btn solid" type="button" aria-haspopup="menu"
+            :aria-expanded="open" aria-controls="ds-menu"
+            @click="open ? hide() : show()" @keydown="onButtonKeydown">我的账户 ▾</button>
+          <ul v-if="open" id="ds-menu" class="ds-menu" role="menu" @keydown="onMenuKeydown">
+            <li v-for="(item, i) in items" :key="item" role="menuitem" tabindex="-1"
+              :ref="(el) => (itemEls[i] = el)" @click="select(item)" @keydown.enter.prevent="select(item)">{{ item }}</li>
+          </ul>
+        </div>
+      </div>
+      <div class="ds-log">{{ msg }}</div>
+    </div>
+  </div>
+</div>
+
+<h3>弹窗的焦点管理</h3>
+
+<p>第 3 章用 Teleport 做过浮层。一个合格的模态对话框还需要：</p>
+<ol class="steps">
+  <li>打开时把焦点移到对话框里（第一个可聚焦元素或标题），关闭时把焦点<strong>还给打开它的按钮</strong>；</li>
+  <li><strong>焦点陷阱</strong>：按 <kbd>Tab</kbd> 时焦点只在对话框内循环，不会跑到背后的页面上；</li>
+  <li>按 <kbd>Esc</kbd> 关闭；背后的内容对读屏软件隐藏。</li>
+</ol>
+
+<p>最省事的办法是直接用浏览器原生的 <code>&lt;dialog&gt;</code> 元素：<code>showModal()</code> 打开的对话框天然具备焦点陷阱、<kbd>Esc</kbd> 关闭和背景隔离：</p>
+
+<div class="code" data-lang="vue" data-file="src/components/base/BaseDialog.vue"><pre>
+&lt;script setup&gt;
+import { useTemplateRef, watch } from 'vue'
+
+const open = defineModel({ type: Boolean, default: false })
+const dialog = useTemplateRef('dialog')
+
+watch(open, (v) =&gt; (v ? dialog.value.showModal() : dialog.value.close()))
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;!-- close 事件在按 Esc 或调用 close() 时都会触发，保持 v-model 同步 --&gt;
+  &lt;dialog ref="dialog" aria-labelledby="dlg-title" @close="open = false"&gt;
+    &lt;h2 id="dlg-title"&gt;&lt;slot name="title" /&gt;&lt;/h2&gt;
+    &lt;slot /&gt;
+    &lt;button type="button" @click="open = false"&gt;关闭&lt;/button&gt;
+  &lt;/dialog&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>需要更复杂的交互（组合框、日期选择器、树形控件）时，不要从零实现键盘和 ARIA 逻辑，直接用 Reka UI 这类 headless 库，它们已经按 WAI-ARIA 规范做好了。</p>
+
+<h3>无障碍检查清单与工具</h3>
+
+<div class="tw"><table>
+<thead><tr><th>检查项</th><th>怎么做</th></tr></thead>
+<tbody>
+<tr><td>只用键盘能完成所有操作</td><td>拔掉鼠标走一遍主要流程；焦点样式要清晰可见（不要随手 <code>outline: none</code>）</td></tr>
+<tr><td>图片有替代文字</td><td>有意义的图片写 <code>alt</code>，装饰性图片 <code>alt=""</code></td></tr>
+<tr><td>表单控件有标签</td><td><code>&lt;label for&gt;</code> 或 <code>aria-label</code>；错误信息用 <code>aria-describedby</code> 关联到输入框</td></tr>
+<tr><td>颜色对比度足够</td><td>正文至少 4.5:1；不要只靠颜色传达信息（错误除了变红还要有文字）</td></tr>
+<tr><td>动态内容会被读出</td><td>Toast、表单提交结果放进 <code>aria-live="polite"</code> 的区域</td></tr>
+<tr><td>路由切换后焦点合理</td><td>单页应用换页后，把焦点移到新页面的 <code>h1</code>，并更新 <code>document.title</code></td></tr>
+</tbody>
+</table></div>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#128269;</span><h4>eslint-plugin-vuejs-accessibility</h4><p>写代码时就提示缺少 alt、label、在 div 上绑 click 等问题。</p></div>
+  <div class="card"><span class="ic">&#129514;</span><h4>@axe-core/playwright</h4><p>在第 7 章的 E2E 测试里加一行 <code>new AxeBuilder({ page }).analyze()</code>，自动扫描每个页面。</p></div>
+  <div class="card"><span class="ic">&#128266;</span><h4>真实的读屏软件</h4><p>macOS 的 VoiceOver、Windows 的 NVDA 都免费，亲自听一遍最能发现问题。</p></div>
+</div>
+
+<h2 id="storybook">用 Storybook 开发组件</h2>
+
+<p>
+  基础组件多了以后，需要一个地方集中展示“每个组件有哪些状态”：给设计师验收、给同事查用法、给自己单独调试。
+  <strong>Storybook</strong> 就是这样一个独立运行的组件工作台，它支持 Vue 3 + Vite：
+</p>
+
+<div class="code" data-lang="bash"><pre>
+npm create storybook@latest    # 自动识别 Vue 3 + Vite 项目并完成配置
+npm run storybook              # 在 6006 端口打开
+</pre></div>
+
+<p>每个组件写一个 <code>.stories.js</code> 文件，导出若干个“故事”，每个故事就是组件的一种状态：</p>
+
+<div class="code" data-lang="js" data-file="src/components/base/BaseButton.stories.js"><pre>
+import BaseButton from './BaseButton.vue'
+
+export default {
+  title: 'Base/Button',
+  component: BaseButton,
+  tags: ['autodocs'],                  // 根据 props 自动生成文档页
+  argTypes: {
+    variant: { control: 'select', options: ['solid', 'soft', 'ghost'] },
+  },
+  render: (args) =&gt; ({
+    components: { BaseButton },
+    setup: () =&gt; ({ args }),
+    template: '&lt;BaseButton v-bind="args"&gt;保存&lt;/BaseButton&gt;',
+  }),
+}
+
+export const Solid = { args: { variant: 'solid' } }
+export const Soft = { args: { variant: 'soft' } }
+export const Loading = { args: { loading: true } }
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="Storybook 界面：左侧组件树，中间是可交互的组件画布，下方控制面板修改 props，还有文档、无障碍检查和交互测试插件">
+  <rect class="bx" x="20" y="20" width="720" height="190" rx="12"/>
+  <rect class="bx-b" x="36" y="36" width="160" height="158" rx="8"/>
+  <text class="ttl on-b" x="116" y="60" text-anchor="middle">组件树</text>
+  <text class="sm" x="52" y="86">▾ Base</text>
+  <text class="sm" x="68" y="106">▾ Button</text>
+  <text class="sm on-a" x="84" y="126">Solid</text>
+  <text class="sm" x="84" y="146">Soft</text>
+  <text class="sm" x="84" y="166">Loading</text>
+
+  <rect class="bx-d" x="212" y="36" width="340" height="96" rx="8"/>
+  <text class="sm" x="382" y="58" text-anchor="middle">画布：组件单独渲染，可交互</text>
+  <rect class="bx-a" x="342" y="72" width="80" height="34" rx="8"/>
+  <text class="ttl on-a" x="382" y="94" text-anchor="middle">保存</text>
+
+  <rect class="bx-p" x="212" y="142" width="340" height="52" rx="8"/>
+  <text class="sm" x="230" y="164">Controls：variant [solid ▾]  loading [ ]</text>
+  <text class="sm" x="230" y="182">改这里，画布实时更新</text>
+
+  <rect class="bx-g" x="568" y="36" width="156" height="158" rx="8"/>
+  <text class="ttl on-g" x="646" y="60" text-anchor="middle">插件</text>
+  <text class="sm" x="646" y="88" text-anchor="middle">Docs 自动文档</text>
+  <text class="sm" x="646" y="112" text-anchor="middle">a11y 无障碍检查</text>
+  <text class="sm" x="646" y="136" text-anchor="middle">Interactions 交互测试</text>
+  <text class="sm" x="646" y="160" text-anchor="middle">Viewport 响应式</text>
+</svg>
+<figcaption>图 10-5　Storybook：组件的工作台和说明书</figcaption>
+</figure>
+
+<div class="box tip">
+  <div class="t">&#10003; 更轻量的选择</div>
+  <p>Storybook 功能强大但依赖较多。如果只想要一个简单的组件展示页，可以看看为 Vue 设计的 <strong>Histoire</strong>，或者干脆在项目里建一个仅开发环境可访问的 <code>/playground</code> 路由。</p>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<div class="tw"><table>
+<thead><tr><th>主题</th><th>要点</th></tr></thead>
+<tbody>
+<tr><td>设计系统</td><td>令牌 → 基础组件 → 业务组件 → 页面，下层越稳定越好</td></tr>
+<tr><td>选型</td><td>贴近现成风格选 Element Plus / Naive UI / Vuetify / PrimeVue；品牌感强选 shadcn-vue 或 Reka UI</td></tr>
+<tr><td>按需引入</td><td><code>unplugin-vue-components</code> + 对应的 resolver</td></tr>
+<tr><td>主题</td><td>原始 / 语义 / 组件三层令牌；暗色模式只改语义层；覆盖组件库暴露的变量</td></tr>
+<tr><td>基础组件</td><td>有限的变体、属性透传、<code>defineSlots</code> 类型、只引用令牌</td></tr>
+<tr><td>无障碍</td><td>优先原生标签；复杂组件按 WAI-ARIA 模式实现键盘和焦点；用原生 <code>&lt;dialog&gt;</code>；工具 + 真实读屏测试</td></tr>
+<tr><td>文档</td><td>Storybook：每个状态一个故事，自动生成文档和无障碍检查</td></tr>
+</tbody>
+</table></div>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>用 Element Plus 或 Naive UI 重写第 5 章客服中心的登录表单和工单列表，比较代码量和外观。</li>
+    <li>给你的项目建立 <code>tokens.css</code>，把所有硬编码的颜色替换成语义令牌，再用 <code>useDark()</code> 实现暗色模式切换。</li>
+    <li>写一个 <code>BaseInput</code>：带 label、错误提示，用 <code>inheritAttrs: false</code> 把属性透传到 input 上，并用 <code>aria-describedby</code> 关联错误信息。</li>
+    <li>把本章的 <code>useMenu</code> 用到第 5 章的 UserMenu 上，只用键盘完成“打开菜单 → 选择退出登录”。</li>
+    <li>在第 7 章的 Playwright 测试里接入 <code>@axe-core/playwright</code>，修复它报告的问题。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+<script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+<script>
+  if (window.Vue) {
+    const { createApp, ref, nextTick, onMounted, onBeforeUnmount } = Vue
+    createApp({
+      setup() {
+        const hue = ref(200)
+        const radius = ref(8)
+        const items = ['个人资料', '设置', '退出登录']
+        const msg = ref('提示：Tab 聚焦按钮 → Enter 或 ↓ 打开 → ↑↓ 移动 → Enter 选择 / Esc 关闭')
+        const open = ref(false)
+        const buttonEl = ref(null)
+        const wrap = ref(null)
+        const itemEls = ref([])
+        const focusItem = (i) => {
+          const els = itemEls.value.filter(Boolean)
+          els[(i + els.length) % els.length]?.focus()
+        }
+        const show = async (index = 0) => { open.value = true; await nextTick(); focusItem(index) }
+        const hide = (returnFocus = true) => { open.value = false; if (returnFocus) buttonEl.value?.focus() }
+        const select = (item) => { msg.value = `选择了「${item}」`; hide() }
+        const onButtonKeydown = (e) => {
+          if (['Enter', ' ', 'ArrowDown'].includes(e.key)) { e.preventDefault(); show(0) }
+          if (e.key === 'ArrowUp') { e.preventDefault(); show(-1) }
+        }
+        const onMenuKeydown = (e) => {
+          const cur = itemEls.value.indexOf(document.activeElement)
+          const acts = {
+            ArrowDown: () => focusItem(cur + 1), ArrowUp: () => focusItem(cur - 1),
+            Home: () => focusItem(0), End: () => focusItem(-1),
+            Escape: () => { msg.value = 'Esc 关闭，焦点回到按钮'; hide() }, Tab: () => hide(false),
+          }
+          if (acts[e.key]) { if (e.key !== 'Tab') e.preventDefault(); acts[e.key]() }
+        }
+        const outside = (e) => { if (open.value && wrap.value && !wrap.value.contains(e.target)) hide(false) }
+        onMounted(() => document.addEventListener('click', outside, true))
+        onBeforeUnmount(() => document.removeEventListener('click', outside, true))
+        return { hue, radius, items, msg, open, buttonEl, wrap, itemEls, show, hide, select, onButtonKeydown, onMenuKeydown }
+      }
+    }).mount('#demo-ds')
+  }
+</script>
+</body>
+</html>

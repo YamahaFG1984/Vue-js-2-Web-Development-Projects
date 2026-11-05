@@ -28,6 +28,8 @@
     <li>在 Vue 组件里集成命令式的地图库（Leaflet），理解 <code>markRaw</code> / 非响应式变量的必要性</li>
     <li>自己实现一个带<strong>作用域插槽</strong>的组件</li>
     <li>在 Vue 3 中写渲染函数、JSX 和函数式组件</li>
+    <li>写一个 Pinia 插件，让地图位置在刷新后保留<span class="sup">补充</span></li>
+    <li>用 <code>shallowRef</code> 应对大量数据，在小屏幕上用 Teleport 弹窗显示内容<span class="sup">补充</span></li>
   </ul>
 </div>
 
@@ -921,6 +923,92 @@ import BlogContent from './content/BlogContent.vue'
   </p>
 </div>
 
+<h2 id="pinia-plugin">Pinia 插件：记住地图位置<span class="sup">补充</span></h2>
+
+<p>
+  每次刷新页面，地图都会跳回埃菲尔铁塔。如果能记住用户上次看的位置和缩放级别就好了。最直接的办法是在 map store 里写一个 <code>watch</code> 存到 localStorage ——
+  但以后别的 store 也想持久化时，又要再写一遍。Pinia 的<strong>插件</strong>机制可以把这种“每个 store 都可能需要”的能力抽出来：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="Pinia 插件在每个 store 创建时被调用，可以读取 store 的选项并订阅其变化">
+  <rect class="bx-a" x="20" y="80" width="200" height="90" rx="12"/>
+  <text class="ttl on-a" x="120" y="106" text-anchor="middle">pinia.use(插件)</text>
+  <text class="sm" x="120" y="130" text-anchor="middle">插件 = 一个函数</text>
+  <text class="sm" x="120" y="150" text-anchor="middle">每个 store 创建时调用一次</text>
+  <rect class="bx" x="300" y="30" width="190" height="50" rx="10"/>
+  <text class="sm" x="395" y="52" text-anchor="middle">useUserStore</text>
+  <text class="sm" x="395" y="70" text-anchor="middle">没有 persist 选项 → 跳过</text>
+  <rect class="bx-g" x="300" y="100" width="190" height="50" rx="10"/>
+  <text class="sm on-g" x="395" y="122" text-anchor="middle">useMapStore</text>
+  <text class="mono sm" x="395" y="140" text-anchor="middle">{ persist: { key, pick } }</text>
+  <rect class="bx" x="300" y="170" width="190" height="50" rx="10"/>
+  <text class="sm" x="395" y="192" text-anchor="middle">usePostsStore</text>
+  <text class="sm" x="395" y="210" text-anchor="middle">没有 persist 选项 → 跳过</text>
+  <path class="ln" d="M222 110 L296 56" marker-end="url(#ar)"/>
+  <path class="ln-a" d="M222 125 H296" marker-end="url(#ar-a)"/>
+  <path class="ln" d="M222 140 L296 194" marker-end="url(#ar)"/>
+  <rect class="bx-b" x="560" y="80" width="180" height="90" rx="12"/>
+  <text class="ttl on-b" x="650" y="106" text-anchor="middle">localStorage</text>
+  <text class="sm" x="650" y="130" text-anchor="middle">创建时：读出来恢复</text>
+  <text class="sm" x="650" y="150" text-anchor="middle">$subscribe：变化时写入</text>
+  <path class="ln-g" d="M492 125 H556" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 6-6　插件在每个 store 上“加装”能力</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="src/stores/plugins/persist.js"><pre>
+// 一个极简的持久化插件
+export function persistPlugin({ store, options }) {
+  const config = options.persist           // 读取 defineStore 第三个参数里的自定义选项
+  if (!config) return
+
+  const key = config.key ?? `pinia-${store.$id}`
+  const pick = (state) =&gt; config.pick
+    ? Object.fromEntries(config.pick.map((k) =&gt; [k, state[k]]))
+    : state
+
+  // ① 创建时：恢复上次保存的值
+  const saved = localStorage.getItem(key)
+  if (saved) store.$patch(JSON.parse(saved))
+
+  // ② 之后每次变化：保存
+  store.$subscribe((_mutation, state) =&gt; {
+    localStorage.setItem(key, JSON.stringify(pick(state)))
+  })
+}
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/main.js"><pre>
+import { persistPlugin } from './stores/plugins/persist'
+
+const pinia = createPinia()
+pinia.use(persistPlugin)
+app.use(pinia)
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/stores/map.js（第三个参数）"><pre>
+export const useMapStore = defineStore('map', () =&gt; {
+  // ……和之前完全一样……
+}, {
+  persist: { pick: ['center', 'zoom'] },   // 只保存这两项，userPosition 不保存
+})
+</pre></div>
+
+<ul>
+  <li><code>store.$patch(obj)</code>：一次性修改多个 state；</li>
+  <li><code>store.$subscribe(cb)</code>：state 每次变化都会调用（类似对整个 store 的 <code>watch</code>）；</li>
+  <li><code>store.$id</code>：<code>defineStore</code> 的第一个参数。</li>
+</ul>
+
+<div class="box tip">
+  <div class="t">&#10003; 现成的插件</div>
+  <p>
+    社区插件 <code>pinia-plugin-persistedstate</code> 做的就是这件事，还支持选择存储方式（sessionStorage、Cookie）、序列化方式、SSR 等。
+    插件还可以给每个 store 加上新的属性或方法（比如统一的 <code>$reset</code>、日志、撤销重做），是扩展 Pinia 的标准方式。
+  </p>
+</div>
+
 <h2 id="posts">帖子与评论</h2>
 
 <h3>帖子 store</h3>
@@ -983,7 +1071,7 @@ export const usePostsStore = defineStore('posts', () =&gt; {
   <path class="ln" d="M472 206 C620 206 620 125 204 125" marker-end="url(#ar)"/>
   <text class="halo sm" x="620" y="170">关闭</text>
 </svg>
-<figcaption>图 6-6　内容面板是一个由 store 驱动的小状态机</figcaption>
+<figcaption>图 6-7　内容面板是一个由 store 驱动的小状态机</figcaption>
 </figure>
 
 <p>原书用 JSX 写这个组件来练习渲染函数。模板 + 动态组件同样简洁：</p>
@@ -1023,6 +1111,80 @@ const content = computed(() =&gt; {
     &lt;div class="hint"&gt;点击地图，在那里发一篇帖子&lt;/div&gt;
   &lt;/div&gt;
 &lt;/template&gt;
+</pre></div>
+
+<h3>小屏幕上用弹窗显示内容<span class="sup">补充</span></h3>
+
+<p>
+  手机屏幕放不下“左地图、右面板”的布局。一个常见的处理方式是：大屏幕上内容面板在右侧；小屏幕上地图占满全屏，有内容时面板以<strong>底部弹窗</strong>的形式浮在地图上。
+  弹窗要盖住地图，正是第 3 章介绍的 <code>&lt;Teleport&gt;</code> 的用武之地，而它的 <code>disabled</code> 属性可以让我们按屏幕尺寸决定要不要传送：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="大屏幕时内容面板就地渲染在右侧，小屏幕时通过 Teleport 渲染为覆盖地图的底部弹窗">
+  <text class="ttl" x="230" y="22" text-anchor="middle">大屏幕：disabled = true（就地渲染）</text>
+  <rect class="bx" x="20" y="36" width="420" height="180" rx="10"/>
+  <rect class="bx-g" x="34" y="50" width="260" height="152" rx="6"/>
+  <text class="sm on-g" x="164" y="130" text-anchor="middle">地图</text>
+  <rect class="bx-b" x="302" y="50" width="124" height="152" rx="6"/>
+  <text class="sm on-b" x="364" y="122" text-anchor="middle">内容面板</text>
+  <text class="sm" x="364" y="140" text-anchor="middle">在组件原位</text>
+
+  <text class="ttl on-a" x="620" y="22" text-anchor="middle">小屏幕：传送到 body</text>
+  <rect class="bx" x="540" y="36" width="160" height="190" rx="14"/>
+  <rect class="bx-g" x="550" y="48" width="140" height="166" rx="6"/>
+  <text class="sm on-g" x="620" y="96" text-anchor="middle">地图（全屏）</text>
+  <rect class="bx-a" x="550" y="140" width="140" height="74" rx="10"/>
+  <text class="sm on-a" x="620" y="170" text-anchor="middle">底部弹窗</text>
+  <text class="sm" x="620" y="188" text-anchor="middle">fixed 定位</text>
+</svg>
+<figcaption>图 6-8　同一个组件，按屏幕尺寸决定渲染位置</figcaption>
+</figure>
+
+<p>先写一个响应式的“媒体查询”组合式函数（VueUse 里有现成的 <code>useMediaQuery</code>）：</p>
+
+<div class="code" data-lang="js" data-file="src/composables/useMediaQuery.js"><pre>
+import { ref, onMounted, onBeforeUnmount } from 'vue'
+
+export function useMediaQuery(query) {
+  const matches = ref(false)
+  let mql
+  const update = () =&gt; { matches.value = mql.matches }
+  onMounted(() =&gt; {
+    mql = window.matchMedia(query)
+    update()
+    mql.addEventListener('change', update)
+  })
+  onBeforeUnmount(() =&gt; mql?.removeEventListener('change', update))
+  return matches
+}
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="src/components/content/BlogContent.vue（模板）"><pre>
+&lt;script setup&gt;
+// ……原有代码……
+import { useMediaQuery } from '../../composables/useMediaQuery'
+const isMobile = useMediaQuery('(max-width: 700px)')
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;Teleport to="body" :disabled="!isMobile || !postsStore.currentPost"&gt;
+    &lt;div class="blog-content" :class="{ 'has-content': postsStore.currentPost, sheet: isMobile }"&gt;
+      &lt;LocationInfo /&gt;
+      &lt;component :is="content" /&gt;
+    &lt;/div&gt;
+  &lt;/Teleport&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="code" data-lang="css"><pre>
+.blog-content.sheet {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  max-height: 60vh; overflow: auto;
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -8px 30px rgb(0 0 0 / .25);
+  z-index: 1000;              /* 传送到 body 后，不会再被地图容器的层叠上下文困住 */
+}
 </pre></div>
 
 <h3>创建帖子</h3>
@@ -1142,7 +1304,7 @@ const title = computed({
   <text class="lbl" x="200" y="200" text-anchor="middle">没有这个检查，</text>
   <text class="lbl" x="200" y="218" text-anchor="middle">旧的 A 会覆盖新的 B</text>
 </svg>
-<figcaption>图 6-7　竞态条件：给每个请求编号，只采纳最新的</figcaption>
+<figcaption>图 6-9　竞态条件：给每个请求编号，只采纳最新的</figcaption>
 </figure>
 
 <div class="code" data-lang="js" data-file="src/stores/posts.js（加载帖子）"><pre>
@@ -1172,6 +1334,61 @@ async function fetchPosts({ mapBounds: bounds, force = false }) {
 <div class="box tip">
   <div class="t">&#10003; URLSearchParams</div>
   <p>原书手动拼接查询字符串并调用 <code>encodeURIComponent</code>。浏览器内置的 <code>URLSearchParams</code> 会自动编码，更不容易出错。</p>
+</div>
+
+<h3>帖子很多时：shallowRef<span class="sup">补充</span></h3>
+
+<p>
+  <code>ref([])</code> 是<strong>深层</strong>响应式的：每个帖子对象、帖子里的每个字段（包括 <code>position</code>、<code>author</code> 里的嵌套对象）都会被包装成 Proxy。
+  帖子只有几十条时毫无问题；但如果地图缩小到整个城市、一次返回几千条帖子，这些代理的创建和追踪开销就会变得明显。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="ref 深层代理每个对象，shallowRef 只追踪 value 的替换">
+  <text class="ttl" x="190" y="24" text-anchor="middle">ref([...])：深层代理</text>
+  <rect class="bx-a" x="140" y="40" width="100" height="32" rx="6"/><text class="sm on-a" x="190" y="61" text-anchor="middle">.value</text>
+  <rect class="bx-a" x="40" y="96" width="80" height="28" rx="5"/><text class="sm on-a" x="80" y="115" text-anchor="middle">帖子 1</text>
+  <rect class="bx-a" x="150" y="96" width="80" height="28" rx="5"/><text class="sm on-a" x="190" y="115" text-anchor="middle">帖子 2</text>
+  <rect class="bx-a" x="260" y="96" width="80" height="28" rx="5"/><text class="sm on-a" x="300" y="115" text-anchor="middle">… ×3000</text>
+  <rect class="bx-a" x="30" y="150" width="60" height="24" rx="4"/><text class="sm on-a" x="60" y="167" text-anchor="middle">position</text>
+  <rect class="bx-a" x="100" y="150" width="60" height="24" rx="4"/><text class="sm on-a" x="130" y="167" text-anchor="middle">author</text>
+  <path class="ln-a" d="M190 74 L80 94"/><path class="ln-a" d="M190 74 V94"/><path class="ln-a" d="M190 74 L300 94"/>
+  <path class="ln-a" d="M80 126 L60 148"/><path class="ln-a" d="M80 126 L130 148"/>
+  <text class="sm" x="190" y="204" text-anchor="middle">黄色 = 被代理、被追踪的对象（成千上万个）</text>
+
+  <path class="ln-d" d="M380 14 V220"/>
+
+  <text class="ttl on-g" x="570" y="24" text-anchor="middle">shallowRef([...])：只追踪 .value</text>
+  <rect class="bx-g" x="520" y="40" width="100" height="32" rx="6"/><text class="sm on-g" x="570" y="61" text-anchor="middle">.value</text>
+  <rect class="bx" x="420" y="96" width="80" height="28" rx="5"/><text class="sm" x="460" y="115" text-anchor="middle">帖子 1</text>
+  <rect class="bx" x="530" y="96" width="80" height="28" rx="5"/><text class="sm" x="570" y="115" text-anchor="middle">帖子 2</text>
+  <rect class="bx" x="640" y="96" width="80" height="28" rx="5"/><text class="sm" x="680" y="115" text-anchor="middle">… ×3000</text>
+  <path class="ln" d="M570 74 L460 94"/><path class="ln" d="M570 74 V94"/><path class="ln" d="M570 74 L680 94"/>
+  <text class="sm" x="570" y="160" text-anchor="middle">里面的对象是普通对象</text>
+  <text class="sm" x="570" y="180" text-anchor="middle">只有 posts.value = 新数组 才会触发更新</text>
+  <text class="sm" x="570" y="204" text-anchor="middle">适合“整体替换、不会逐项修改”的数据</text>
+</svg>
+<figcaption>图 6-10　深层响应式与浅层响应式</figcaption>
+</figure>
+
+<p>我们的帖子列表正好符合“整体替换”的特点：<code>fetchPosts</code> 每次都用新数组替换旧数组。改成 <code>shallowRef</code> 只需改一处，再把唯一一处“逐项修改”的地方改成替换：</p>
+
+<div class="code" data-lang="js" data-file="src/stores/posts.js"><pre>
+import { ref, shallowRef, computed } from 'vue'
+
+const posts = shallowRef([])        // 只追踪整体替换
+
+// createPost 里原来是 posts.value.push(result)：浅层 ref 检测不到 push
+posts.value = [...posts.value, result]
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; 用之前先测量</div>
+  <p>
+    <code>shallowRef</code> 的代价是：以后在模板里修改某个帖子的属性（比如点赞数 +1）界面不会更新，必须替换整个对象或调用 <code>triggerRef(posts)</code>。
+    不要预先到处使用它。先用 Vue DevTools 的性能面板或浏览器 Performance 面板确认响应式开销真的是瓶颈，再有针对性地优化。
+    同类的工具还有 <code>shallowReactive</code> 和 <code>markRaw</code>（本章地图一节已经用过“不要把第三方实例变成响应式”的思路）。
+  </p>
 </div>
 
 <h3>登录与登出时的处理</h3>
@@ -1287,7 +1504,7 @@ const { selectedPostDetails: details } = storeToRefs(postsStore)
   <text class="sm" x="380" y="248" text-anchor="middle">同一个 ReverseGeocode 可以在这里显示成卡片，在别处显示成一行小字、或者 tooltip</text>
   <text class="sm" x="380" y="270" text-anchor="middle">这种“只提供数据、不渲染自身外观”的组件被称为“无渲染组件（renderless component）”</text>
 </svg>
-<figcaption>图 6-8　作用域插槽：子组件出数据，父组件出外观</figcaption>
+<figcaption>图 6-11　作用域插槽：子组件出数据，父组件出外观</figcaption>
 </figure>
 
 <h3>实现一个无渲染的地理编码组件</h3>
@@ -1450,7 +1667,7 @@ export default {
   <text class="sm" x="40" y="186">h 从参数变为 import；data 对象扁平化（不再有 attrs/props/on/domProps 分组）；</text>
   <text class="sm" x="40" y="204">this.$slots.default 从数组变成函数，要调用 slots.default()；nativeOn 移除</text>
 </svg>
-<figcaption>图 6-9　Vue 3 的 h() 函数</figcaption>
+<figcaption>图 6-12　Vue 3 的 h() 函数</figcaption>
 </figure>
 
 <div class="vs">
@@ -1583,7 +1800,7 @@ Comment.props = ['comment']   // 可选：声明 props
   <text class="sm" x="420" y="140">· Vue 3 中性能优势已经很小</text>
   <text class="sm" x="420" y="168">适合极简的展示型组件</text>
 </svg>
-<figcaption>图 6-10　函数式组件就是“props → VNode”的纯函数</figcaption>
+<figcaption>图 6-13　函数式组件就是“props → VNode”的纯函数</figcaption>
 </figure>
 
 <div class="box key">
@@ -1723,7 +1940,7 @@ function submitComment() {
   <text class="sm" x="380" y="298" text-anchor="middle">组件只做两件事：读 store 的数据来渲染，调用 store 的 action 来响应用户操作。</text>
   <text class="sm" x="380" y="316" text-anchor="middle">业务逻辑（请求、竞态处理、登录流程）都集中在 store 里，组件保持简单。</text>
 </svg>
-<figcaption>图 6-11　组件 ↔ store 的关系</figcaption>
+<figcaption>图 6-14　组件 ↔ store 的关系</figcaption>
 </figure>
 
 <h2 id="summary">小结</h2>
@@ -1741,6 +1958,9 @@ function submitComment() {
 <tr><td>作用域插槽</td><td><code>slot-scope="props"</code></td><td><code>v-slot="{ result }"</code></td></tr>
 <tr><td>渲染函数</td><td><code>render(h)</code>，嵌套 data 对象</td><td><code>import { h }</code>，扁平属性，<code>slots.default()</code></td></tr>
 <tr><td>函数式组件</td><td><code>functional: true</code></td><td>普通函数；性能优势已不明显</td></tr>
+<tr><td>持久化 <span class="sup">补充</span></td><td>—</td><td>Pinia 插件 + <code>$subscribe</code> / <code>$patch</code></td></tr>
+<tr><td>大量数据 <span class="sup">补充</span></td><td>—</td><td><code>shallowRef</code>（先测量再优化）</td></tr>
+<tr><td>响应式布局 <span class="sup">补充</span></td><td>—</td><td><code>useMediaQuery</code> + <code>&lt;Teleport :disabled&gt;</code></td></tr>
 </tbody>
 </table></div>
 
@@ -1751,7 +1971,8 @@ function submitComment() {
     <li>给 <code>sendComment</code> 加上失败回滚：请求失败时把刚才乐观添加的评论删掉，并显示错误提示。</li>
     <li>把 <code>useMapStore</code> 改写成 Pinia 的选项式写法，体会两种写法的差别。</li>
     <li>写一个 <code>&lt;MouseTracker v-slot="{ x, y }"&gt;</code> 无渲染组件，再把同样的逻辑写成组合式函数 <code>useMouse()</code>，比较两者各适合什么场景。</li>
-    <li>（进阶）服务器支持 Socket.IO 实时推送新帖子。用 <code>socket.io-client</code> 连接，在 posts store 里收到新帖子时加入列表。</li>
+    <li>给持久化插件加上 <code>storage</code> 选项，允许某个 store 改用 <code>sessionStorage</code>（关闭标签页就清除）。</li>
+    <li>（进阶）服务器支持 Socket.IO 实时推送新帖子。用 <code>socket.io-client</code> 连接，在 posts store 里收到新帖子时加入列表（注意现在 <code>posts</code> 是 <code>shallowRef</code>）。</li>
   </ol>
 </div>
 

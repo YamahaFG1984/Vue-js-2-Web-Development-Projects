@@ -27,6 +27,9 @@
     <li>用 Vitest + Vue Test Utils 给组件写单元测试和快照测试</li>
     <li>用 vue-i18n 11 做多语言，并通过动态 <code>import()</code> 按需加载语言包</li>
     <li>理解服务端渲染（SSR）和“水合”，知道何时用 Nuxt、何时手写 Vite SSR</li>
+    <li>用 Playwright 做端到端测试，用 MSW 模拟后端接口<span class="sup">补充</span></li>
+    <li>用 Nuxt 的服务端路由和混合渲染规则构建全栈应用<span class="sup">补充</span></li>
+    <li>用 GitHub Actions 搭建持续集成与自动部署，了解 Docker 部署和错误监控<span class="sup">补充</span></li>
   </ul>
 </div>
 
@@ -596,6 +599,151 @@ test('加入购物车', () =&gt; {
 <p>测试用到 store 的组件时，可以用 <code>@pinia/testing</code> 的 <code>createTestingPinia()</code>，它会自动把所有 action 替换成可断言的 mock 函数。</p>
 </details>
 
+<h2 id="e2e">端到端测试：Playwright 与 MSW<span class="sup">补充</span></h2>
+
+<p>
+  单元测试验证的是“零件”：一个组件、一个 store。但零件都没问题，组装起来也可能出错 —— 路由配错了、两个组件之间的事件没接上、真实浏览器里样式把按钮挡住了。
+  <strong>端到端（E2E）测试</strong>启动真实的浏览器，像用户一样打开页面、点击、输入，验证一整条流程。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="测试金字塔：大量单元测试、适量组件测试、少量端到端测试">
+  <path d="M380 20 L560 220 L200 220 Z" style="fill:none;stroke:var(--line-2);stroke-width:1.5"/>
+  <path d="M327 80 H433" class="ln"/>
+  <path d="M272 150 H488" class="ln"/>
+  <text class="ttl on-r" x="380" y="66" text-anchor="middle">E2E</text>
+  <text class="ttl on-a" x="380" y="122" text-anchor="middle">组件测试</text>
+  <text class="ttl on-g" x="380" y="194" text-anchor="middle">单元测试</text>
+  <text class="sm" x="580" y="60">Playwright：真实浏览器</text>
+  <text class="sm" x="580" y="78">少量、慢、最接近用户</text>
+  <text class="sm" x="580" y="118">Vue Test Utils：挂载组件</text>
+  <text class="sm" x="580" y="136">适量</text>
+  <text class="sm" x="580" y="186">Vitest：store、工具函数</text>
+  <text class="sm" x="580" y="204">大量、快、定位准确</text>
+  <text class="sm" x="160" y="60" text-anchor="end">越往上</text>
+  <text class="sm" x="160" y="78" text-anchor="end">越慢、越贵、越接近真实</text>
+  <text class="lbl" x="380" y="248" text-anchor="middle">E2E 只覆盖最关键的流程：注册登录、下单结算 —— 坏了会直接影响用户和收入的地方</text>
+</svg>
+<figcaption>图 7-7　测试金字塔</figcaption>
+</figure>
+
+<h3>Playwright</h3>
+
+<p>
+  create-vue 的功能菜单里就有“端到端测试”选项，选择 Playwright 即可；已有项目可以运行 <code>npm init playwright@latest</code>。
+  它会下载 Chromium、Firefox、WebKit 三种浏览器内核，并生成 <code>playwright.config.js</code> 和 <code>e2e/</code> 目录。
+</p>
+
+<div class="code" data-lang="js" data-file="e2e/checkout.spec.js"><pre>
+import { test, expect } from '@playwright/test'
+
+test('把商品加入购物车并去结算', async ({ page }) =&gt; {
+  await page.goto('/')
+
+  // 找到“蓝色袜子”所在的卡片，点击它的“加入购物车”按钮
+  const card = page.locator('.store-item', { hasText: 'Blue Socks' })
+  await card.getByRole('button', { name: /加入购物车|Add/ }).click()
+
+  // 购物车角标变成 1
+  await expect(page.locator('.cart .button-badge')).toHaveText('1')
+
+  // 去结算页，能看到这件商品
+  await page.getByRole('link', { name: /结算|Checkout/ }).click()
+  await expect(page).toHaveURL(/checkout/)
+  await expect(page.getByText('Blue Socks')).toBeVisible()
+})
+</pre></div>
+
+<div class="code" data-lang="bash"><pre>
+npx playwright test            # 无界面运行所有 E2E 测试
+npx playwright test --ui       # 打开可视化界面：逐步回放、查看每一步的截图和 DOM
+npx playwright codegen localhost:5173   # 在浏览器里点一遍，自动生成测试代码
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 写出稳定的 E2E 测试</div>
+  <ul>
+    <li>用 <code>getByRole</code>、<code>getByText</code>、<code>getByLabel</code> 按“用户看到的东西”查找元素，而不是脆弱的 CSS 层级选择器。</li>
+    <li><code>expect(...).toHaveText()</code> 等断言会<strong>自动等待</strong>直到条件满足或超时，不要手写 <code>waitForTimeout(1000)</code>。</li>
+    <li>每个测试互相独立：不依赖上一个测试留下的数据。</li>
+  </ul>
+</div>
+
+<h3>MSW：在网络层模拟接口</h3>
+
+<p>
+  单元测试和 E2E 测试都会遇到同一个问题：组件要请求后端，测试时后端可能没启动、数据会变、错误情况很难复现。
+  <a href="https://mswjs.io/">MSW</a>（Mock Service Worker）在<strong>网络层</strong>拦截请求并返回你定义的假数据 —— 应用代码完全不用改，它以为自己在和真实服务器说话：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="MSW 在网络层拦截请求，应用代码不需要任何修改">
+  <rect class="bx-g" x="20" y="70" width="180" height="80" rx="12"/>
+  <text class="ttl on-g" x="110" y="98" text-anchor="middle">应用代码</text>
+  <text class="mono sm" x="110" y="122" text-anchor="middle">fetch('/api/items')</text>
+  <text class="sm" x="110" y="140" text-anchor="middle">完全不知道被模拟</text>
+  <path class="ln" d="M202 110 H276" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="280" y="50" width="200" height="120" rx="12"/>
+  <text class="ttl on-a" x="380" y="76" text-anchor="middle">MSW</text>
+  <text class="sm" x="380" y="100" text-anchor="middle">浏览器：Service Worker</text>
+  <text class="sm" x="380" y="120" text-anchor="middle">Node（Vitest）：拦截 fetch</text>
+  <text class="mono sm" x="380" y="148" text-anchor="middle">http.get('/api/items', …)</text>
+  <path class="ln-a" d="M482 90 L546 60" marker-end="url(#ar-a)"/>
+  <path class="ln-d" d="M482 130 L546 160"/>
+  <rect class="bx-g" x="550" y="30" width="190" height="60" rx="10"/>
+  <text class="sm on-g" x="645" y="56" text-anchor="middle">匹配：返回假数据</text>
+  <text class="sm" x="645" y="74" text-anchor="middle">（也可以模拟 500、超时）</text>
+  <rect class="bx-d" x="550" y="130" width="190" height="60" rx="10"/>
+  <text class="sm" x="645" y="156" text-anchor="middle">没匹配：放行到真实网络</text>
+  <text class="sm" x="645" y="174" text-anchor="middle">或者报错提醒</text>
+  <text class="lbl" x="380" y="208" text-anchor="middle">同一套 handlers 可以同时用于单元测试、E2E 测试，以及“后端还没写好时”的本地开发</text>
+</svg>
+<figcaption>图 7-8　MSW 的工作位置</figcaption>
+</figure>
+
+<div class="code" data-lang="bash"><pre>
+npm install -D msw
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/mocks/handlers.js"><pre>
+import { http, HttpResponse } from 'msw'
+
+export const handlers = [
+  http.get('/api/items', () =&gt;
+    HttpResponse.json([
+      { id: 1, title: 'Blue Socks', price: 2.99 },
+      { id: 2, title: 'Green Socks', price: 3.99 },
+    ])
+  ),
+]
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/test/setup.js（Vitest 的 setupFiles）"><pre>
+import { setupServer } from 'msw/node'
+import { beforeAll, afterEach, afterAll } from 'vitest'
+import { handlers } from '../mocks/handlers'
+
+const server = setupServer(...handlers)
+beforeAll(() =&gt; server.listen({ onUnhandledRequest: 'error' }))   // 没有模拟的请求直接报错
+afterEach(() =&gt; server.resetHandlers())
+afterAll(() =&gt; server.close())
+
+export { server }
+</pre></div>
+
+<div class="code" data-lang="js" data-file="测试错误情况"><pre>
+import { http, HttpResponse } from 'msw'
+import { server } from '../test/setup'
+
+test('加载失败时显示错误信息', async () =&gt; {
+  // 只在这个测试里，让接口返回 500
+  server.use(http.get('/api/items', () =&gt; new HttpResponse(null, { status: 500 })))
+  const wrapper = mount(PageHome, { global: { plugins: [createPinia()] } })
+  await flushPromises()                         // 等所有 Promise 完成（来自 @vue/test-utils）
+  expect(wrapper.text()).toContain('加载失败')
+})
+</pre></div>
+
 <h2 id="i18n">国际化与代码分割</h2>
 
 <p>
@@ -661,7 +809,7 @@ export default ['zh', 'en', 'fr', 'es', 'de']
 
   <text class="lbl" x="380" y="262" text-anchor="middle">虚线框：构建时生成，但只有用户真正需要时浏览器才去下载</text>
 </svg>
-<figcaption>图 7-7　代码分割：首屏只下载必需的代码</figcaption>
+<figcaption>图 7-9　代码分割：首屏只下载必需的代码</figcaption>
 </figure>
 
 <div class="code" data-lang="js"><pre>
@@ -793,7 +941,7 @@ app.use(i18n)
   <text class="sm" x="486" y="160">还找不到？显示键名本身并警告</text>
   <text class="lbl" x="380" y="204" text-anchor="middle">locale 是响应式的：切换语言后，所有用到 t() 的地方自动重新渲染</text>
 </svg>
-<figcaption>图 7-8　翻译的查找过程</figcaption>
+<figcaption>图 7-10　翻译的查找过程</figcaption>
 </figure>
 
 <p>在路由里加一个语言页面，并在页脚放一个链接：</p>
@@ -898,7 +1046,7 @@ async function setLocale(lang) {
   <text class="sm" x="380" y="258" text-anchor="middle">SSR 的好处：首屏内容更快出现（慢网络、慢设备尤其明显），搜索引擎和社交平台的抓取能直接拿到内容</text>
   <text class="sm" x="380" y="274" text-anchor="middle">代价：代码要能在 Node 中运行、服务器负载更高、部署更复杂</text>
 </svg>
-<figcaption>图 7-9　CSR 与 SSR 的时间线</figcaption>
+<figcaption>图 7-11　CSR 与 SSR 的时间线</figcaption>
 </figure>
 
 <p>
@@ -947,7 +1095,7 @@ async function setLocale(lang) {
   <rect class="bx-g" x="640" y="134" width="100" height="56" rx="8"/><text class="sm on-g" x="690" y="156" text-anchor="middle">app + router</text><text class="sm on-g" x="690" y="174" text-anchor="middle">+ store（王五）</text>
   <text class="sm on-g" x="570" y="244" text-anchor="middle">请求结束后各自被回收，互不干扰</text>
 </svg>
-<figcaption>图 7-10　浏览器里每次打开页面都是新环境，而 Node 服务器是长期运行的</figcaption>
+<figcaption>图 7-12　浏览器里每次打开页面都是新环境，而 Node 服务器是长期运行的</figcaption>
 </figure>
 
 <p>整个 SSR 的数据流如下：</p>
@@ -978,7 +1126,7 @@ async function setLocale(lang) {
   <text class="sm" x="580" y="248" text-anchor="middle">store 里已经有数据，组件无需再请求</text>
   <text class="sm" x="580" y="266" text-anchor="middle">（避免原书提到的“重复请求”问题）</text>
 </svg>
-<figcaption>图 7-11　SSR 的完整流程</figcaption>
+<figcaption>图 7-13　SSR 的完整流程</figcaption>
 </figure>
 
 <h3>推荐方案：Nuxt</h3>
@@ -1045,6 +1193,77 @@ useSeoMeta({
   <tr><td>—</td><td><code>nuxi generate</code> 静态生成（SSG）</td></tr>
   </tbody>
   </table></div>
+</div>
+
+<h3>Nuxt 深入：服务端 API 与混合渲染<span class="sup">补充</span></h3>
+
+<p>
+  Nuxt 不只是“能做 SSR 的 Vue”，它是一个<strong>全栈框架</strong>：同一个项目里可以写后端接口。我们用它取代 json-server：
+</p>
+
+<div class="code" data-lang="js" data-file="server/api/items.get.js"><pre>
+// 文件名就是路由：GET /api/items
+import items from '../data/items.json'
+
+export default defineEventHandler(() =&gt; {
+  return items          // 返回值自动序列化为 JSON
+})
+</pre></div>
+
+<div class="code" data-lang="js" data-file="server/api/items/[id].get.js"><pre>
+// GET /api/items/:id
+import items from '../../data/items.json'
+
+export default defineEventHandler((event) =&gt; {
+  const id = Number(getRouterParam(event, 'id'))
+  const item = items.find((i) =&gt; i.id === id)
+  if (!item) throw createError({ statusCode: 404, statusMessage: '商品不存在' })
+  return item
+})
+</pre></div>
+
+<p>
+  页面里的 <code>useFetch('/api/items/3')</code> 在服务器上渲染时，Nuxt 会<strong>直接调用</strong>这个处理函数（不走网络）；在浏览器里导航时才发出真实的 HTTP 请求。
+  这些服务端代码运行在 Nuxt 的服务器引擎 Nitro 上，可以安全地访问数据库和密钥。
+</p>
+
+<p>
+  另一个强大的功能是<strong>按路由选择渲染方式</strong>。同一个网站里，不同页面的需求不同：首页几乎不变，适合构建时生成静态 HTML；商品页要 SEO、价格偶尔变，适合带缓存的 SSR；
+  结算页完全依赖用户状态，不需要 SSR：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="Nuxt routeRules：不同路由使用预渲染、带缓存的 SSR 或纯客户端渲染">
+  <rect class="bx" x="20" y="30" width="250" height="190" rx="12"/>
+  <text class="ttl" x="145" y="56" text-anchor="middle">nuxt.config.js</text>
+  <text class="mono sm" x="36" y="86">routeRules: {</text>
+  <text class="mono sm on-g" x="52" y="110">'/': { prerender: true },</text>
+  <text class="mono sm on-b" x="52" y="134">'/item/**': { swr: 3600 },</text>
+  <text class="mono sm on-p" x="52" y="158">'/checkout': { ssr: false },</text>
+  <text class="mono sm" x="52" y="182">'/api/**': { cors: true },</text>
+  <text class="mono sm" x="36" y="206">}</text>
+  <rect class="bx-g" x="320" y="30" width="420" height="56" rx="10"/>
+  <text class="sm on-g" x="336" y="54">首页：构建时预渲染成静态 HTML（SSG）</text>
+  <text class="sm" x="336" y="74">最快，可以放在 CDN 上</text>
+  <rect class="bx-b" x="320" y="97" width="420" height="56" rx="10"/>
+  <text class="sm on-b" x="336" y="121">商品页：SSR + 缓存 1 小时（stale-while-revalidate）</text>
+  <text class="sm" x="336" y="141">SEO 友好；缓存过期后先返回旧页面，后台再重新渲染</text>
+  <rect class="bx-p" x="320" y="164" width="420" height="56" rx="10"/>
+  <text class="sm on-p" x="336" y="188">结算页：纯客户端渲染（SPA）</text>
+  <text class="sm" x="336" y="208">依赖登录用户和购物车，不需要被搜索引擎收录</text>
+  <path class="ln-g" d="M272 106 L316 58" marker-end="url(#ar)"/>
+  <path class="ln-b" d="M272 130 H316" marker-end="url(#ar)"/>
+  <path class="ln-p" d="M272 154 L316 190" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 7-14　混合渲染：每个路由选最合适的方式</figcaption>
+</figure>
+
+<div class="box note">
+  <div class="t">&#9432; 部署到哪里都可以</div>
+  <p>
+    <code>nuxi build</code> 的产物是一个独立的 Node 服务（<code>.output/</code> 目录，<code>node .output/server/index.mjs</code> 即可运行）。
+    通过设置部署“预设”，同一份代码也可以部署到 Vercel、Netlify、Cloudflare 等 Serverless / 边缘平台；全部页面都预渲染时还能输出纯静态站点。
+  </p>
 </div>
 
 <h3>了解原理：手写 Vite SSR</h3>
@@ -1257,10 +1476,151 @@ npm run preview    # 本地预览
   <path class="ln-g" d="M272 95 H396" marker-end="url(#ar)"/>
   <path class="ln-a" d="M272 200 C340 200 350 160 396 150" marker-end="url(#ar-a)"/>
 </svg>
-<figcaption>图 7-12　SSR 应用的两份构建产物</figcaption>
+<figcaption>图 7-15　SSR 应用的两份构建产物</figcaption>
 </figure>
 
 <p>把 <code>dist/</code>、<code>server.js</code>、<code>package.json</code> 和 lock 文件上传到服务器，执行 <code>npm ci --omit=dev</code> 安装依赖，再 <code>npm start</code> 即可。</p>
+
+<h2 id="ci">持续集成与部署<span class="sup">补充</span></h2>
+
+<p>
+  到这里，项目已经有了 lint、类型检查、单元测试、E2E 测试和构建五道工序。靠人记得每次都跑一遍是不现实的。
+  <strong>持续集成（CI）</strong>让这些检查在每次推送代码、每次发起 Pull Request 时自动运行；全部通过后再<strong>自动部署（CD）</strong>。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="CI/CD 流水线：推送代码后依次执行安装、检查、测试、构建、部署">
+  <rect class="bx-b" x="20" y="80" width="100" height="60" rx="10"/>
+  <text class="on-b ttl" x="70" y="106" text-anchor="middle">git push</text>
+  <text class="sm" x="70" y="126" text-anchor="middle">或 PR</text>
+  <path class="ln" d="M122 110 H146" marker-end="url(#ar)"/>
+  <rect class="bx" x="150" y="80" width="90" height="60" rx="10"/>
+  <text class="sm" x="195" y="106" text-anchor="middle">npm ci</text>
+  <text class="sm" x="195" y="124" text-anchor="middle">安装依赖</text>
+  <path class="ln" d="M242 110 H266" marker-end="url(#ar)"/>
+  <rect class="bx-p" x="270" y="80" width="110" height="60" rx="10"/>
+  <text class="sm on-p" x="325" y="106" text-anchor="middle">lint</text>
+  <text class="sm on-p" x="325" y="124" text-anchor="middle">type-check</text>
+  <path class="ln" d="M382 110 H406" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="410" y="80" width="110" height="60" rx="10"/>
+  <text class="sm on-a" x="465" y="106" text-anchor="middle">单元测试</text>
+  <text class="sm on-a" x="465" y="124" text-anchor="middle">E2E 测试</text>
+  <path class="ln" d="M522 110 H546" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="550" y="80" width="80" height="60" rx="10"/>
+  <text class="sm on-g" x="590" y="114" text-anchor="middle">build</text>
+  <path class="ln" d="M632 110 H656" marker-end="url(#ar)"/>
+  <rect class="bx-r" x="660" y="80" width="80" height="60" rx="10"/>
+  <text class="sm on-r" x="700" y="106" text-anchor="middle">部署</text>
+  <text class="sm" x="700" y="124" text-anchor="middle">仅 master</text>
+  <text class="sm on-r" x="380" y="178" text-anchor="middle">任何一步失败，后面的步骤都不会执行，PR 上会显示红叉，不能合并</text>
+  <text class="lbl" x="380" y="206" text-anchor="middle">问题在合并前被发现，而不是被用户发现</text>
+</svg>
+<figcaption>图 7-16　一条典型的流水线</figcaption>
+</figure>
+
+<p>以 GitHub Actions 为例，在仓库里新建一个工作流文件，就能把 Vite 应用自动部署到 GitHub Pages：</p>
+
+<div class="code" data-lang="text" data-file=".github/workflows/ci.yml"><pre>
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test:unit -- --run          # --run：执行一次就退出，不进入 watch 模式
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: test                                   # 测试通过才部署
+    if: github.ref == 'refs/heads/master'         # 只有 master 分支才部署
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/deploy-pages@v4
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 别忘了这两个设置</div>
+  <p>
+    在仓库 Settings → Pages 里把 Source 改为 “GitHub Actions”；部署在子路径（<code>用户名.github.io/仓库名/</code>）时，在 <code>vite.config.js</code> 里设置 <code>base: '/仓库名/'</code>。
+    Netlify、Vercel、Cloudflare Pages 则更简单：连接仓库后，它们会自动在每次推送时构建部署，并为每个 PR 生成一个预览地址。
+  </p>
+</div>
+
+<h3>用 Docker 部署到自己的服务器</h3>
+
+<p>需要部署到公司服务器时，常见做法是把构建产物和一个 Nginx 打包成 Docker 镜像。注意 SPA 需要配置“找不到文件就返回 index.html”：</p>
+
+<div class="code" data-lang="text" data-file="Dockerfile（多阶段构建）"><pre>
+# 第一阶段：用 Node 构建
+FROM node:lts-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# 第二阶段：只把 dist 放进一个很小的 Nginx 镜像
+FROM nginx:alpine
+COPY --from=build /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+</pre></div>
+
+<div class="code" data-lang="text" data-file="nginx.conf"><pre>
+server {
+  listen 80;
+  root /usr/share/nginx/html;
+
+  location / {
+    try_files $uri $uri/ /index.html;          # 前端路由的回退
+  }
+
+  location /assets/ {
+    expires 1y;                                # 带哈希的文件可以永久缓存
+    add_header Cache-Control "public, immutable";
+  }
+}
+</pre></div>
+
+<h3>上线之后：错误监控</h3>
+
+<p>
+  第 5 章（下）讲过 <code>app.config.errorHandler</code>。生产环境里，用户遇到的错误需要被收集起来。以 Sentry 为例：
+</p>
+
+<div class="code" data-lang="js" data-file="src/main.js"><pre>
+import * as Sentry from '@sentry/vue'
+
+Sentry.init({
+  app,
+  dsn: import.meta.env.VITE_SENTRY_DSN,       // 从环境变量读取
+  integrations: [Sentry.browserTracingIntegration({ router })],
+  tracesSampleRate: 0.1,                       // 采样 10% 的性能数据
+})
+</pre></div>
+
+<p>构建时开启 source map 并上传给 Sentry（它提供 Vite 插件），错误堆栈就能直接显示成源码的文件名和行号，而不是压缩后的一行乱码。</p>
 
 <h2 id="summary">小结</h2>
 
@@ -1278,6 +1638,9 @@ npm run preview    # 本地预览
 <tr><td>SSR</td><td>vue-server-renderer + 手写 webpack + Express</td><td><strong>Nuxt</strong>；或 Vite SSR + <code>vue/server-renderer</code></td></tr>
 <tr><td>数据预取</td><td>自定义 <code>asyncData</code></td><td><code>onServerPrefetch</code> / Nuxt <code>useFetch</code></td></tr>
 <tr><td>生产构建</td><td>extract-text 插件、rimraf、cross-env……</td><td><code>vite build</code> 默认搞定</td></tr>
+<tr><td>端到端测试 <span class="sup">补充</span></td><td>—</td><td>Playwright；接口模拟用 MSW</td></tr>
+<tr><td>全栈接口 <span class="sup">补充</span></td><td>—</td><td>Nuxt <code>server/api</code> + <code>routeRules</code> 混合渲染</td></tr>
+<tr><td>CI/CD <span class="sup">补充</span></td><td>—</td><td>GitHub Actions；Docker + Nginx；Sentry 监控</td></tr>
 </tbody>
 </table></div>
 
@@ -1289,6 +1652,8 @@ npm run preview    # 本地预览
     <li>把整个应用的所有文字都翻译成中文，并用 vue-i18n 的 <code>numberFormats</code> 让价格在中文下显示为人民币格式。</li>
     <li>用 <code>vite build</code> 构建后，打开 <code>dist/assets</code>，找出每个语言包对应的 chunk 文件。</li>
     <li>（进阶）用 Nuxt 重写商品详情页：<code>pages/item/[id].vue</code>，用 <code>useFetch</code> 获取数据，用 <code>useSeoMeta</code> 设置标题；查看网页源代码，确认商品信息已经在 HTML 里了。</li>
+    <li>写一个 Playwright 测试覆盖“切换语言”：点击页脚链接，选择 Français，断言页面上出现法语文字。</li>
+    <li>为你的 fork 仓库加上本节的 GitHub Actions 工作流，故意提交一个 lint 错误，观察流水线如何阻止部署。</li>
   </ol>
 </div>
 

@@ -7,21 +7,32 @@
   'use strict';
 
   const CHAPTERS = [
-    { n: 1, t: '初识 Vue 3',              d: '渐进式框架、响应式数据与第一个 createApp', part: '第一部分 · 不用构建工具' },
-    { n: 2, t: '项目一：Markdown 笔记本',  d: '计算属性、侦听器、生命周期、列表与条件渲染' },
-    { n: 3, t: '项目二：城堡决斗卡牌游戏', d: '组件树、Props 与事件、插槽、过渡动画与 SVG' },
-    { n: 4, t: '工程化：Vite 与单文件组件', d: 'create-vue、.vue 文件、<script setup> 与样式预处理', part: '第二部分 · 工程化开发' },
-    { n: 5, t: '项目三：客服支持中心',     d: 'Vue Router 4、插件、组合式函数、登录与表单' },
-    { n: 6, t: '项目四：地理定位博客',     d: 'Pinia 状态管理、OAuth 登录、地图与作用域插槽' },
-    { n: 7, t: '项目五：在线商店与规模化', d: 'ESLint、Vitest、vue-i18n、代码分割与 Nuxt SSR', part: '第三部分 · 规模化与全栈' },
-    { n: 8, t: '项目六：Meteor 实时仪表盘', d: 'Meteor 3 + Vue 3：集合、方法、发布与订阅' },
-    { n: 9, t: '附录：Vue 2 → Vue 3 速查', d: '书中每一处 Vue 2 写法在 Vue 3 里怎么改', part: '附录' }
+    { id: '1', t: '初识 Vue 3',              d: '渐进式框架、响应式数据与第一个 createApp', part: '第一部分 · 不用构建工具' },
+    { id: '2', t: '项目一：Markdown 笔记本',  d: '计算属性、侦听器、生命周期、列表与条件渲染、自定义指令' },
+    { id: '3', t: '项目二：城堡决斗卡牌游戏', d: '组件树、Props 与事件、插槽、过渡动画、Teleport 与 SVG' },
+    { id: '4', t: '工程化：Vite 与单文件组件', d: 'create-vue、<script setup>、TypeScript、环境变量', part: '第二部分 · 工程化开发' },
+    { id: '5A', num: '5', label: '第 5 章（上）', file: 'ch05.html',  t: '项目三（上）：路由与认证', d: 'Vue Router 4、插件、组合式函数、登录、导航守卫' },
+    { id: '5B', num: '5', label: '第 5 章（下）', file: 'ch05b.html', t: '项目三（下）：工单与表单', d: '嵌套路由、表单校验、复合组件、KeepAlive、错误处理' },
+    { id: '6', t: '项目四：地理定位博客',     d: 'Pinia 状态管理、OAuth 登录、地图与作用域插槽' },
+    { id: '7', t: '项目五：在线商店与规模化', d: 'ESLint、Vitest、Playwright、vue-i18n、Nuxt 与 CI/CD', part: '第三部分 · 规模化与全栈' },
+    { id: '8', t: '项目六：Meteor 实时仪表盘', d: 'Meteor 3 + Vue 3：集合、方法、发布订阅与大列表性能' },
+    { id: '9',  file: 'adv01.html', t: '深入响应式原理',       d: '亲手实现响应式系统、effectScope、customRef 与 Vapor Mode', part: '第四部分 · 进阶专题' },
+    { id: '10', file: 'adv02.html', t: '组件库与设计系统',     d: '组件库选型、主题定制、无障碍' },
+    { id: '11', file: 'adv03.html', t: '大型项目架构',         d: '按功能组织代码、monorepo、开发并发布组件库' },
+    { id: '12', file: 'adv04.html', t: '跨端：PWA、移动端与桌面端', d: 'vite-plugin-pwa、Capacitor、Tauri' },
+    { id: '13', file: 'adv05.html', t: 'AI 应用前端：流式聊天界面', d: 'Hono + DeepSeek、流式输出、中断与 Markdown 渲染' },
+    { id: 'A', num: '附', label: '附录', file: 'ch09.html', t: 'Vue 2 → Vue 3 速查', d: '书中每一处 Vue 2 写法在 Vue 3 里怎么改', part: '附录' }
   ];
 
   const pad = (n) => String(n).padStart(2, '0');
-  const href = (n) => `ch${pad(n)}.html`;
-
-  const cur = Number.parseInt(document.body.dataset.chapter || '0', 10);
+  // 每个条目：id（页面 data-chapter）、num（侧边栏编号）、label（“第 N 章”）、file（文件名）
+  for (const c of CHAPTERS) {
+    c.num ??= c.id;
+    c.label ??= `第 ${c.id} 章`;
+    c.file ??= `ch${pad(c.id)}.html`;
+  }
+  const cur = document.body.dataset.chapter || '0';
+  const curIndex = CHAPTERS.findIndex((c) => c.id === cur);
 
   /* ---------- 侧边栏 ---------- */
   const side = document.getElementById('sidebar');
@@ -29,9 +40,9 @@
     const brand = '<a class="brand" href="index.html"><span class="flame">' +
       '<svg viewBox="0 0 24 21" width="16" height="14" aria-hidden="true"><path d="M0 0h4.6L12 12.7 19.4 0H24L12 20.8z" fill="#fff"/><path d="M4.6 0h4.2L12 5.5 15.2 0h4.2L12 12.7z" fill="#bff0d8"/></svg></span>' +
       '<span>Vue 3 项目实战<small>用 6 个应用学会现代 Vue</small></span></a>';
-    const links = CHAPTERS.map(({ n, t, part }) =>
+    const links = CHAPTERS.map(({ id, num, t, part, file }) =>
       (part ? `<div class="part">${part}</div>` : '') +
-      `<a class="ch${n === cur ? ' active' : ''}" href="${href(n)}"><span class="n">${n}</span><span>${t}</span></a>`
+      `<a class="ch${id === cur ? ' active' : ''}" href="${file}"><span class="n">${num}</span><span>${t}</span></a>`
     );
     const sw = '<a class="switch" href="react/index.html">&#8644; 切换到 React 版教程</a>';
     side.innerHTML = brand + sw + links.join('');
@@ -185,14 +196,14 @@
 
   /* ---------- 上一章 / 下一章 ---------- */
   const pager = document.getElementById('pager');
-  if (pager && cur) {
-    const prev = CHAPTERS.find((c) => c.n === cur - 1);
-    const next = CHAPTERS.find((c) => c.n === cur + 1);
+  if (pager && curIndex !== -1) {
+    const prev = CHAPTERS[curIndex - 1];
+    const next = CHAPTERS[curIndex + 1];
     const prevLink = prev
-      ? `<a class="prev" href="${href(prev.n)}"><span>&larr; 上一章</span>第 ${prev.n} 章 · ${prev.t}</a>`
+      ? `<a class="prev" href="${prev.file}"><span>&larr; 上一章</span>${prev.label} · ${prev.t}</a>`
       : '<a class="prev" href="index.html"><span>&larr; 返回</span>课程首页</a>';
     const nextLink = next
-      ? `<a class="next" href="${href(next.n)}"><span>下一章 &rarr;</span>第 ${next.n} 章 · ${next.t}</a>`
+      ? `<a class="next" href="${next.file}"><span>下一章 &rarr;</span>${next.label} · ${next.t}</a>`
       : '<a class="next ph" href="#">.</a>';
     pager.className = 'pager';
     pager.innerHTML = prevLink + nextLink;
@@ -202,9 +213,9 @@
   const grid = document.getElementById('toc-grid');
   if (grid) {
     grid.className = 'toc-grid';
-    grid.innerHTML = CHAPTERS.map(({ n, t, d }) =>
-      `<a class="toc-card" href="${href(n)}">` +
-      `<div class="n">第 ${n} 章</div>` +
+    grid.innerHTML = CHAPTERS.map(({ label, t, d, file }) =>
+      `<a class="toc-card" href="${file}">` +
+      `<div class="n">${label}</div>` +
       `<div class="t">${t}</div>` +
       `<div class="d">${d}</div></a>`
     ).join('');

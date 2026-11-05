@@ -1,0 +1,864 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 9 章 · 深入响应式原理 — Vue 3 项目实战教程</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .rx-demo { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .rx-demo .panel { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--bg); }
+  .rx-demo .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+  .rx-demo .big { font-size: 22px; font-weight: 700; font-family: var(--mono); }
+  .rx-log { font-family: var(--mono); font-size: 12px; max-height: 170px; overflow: auto; color: var(--fg-soft); }
+  .rx-log div { padding: 2px 0; border-bottom: 1px dashed var(--line); }
+  .rx-log .t { color: var(--accent-2); }
+  .rx-log .e { color: var(--green); }
+  @media (max-width: 640px) { .rx-demo { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body data-chapter="9">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 9 章 · 进阶专题</span>
+<h1>深入响应式原理</h1>
+<p class="lede">
+  前面八章一直在用 <code>ref</code>、<code>computed</code>、<code>watch</code>。改了数据界面就会变，像魔法一样。
+  本章我们拆开这个魔法：先<strong>用不到 100 行代码亲手写一个迷你响应式系统</strong>，再对照 Vue 的真实实现，
+  最后学习几个只有懂了原理才用得好的 API：<code>effectScope</code>、<code>customRef</code> 和各种“逃生舱”。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>理解响应式的三个角色：响应式数据、副作用（effect）、依赖关系</li>
+    <li>用 <code>Proxy</code> 亲手实现 <code>reactive</code>、<code>effect</code>、<code>track</code>、<code>trigger</code></li>
+    <li>在此基础上实现 <code>ref</code> 和惰性缓存的 <code>computed</code></li>
+    <li>理解调度器：为什么更新是批量的、异步的</li>
+    <li>用 <code>effectScope</code> 管理一组副作用，写出可共享的组合式函数</li>
+    <li>用 <code>customRef</code> 自定义依赖追踪，写一个防抖 ref</li>
+    <li>知道 <code>shallowRef</code>、<code>markRaw</code>、<code>toRaw</code> 等性能工具什么时候用</li>
+    <li>了解 Vapor Mode：不用虚拟 DOM 的 Vue</li>
+  </ul>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 本章适合谁</div>
+  <p>
+    学完前八章、能熟练写组件之后再来读。本章的代码不需要在项目里使用，它的目的是<strong>帮你建立正确的心智模型</strong>：
+    以后遇到“为什么这里不更新”“为什么 watch 触发了两次”之类的问题，你能自己推理出答案。
+  </p>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="roles">三个角色</h2>
+
+<p>先看一段最普通的代码：</p>
+
+<div class="code" data-lang="js"><pre>
+const state = reactive({ price: 10, quantity: 2 })
+
+watchEffect(() =&gt; {
+  console.log('总价', state.price * state.quantity)
+})
+
+state.quantity = 3   // 控制台自动打印：总价 30
+</pre></div>
+
+<p>
+  这里面有三样东西。<strong>响应式数据</strong> <code>state</code>；一个<strong>副作用函数</strong>（effect），也就是传给 <code>watchEffect</code> 的箭头函数；
+  以及它们之间的<strong>依赖关系</strong>：“这个函数读过 <code>state.price</code> 和 <code>state.quantity</code>”。
+  组件的渲染函数也是一个 effect，所以模板用到的数据变了，组件就会重新渲染。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="effect 运行时读取数据触发 track 记录依赖；修改数据触发 trigger，重新运行依赖它的 effect">
+  <rect class="bx-b" x="20" y="50" width="240" height="110" rx="12"/>
+  <text class="ttl on-b" x="140" y="76" text-anchor="middle">副作用 effect</text>
+  <text class="mono sm" x="140" y="102" text-anchor="middle">() =&gt; console.log(</text>
+  <text class="mono sm" x="140" y="120" text-anchor="middle">state.price * state.quantity)</text>
+  <text class="sm" x="140" y="144" text-anchor="middle">组件渲染函数也是 effect</text>
+
+  <rect class="bx-a" x="310" y="50" width="170" height="110" rx="12"/>
+  <text class="ttl on-a" x="395" y="76" text-anchor="middle">响应式数据</text>
+  <text class="mono sm" x="395" y="102" text-anchor="middle">Proxy(state)</text>
+  <text class="sm" x="395" y="126" text-anchor="middle">get 时 → track</text>
+  <text class="sm" x="395" y="144" text-anchor="middle">set 时 → trigger</text>
+
+  <rect class="bx-g" x="540" y="50" width="200" height="110" rx="12"/>
+  <text class="ttl on-g" x="640" y="76" text-anchor="middle">依赖表</text>
+  <text class="mono sm" x="640" y="102" text-anchor="middle">price    → {effect}</text>
+  <text class="mono sm" x="640" y="122" text-anchor="middle">quantity → {effect}</text>
+  <text class="sm" x="640" y="144" text-anchor="middle">谁读过谁</text>
+
+  <path class="ln-b" d="M260 105 H306" marker-end="url(#ar)"/>
+  <text class="lbl halo" x="285" y="36" text-anchor="middle">① 运行时读取</text>
+  <path class="ln-g" d="M480 105 H536" marker-end="url(#ar)"/>
+  <text class="lbl halo" x="510" y="36" text-anchor="middle">② track 记录</text>
+
+  <path class="ln-a" d="M640 162 V200 H140 V164" marker-end="url(#ar-a)"/>
+  <text class="lbl" x="390" y="226" text-anchor="middle">③ 修改数据 → trigger 查表 → 重新运行这些 effect</text>
+</svg>
+<figcaption>图 9-1　effect 读数据时登记依赖，数据变化时按依赖重新运行</figcaption>
+</figure>
+
+<p>所以响应式系统要解决的就是两件事：</p>
+<ol class="steps">
+  <li><strong>track（追踪）</strong>：effect 运行期间，每读一个响应式属性，就记下“当前 effect 依赖这个属性”。</li>
+  <li><strong>trigger（触发）</strong>：某个属性被修改时，找出所有依赖它的 effect，重新运行它们。</li>
+</ol>
+
+<h2 id="mini">动手写一个迷你响应式系统</h2>
+
+<h3>第一步：依赖表的数据结构</h3>
+
+<p>
+  “哪个对象的哪个属性被哪些 effect 依赖”是一个三层结构。Vue 用 <code>WeakMap → Map → Set</code> 来存：
+  第一层用对象做键（用 WeakMap，对象不再被使用时能被垃圾回收），第二层用属性名做键，第三层是不重复的 effect 集合。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="targetMap 是 WeakMap，以对象为键指向 depsMap；depsMap 以属性名为键指向 effect 的 Set">
+  <rect class="bx-a" x="20" y="60" width="180" height="120" rx="12"/>
+  <text class="ttl on-a" x="110" y="86" text-anchor="middle">targetMap</text>
+  <text class="sm" x="110" y="106" text-anchor="middle">WeakMap</text>
+  <rect class="bx" x="40" y="120" width="140" height="40" rx="8"/>
+  <text class="mono sm" x="110" y="145" text-anchor="middle">state 对象 →</text>
+
+  <rect class="bx-b" x="270" y="30" width="200" height="180" rx="12"/>
+  <text class="ttl on-b" x="370" y="56" text-anchor="middle">depsMap</text>
+  <text class="sm" x="370" y="76" text-anchor="middle">Map（属性名 → 依赖集合）</text>
+  <rect class="bx" x="290" y="92" width="160" height="40" rx="8"/>
+  <text class="mono sm" x="370" y="117" text-anchor="middle">'price'    →</text>
+  <rect class="bx" x="290" y="148" width="160" height="40" rx="8"/>
+  <text class="mono sm" x="370" y="173" text-anchor="middle">'quantity' →</text>
+
+  <rect class="bx-g" x="540" y="80" width="200" height="56" rx="10"/>
+  <text class="ttl on-g" x="640" y="104" text-anchor="middle">Set { 总价 effect }</text>
+  <text class="sm" x="640" y="122" text-anchor="middle">dep</text>
+  <rect class="bx-g" x="540" y="148" width="200" height="56" rx="10"/>
+  <text class="ttl on-g" x="640" y="172" text-anchor="middle">Set { 总价, 渲染 }</text>
+  <text class="sm" x="640" y="190" text-anchor="middle">dep</text>
+
+  <path class="ln" d="M180 140 H266" marker-end="url(#ar)"/>
+  <path class="ln" d="M450 112 H536" marker-end="url(#ar)"/>
+  <path class="ln" d="M450 168 L536 174" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 9-2　依赖表：对象 → 属性 → effect 集合</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="mini-reactivity.js"><pre>
+const targetMap = new WeakMap()
+let activeEffect = null          // 当前正在运行的 effect
+
+function track(target, key) {
+  if (!activeEffect) return      // 不在 effect 里读取，不用记录
+  let depsMap = targetMap.get(target)
+  if (!depsMap) targetMap.set(target, (depsMap = new Map()))
+  let dep = depsMap.get(key)
+  if (!dep) depsMap.set(key, (dep = new Set()))
+  dep.add(activeEffect)
+}
+
+function trigger(target, key) {
+  const dep = targetMap.get(target)?.get(key)
+  if (!dep) return
+  // 复制一份再遍历，避免 effect 运行时又往 dep 里加自己导致死循环
+  ;[...dep].forEach((effect) =&gt; effect())
+}
+</pre></div>
+
+<h3>第二步：用 Proxy 拦截读写</h3>
+
+<p>
+  <code>Proxy</code> 可以拦截对一个对象的几乎所有操作。我们在 <code>get</code> 里调用 <code>track</code>，在 <code>set</code> 里调用 <code>trigger</code>。
+  <code>Reflect</code> 则负责完成“原本的”读写操作：
+</p>
+
+<div class="code" data-lang="js" data-file="mini-reactivity.js"><pre>
+function reactive(target) {
+  return new Proxy(target, {
+    get(obj, key, receiver) {
+      track(obj, key)
+      const value = Reflect.get(obj, key, receiver)
+      // 读到的值如果也是对象，就把它也变成响应式（懒代理：用到才代理）
+      return value !== null &amp;&amp; typeof value === 'object' ? reactive(value) : value
+    },
+    set(obj, key, value, receiver) {
+      const old = obj[key]
+      const ok = Reflect.set(obj, key, value, receiver)
+      if (old !== value) trigger(obj, key)   // 值没变就不触发
+      return ok
+    },
+  })
+}
+</pre></div>
+
+<div class="box deep">
+  <div class="t">&#128270; 这就是 Vue 2 和 Vue 3 的根本差别</div>
+  <p>
+    Vue 2 用 <code>Object.defineProperty</code> 给<strong>每个已有属性</strong>装 getter/setter，所以“新增属性”和“用下标改数组”无法被检测，
+    必须用 <code>Vue.set</code>。<code>Proxy</code> 拦截的是<strong>整个对象</strong>上的操作，新增、删除属性和数组下标都能捕获，这些限制也就没有了。
+    真实的 Vue 还拦截了 <code>has</code>（<code>in</code> 运算符）、<code>deleteProperty</code>、<code>ownKeys</code>（遍历），并对数组方法和 Map/Set 做了专门处理。
+  </p>
+</div>
+
+<h3>第三步：effect</h3>
+
+<p>effect 只做一件事：运行函数之前把自己设为 <code>activeEffect</code>，这样函数里读到的每个属性都会登记到它名下。</p>
+
+<div class="code" data-lang="js" data-file="mini-reactivity.js"><pre>
+function effect(fn) {
+  const run = () =&gt; {
+    const prev = activeEffect
+    activeEffect = run
+    try {
+      return fn()
+    } finally {
+      activeEffect = prev      // 恢复外层 effect，支持嵌套
+    }
+  }
+  run()                        // 立即运行一次，收集初始依赖
+  return run
+}
+</pre></div>
+
+<p>完成了。试一试：</p>
+
+<div class="code" data-lang="js"><pre>
+const state = reactive({ price: 10, quantity: 2 })
+effect(() =&gt; console.log('总价', state.price * state.quantity))   // 总价 20
+state.quantity = 3                                                 // 总价 30
+state.price = 20                                                   // 总价 60
+</pre></div>
+
+<p>下面的演示运行的正是上面这几十行代码，<strong>页面上没有加载 Vue</strong>。点按钮修改数据，右边的日志会显示每次 track 和 effect 的运行：</p>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · 不用 Vue 的迷你响应式</div>
+  <div class="body">
+    <div class="rx-demo" id="rx-demo">
+      <div class="panel">
+        <div class="row">单价 <button class="ghost" data-act="price-">−</button><span class="big" id="rx-price">10</span><button class="ghost" data-act="price+">＋</button></div>
+        <div class="row">数量 <button class="ghost" data-act="qty-">−</button><span class="big" id="rx-qty">2</span><button class="ghost" data-act="qty+">＋</button></div>
+        <div class="row">总价 <span class="big" id="rx-total">20</span></div>
+        <div class="row"><button class="ghost" data-act="note">改 note（没有 effect 依赖它）</button></div>
+      </div>
+      <div class="panel">
+        <div class="muted">日志（最新在上）</div>
+        <div class="rx-log" id="rx-log"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p>注意点击“改 note”时没有任何 effect 运行：因为没有 effect 读过 <code>note</code>，依赖表里查不到它。这就是 Vue <strong>精确更新</strong>的来源。</p>
+
+<h3>第四步：清理过期依赖</h3>
+
+<p>上面的实现有个隐藏 bug。看这个 effect：</p>
+
+<div class="code" data-lang="js"><pre>
+effect(() =&gt; {
+  el.textContent = state.showDetail ? state.detail : '已隐藏'
+})
+</pre></div>
+
+<p>
+  第一次运行时 <code>showDetail</code> 为 true，effect 读了 <code>showDetail</code> 和 <code>detail</code>。
+  后来 <code>showDetail</code> 变成 false，effect 不再读 <code>detail</code>，但依赖表里仍然记着它，于是修改 <code>detail</code> 时 effect 还会白白运行一次。
+  解决方法是：<strong>每次运行前，先把 effect 从所有 dep 中移除，运行时再重新收集</strong>：
+</p>
+
+<div class="code" data-lang="js" data-file="mini-reactivity.js"><pre>
+function effect(fn) {
+  const run = () =&gt; {
+    run.deps.forEach((dep) =&gt; dep.delete(run))   // 清除旧依赖
+    run.deps.length = 0
+    const prev = activeEffect
+    activeEffect = run
+    try { return fn() } finally { activeEffect = prev }
+  }
+  run.deps = []          // 记录“我在哪些 dep 里”
+  run()
+  return run
+}
+
+// track 里多加一行：
+dep.add(activeEffect)
+activeEffect.deps.push(dep)
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; Vue 3.5 的实现更聪明</div>
+  <p>
+    每次全部删掉再重新收集，开销不小。Vue 3.5 重写了响应式系统：依赖改用<strong>双向链表</strong>存储，每个依赖带一个<strong>版本号</strong>，
+    重新运行后只移除这一轮没有再被访问的那些。官方数据是内存占用下降了 56%。思路和我们的一样，只是更高效。
+  </p>
+</div>
+
+<h2 id="ref-computed">实现 ref 和 computed</h2>
+
+<h3>ref：只有一个 value 属性的对象</h3>
+
+<p>
+  <code>Proxy</code> 只能代理对象，数字、字符串这类原始值没法代理。所以 <code>ref</code> 把值装进一个对象，通过 <code>value</code> 的 getter/setter 来追踪。
+  这就是 <code>.value</code> 存在的原因：
+</p>
+
+<div class="code" data-lang="js" data-file="mini-reactivity.js"><pre>
+function ref(initial) {
+  let _value = initial
+  const r = {
+    get value() {
+      track(r, 'value')
+      return _value
+    },
+    set value(v) {
+      if (v === _value) return
+      _value = v
+      trigger(r, 'value')
+    },
+  }
+  return r
+}
+</pre></div>
+
+<h3>computed：带“脏标记”的惰性 effect</h3>
+
+<p>
+  <code>computed</code> 有两个特点：<strong>惰性</strong>（没人读就不计算）和<strong>缓存</strong>（依赖没变就直接返回上次的结果）。
+  实现关键是给 effect 加一个<strong>调度器</strong>（scheduler）：依赖变化时不直接重新计算，只把自己标记为“脏”，并通知读过这个 computed 的 effect。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="computed 的生命周期：依赖变化只标记 dirty 并通知下游，被读取时若 dirty 才重新计算">
+  <rect class="bx-a" x="20" y="90" width="150" height="80" rx="12"/>
+  <text class="ttl on-a" x="95" y="118" text-anchor="middle">依赖</text>
+  <text class="mono sm" x="95" y="142" text-anchor="middle">state.price</text>
+
+  <rect class="bx-p" x="270" y="60" width="220" height="140" rx="12"/>
+  <text class="ttl on-p" x="380" y="86" text-anchor="middle">computed total</text>
+  <text class="mono sm" x="380" y="112" text-anchor="middle">dirty = true / false</text>
+  <text class="mono sm" x="380" y="132" text-anchor="middle">cached = 60</text>
+  <text class="sm" x="380" y="160" text-anchor="middle">scheduler：只标记，不计算</text>
+  <text class="sm" x="380" y="180" text-anchor="middle">get value：dirty 才计算</text>
+
+  <rect class="bx-b" x="590" y="90" width="150" height="80" rx="12"/>
+  <text class="ttl on-b" x="665" y="118" text-anchor="middle">读取者</text>
+  <text class="mono sm" x="665" y="142" text-anchor="middle">渲染 effect</text>
+
+  <path class="ln-a" d="M170 112 H266" marker-end="url(#ar-a)"/>
+  <text class="lbl halo" x="218" y="100" text-anchor="middle">① 变化</text>
+  <path class="ln-p" d="M490 112 H586" marker-end="url(#ar)"/>
+  <text class="lbl halo" x="538" y="100" text-anchor="middle">② 通知</text>
+  <path class="ln-b" d="M586 150 H494" marker-end="url(#ar)"/>
+  <text class="lbl halo" x="538" y="168" text-anchor="middle">③ 读取</text>
+
+  <text class="lbl" x="380" y="236" text-anchor="middle">依赖变 100 次、没人读 → 一次都不算；连读 100 次、依赖没变 → 只算一次</text>
+</svg>
+<figcaption>图 9-3　computed = 惰性 effect + 脏标记 + 缓存</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="mini-reactivity.js"><pre>
+function computed(getter) {
+  let cached
+  let dirty = true
+  const c = {}
+
+  // 不用 effect() 立即运行，而是自己控制何时运行
+  const runner = () =&gt; {
+    runner.deps.forEach((dep) =&gt; dep.delete(runner)); runner.deps.length = 0
+    const prev = activeEffect
+    activeEffect = runner
+    try { return getter() } finally { activeEffect = prev }
+  }
+  runner.deps = []
+  // trigger 调用 runner 时，走调度器：只标脏 + 通知下游
+  runner.scheduler = () =&gt; {
+    if (!dirty) { dirty = true; trigger(c, 'value') }
+  }
+
+  Object.defineProperty(c, 'value', {
+    get() {
+      track(c, 'value')               // 读 computed 的 effect 依赖它
+      if (dirty) { cached = runner(); dirty = false }
+      return cached
+    },
+  })
+  return c
+}
+
+// trigger 也要改一下：有 scheduler 就调用 scheduler
+;[...dep].forEach((e) =&gt; (e.scheduler ? e.scheduler() : e()))
+</pre></div>
+
+<h2 id="scheduler">调度器：为什么更新是批量的</h2>
+
+<p>
+  我们的迷你版本每改一次数据，effect 就同步运行一次。如果连续改 100 次，组件就渲染 100 次，显然太浪费。
+  Vue 给组件渲染 effect 也设置了调度器：<strong>不立即渲染，而是把任务放进队列，在微任务中统一执行，同一个任务只入队一次</strong>。
+  第 2 章讲的 <code>nextTick</code>，等的就是这个队列被清空。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="三次同步修改都调用 queueJob，同一个渲染任务只入队一次，微任务中统一执行，nextTick 在其后">
+  <rect class="bx-b" x="20" y="30" width="220" height="160" rx="12"/>
+  <text class="ttl on-b" x="130" y="56" text-anchor="middle">同步代码</text>
+  <text class="mono sm" x="40" y="86">count.value++  → queueJob</text>
+  <text class="mono sm" x="40" y="110">count.value++  → queueJob</text>
+  <text class="mono sm" x="40" y="134">name.value='x' → queueJob</text>
+  <text class="sm" x="40" y="166">都是同一个组件的 update</text>
+
+  <rect class="bx-a" x="300" y="60" width="170" height="100" rx="12"/>
+  <text class="ttl on-a" x="385" y="86" text-anchor="middle">队列（去重）</text>
+  <text class="mono sm" x="385" y="114" text-anchor="middle">[ App.update ]</text>
+  <text class="sm" x="385" y="138" text-anchor="middle">Promise.then 中执行</text>
+
+  <rect class="bx-g" x="530" y="30" width="210" height="160" rx="12"/>
+  <text class="ttl on-g" x="635" y="56" text-anchor="middle">微任务</text>
+  <text class="sm" x="635" y="86" text-anchor="middle">① 按组件从父到子排序</text>
+  <text class="sm" x="635" y="110" text-anchor="middle">② 每个组件渲染一次</text>
+  <text class="sm" x="635" y="134" text-anchor="middle">③ 运行 flush:'post' 的 watch</text>
+  <text class="mono sm" x="635" y="166" text-anchor="middle">④ await nextTick() 继续</text>
+
+  <path class="ln" d="M240 110 H296" marker-end="url(#ar)"/>
+  <path class="ln" d="M470 110 H526" marker-end="url(#ar)"/>
+  <text class="lbl" x="380" y="216" text-anchor="middle">改 3 次数据，只渲染 1 次</text>
+</svg>
+<figcaption>图 9-4　调度器把同一轮的更新合并成一次</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="mini-scheduler.js"><pre>
+const queue = new Set()
+let flushing = false
+const resolved = Promise.resolve()
+
+function queueJob(job) {
+  queue.add(job)                 // Set 自动去重
+  if (!flushing) {
+    flushing = true
+    resolved.then(() =&gt; {
+      queue.forEach((j) =&gt; j())
+      queue.clear()
+      flushing = false
+    })
+  }
+}
+
+function nextTick(fn) {
+  return fn ? resolved.then(fn) : resolved
+}
+
+// 渲染 effect 用调度器把自己放进队列
+const update = () =&gt; render()
+update.scheduler = () =&gt; queueJob(update)
+</pre></div>
+
+<p>这也解释了 <code>watch</code> 的 <code>flush</code> 选项：</p>
+
+<div class="tw"><table>
+<thead><tr><th><code>flush</code></th><th>回调何时运行</th><th>适合</th></tr></thead>
+<tbody>
+<tr><td><code>'pre'</code>（默认）</td><td>组件更新<strong>之前</strong>，放进队列</td><td>大多数情况</td></tr>
+<tr><td><code>'post'</code></td><td>组件更新<strong>之后</strong>，能拿到新 DOM</td><td>回调里要读 DOM（等价于 <code>watchPostEffect</code>）</td></tr>
+<tr><td><code>'sync'</code></td><td>数据一变立即同步运行，不进队列</td><td>极少数需要同步响应的场景，注意性能</td></tr>
+</tbody>
+</table></div>
+
+<h2 id="vue-api">回到 Vue：原理对应的 API</h2>
+
+<p>有了心智模型，回头看 Vue 的 API 就清楚多了。下面几个是 Vue 3.5 带来的、和 effect 生命周期相关的新能力：</p>
+
+<div class="code" data-lang="js"><pre>
+import { watch, onWatcherCleanup } from 'vue'
+
+watch(id, async (newId) =&gt; {
+  const controller = new AbortController()
+  // 3.5+：effect 下一次重新运行（或被停止）之前调用，用来取消上一次的请求
+  onWatcherCleanup(() =&gt; controller.abort())
+  data.value = await fetch(`/api/items/${newId}`, { signal: controller.signal }).then((r) =&gt; r.json())
+})
+
+// 3.5+：deep 可以是数字，只追踪到指定层数
+watch(tree, render, { deep: 2 })
+
+// 3.4+：只触发一次
+watch(ready, init, { once: true })
+
+// 3.5+：暂停 / 恢复 / 停止
+const { pause, resume, stop } = watch(source, cb)
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; onWatcherCleanup 必须在 await 之前调用</div>
+  <p>
+    和 <code>onMounted</code> 一样，它依赖“当前正在运行的 effect”这个全局变量（就是我们的 <code>activeEffect</code>）。
+    一旦经过 <code>await</code>，同步执行上下文就结束了，Vue 不知道你在哪个 watcher 里。需要在 await 之后注册时，改用回调的第三个参数 <code>onCleanup</code>。
+  </p>
+</div>
+
+<h2 id="scope">effectScope：成组管理副作用</h2>
+
+<p>
+  组件里创建的 <code>computed</code>、<code>watch</code> 会在组件卸载时自动停止。原理是：组件 setup 运行时，有一个“当前作用域”收集了这期间创建的所有 effect，卸载时一起停掉。
+  这个能力通过 <code>effectScope</code> 暴露给了我们：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="effectScope 收集 run 期间创建的 computed、watch 和嵌套 scope，调用 stop 时一并停止">
+  <rect class="bx-a" x="20" y="20" width="460" height="190" rx="14"/>
+  <text class="ttl on-a" x="40" y="46">const scope = effectScope()</text>
+  <text class="mono sm" x="40" y="68">scope.run(() =&gt; { … })</text>
+  <rect class="bx-p" x="40" y="86" width="130" height="56" rx="10"/>
+  <text class="ttl on-p" x="105" y="110" text-anchor="middle">computed</text>
+  <text class="sm" x="105" y="128" text-anchor="middle">doubled</text>
+  <rect class="bx-p" x="185" y="86" width="130" height="56" rx="10"/>
+  <text class="ttl on-p" x="250" y="110" text-anchor="middle">watch</text>
+  <text class="sm" x="250" y="128" text-anchor="middle">count → log</text>
+  <rect class="bx-d" x="330" y="86" width="130" height="104" rx="10"/>
+  <text class="ttl" x="395" y="110" text-anchor="middle">子 scope</text>
+  <text class="sm" x="395" y="130" text-anchor="middle">watchEffect</text>
+  <text class="sm" x="395" y="150" text-anchor="middle">事件监听…</text>
+  <text class="sm" x="40" y="174">run 期间创建的 effect</text>
+  <text class="sm" x="40" y="192">自动登记到 scope 里</text>
+
+  <rect class="bx-r" x="560" y="80" width="180" height="70" rx="12"/>
+  <text class="ttl on-r" x="650" y="108" text-anchor="middle">scope.stop()</text>
+  <text class="sm" x="650" y="130" text-anchor="middle">全部停止，一个不漏</text>
+  <path class="ln-r" d="M556 115 H484" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 9-5　effectScope：组件卸载时自动清理背后就是它</figcaption>
+</figure>
+
+<div class="code" data-lang="js"><pre>
+import { effectScope, ref, computed, watch, onScopeDispose } from 'vue'
+
+const scope = effectScope()
+scope.run(() =&gt; {
+  const count = ref(0)
+  const doubled = computed(() =&gt; count.value * 2)
+  watch(count, (v) =&gt; console.log(v))
+  onScopeDispose(() =&gt; console.log('作用域被停止了'))   // 类似 onUnmounted，但不依赖组件
+})
+
+scope.stop()   // 上面的 computed 和 watch 都停了
+</pre></div>
+
+<h3>实战：多个组件共享一个组合式函数</h3>
+
+<p>
+  假设 <code>useMouse()</code> 在 <code>window</code> 上监听 mousemove。页面上 10 个组件都调用它，就会注册 10 个监听器。
+  用 <code>effectScope</code> 可以让它们共享<strong>同一份</strong>状态，最后一个使用者卸载时才清理：
+</p>
+
+<div class="code" data-lang="js" data-file="src/composables/createSharedComposable.js"><pre>
+import { effectScope, onScopeDispose } from 'vue'
+
+export function createSharedComposable(composable) {
+  let subscribers = 0
+  let state, scope
+
+  const dispose = () =&gt; {
+    subscribers--
+    if (scope &amp;&amp; subscribers &lt;= 0) {
+      scope.stop()
+      state = scope = undefined
+    }
+  }
+
+  return (...args) =&gt; {
+    subscribers++
+    if (!state) {
+      // detached: true —— 不挂在当前组件的作用域下，否则第一个组件卸载就会把它停掉
+      scope = effectScope(true)
+      state = scope.run(() =&gt; composable(...args))
+    }
+    onScopeDispose(dispose)   // 调用者（组件）卸载时减少计数
+    return state
+  }
+}
+
+// 使用
+export const useSharedMouse = createSharedComposable(useMouse)
+</pre></div>
+
+<p>VueUse 里同名的 <code>createSharedComposable</code> 就是这么实现的。Pinia 也一样：每个 store 都运行在自己的 <code>effectScope</code> 里，所以 store 里的 <code>computed</code> 和 <code>watch</code> 不随组件卸载而停止。</p>
+
+<h2 id="customref">customRef：自己决定何时追踪、何时触发</h2>
+
+<p>
+  <code>customRef</code> 把 <code>track</code> 和 <code>trigger</code> 两个函数直接交给你，你自己决定什么时候调用它们。
+  经典例子是<strong>防抖 ref</strong>：输入框每次输入都更新值，但界面（以及依赖它的请求）等用户停下 300 毫秒后才更新：
+</p>
+
+<div class="code" data-lang="js" data-file="src/composables/useDebouncedRef.js"><pre>
+import { customRef } from 'vue'
+
+export function useDebouncedRef(value, delay = 300) {
+  let timer
+  return customRef((track, trigger) =&gt; ({
+    get() {
+      track()              // 读取时登记依赖
+      return value
+    },
+    set(newValue) {
+      clearTimeout(timer)
+      timer = setTimeout(() =&gt; {
+        value = newValue
+        trigger()          // 停顿 delay 毫秒后才通知
+      }, delay)
+    },
+  }))
+}
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="SearchBox.vue"><pre>
+&lt;script setup&gt;
+import { watch } from 'vue'
+import { useDebouncedRef } from '@/composables/useDebouncedRef'
+
+const keyword = useDebouncedRef('')
+watch(keyword, (k) =&gt; search(k))   // 停止输入 300ms 后才搜索
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;input v-model="keyword" placeholder="搜索…"&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 注意 v-model 的小问题</div>
+  <p>
+    因为 <code>set</code> 之后值不会立即变，输入框在防抖期间显示的仍是用户输入的内容（DOM 自己的值），这没问题。
+    但如果你在防抖期间读 <code>keyword.value</code>，拿到的是旧值。需要“输入框立即响应，搜索延迟执行”时，更常见的做法是普通 <code>ref</code> 加 VueUse 的 <code>watchDebounced</code>。
+  </p>
+</div>
+
+<h2 id="escape">性能逃生舱</h2>
+
+<p>
+  深层响应式很方便，但代价是：每读一个嵌套对象都要创建代理、登记依赖。数据量大或者对象来自第三方库时，可以有选择地“关掉”响应式：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="从深到浅的响应式程度：reactive/ref 深层代理，shallowRef/shallowReactive 只追踪第一层，markRaw 完全不代理">
+  <path class="ln-a" d="M30 34 H730" marker-end="url(#ar-a)"/>
+  <text class="lbl halo" x="30" y="24">响应式程度高</text>
+  <text class="lbl halo" x="730" y="24" text-anchor="end">开销低</text>
+
+  <rect class="bx-b" x="20" y="60" width="220" height="140" rx="12"/>
+  <text class="ttl on-b" x="130" y="86" text-anchor="middle">ref / reactive</text>
+  <text class="sm" x="130" y="112" text-anchor="middle">所有层级都代理</text>
+  <text class="mono sm" x="130" y="138" text-anchor="middle">a.b.c.d = 1 ✓ 更新</text>
+  <text class="sm" x="130" y="168" text-anchor="middle">默认选择</text>
+
+  <rect class="bx-p" x="270" y="60" width="220" height="140" rx="12"/>
+  <text class="ttl on-p" x="380" y="86" text-anchor="middle">shallowRef / shallowReactive</text>
+  <text class="sm" x="380" y="112" text-anchor="middle">只追踪 .value / 第一层</text>
+  <text class="mono sm" x="380" y="138" text-anchor="middle">list.value[0].x = 1 ✗</text>
+  <text class="mono sm" x="380" y="158" text-anchor="middle">list.value = [...] ✓</text>
+  <text class="sm" x="380" y="182" text-anchor="middle">大数组、不可变数据</text>
+
+  <rect class="bx" x="520" y="60" width="220" height="140" rx="12"/>
+  <text class="ttl" x="630" y="86" text-anchor="middle">markRaw</text>
+  <text class="sm" x="630" y="112" text-anchor="middle">永远不被代理</text>
+  <text class="mono sm" x="630" y="138" text-anchor="middle">map = markRaw(L.map())</text>
+  <text class="sm" x="630" y="168" text-anchor="middle">第三方类实例、组件对象</text>
+</svg>
+<figcaption>图 9-6　按需降低响应式程度</figcaption>
+</figure>
+
+<div class="tw"><table>
+<thead><tr><th>API</th><th>作用</th><th>本教程里的例子</th></tr></thead>
+<tbody>
+<tr><td><code>shallowRef</code></td><td>只有替换 <code>.value</code> 才触发</td><td>第 6 章的帖子列表</td></tr>
+<tr><td><code>triggerRef(r)</code></td><td>手动通知一个 shallowRef “我改了里面的东西”</td><td>原地修改大数组后调用一次</td></tr>
+<tr><td><code>markRaw(obj)</code></td><td>给对象打标记，永远不会被转成代理</td><td>第 6 章的 Leaflet 地图实例（放进响应式数据里也不会被代理）</td></tr>
+<tr><td><code>toRaw(proxy)</code></td><td>拿到代理背后的原始对象</td><td>把数据传给 <code>structuredClone</code>、IndexedDB 或第三方库时</td></tr>
+<tr><td><code>readonly</code></td><td>只读代理，写入时警告</td><td>第 3 章的全局游戏状态</td></tr>
+</tbody>
+</table></div>
+
+<div class="box warn">
+  <div class="t">&#9888; 代理不等于原对象</div>
+  <p>
+    <code>reactive(obj) !== obj</code>。如果你把原对象和代理混着用，比如 <code>list.includes(rawItem)</code>，可能得到意外的 <code>false</code>。
+    同理，<code>structuredClone(proxy)</code> 会报错，需要先 <code>toRaw</code>。
+  </p>
+</div>
+
+<h2 id="vapor">Vapor Mode：不用虚拟 DOM 的 Vue</h2>
+
+<p>
+  到目前为止，Vue 组件的更新流程是：数据变化 → 组件渲染 effect 重新运行 → 生成新的<strong>虚拟 DOM 树</strong> → 和旧树比较（diff）→ 把差异应用到真实 DOM。
+  虚拟 DOM 让编写渲染逻辑很灵活，但“生成整棵树再比较”本身有开销。
+</p>
+
+<p>
+  既然响应式系统已经知道<strong>哪个数据被哪段代码使用</strong>，为什么不让每一处绑定直接对应一个小 effect，数据变了只更新那一个 DOM 节点？
+  这就是 <strong>Vapor Mode</strong>：编译器把模板编译成直接创建、更新 DOM 的代码，跳过虚拟 DOM。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="虚拟 DOM 模式下一个组件一个渲染 effect，需要重新生成 vnode 树并 diff；Vapor 模式下每个绑定一个小 effect，直接更新对应的 DOM 节点">
+  <rect class="bx-b" x="20" y="20" width="340" height="220" rx="14"/>
+  <text class="ttl on-b" x="190" y="46" text-anchor="middle">虚拟 DOM 模式（默认）</text>
+  <rect class="bx-a" x="40" y="64" width="300" height="34" rx="8"/>
+  <text class="sm" x="190" y="86" text-anchor="middle">count 变化 → 整个组件的渲染 effect</text>
+  <rect class="bx" x="40" y="110" width="140" height="56" rx="8"/>
+  <text class="sm" x="110" y="134" text-anchor="middle">生成新 vnode 树</text>
+  <text class="sm" x="110" y="152" text-anchor="middle">（整个组件）</text>
+  <rect class="bx" x="200" y="110" width="140" height="56" rx="8"/>
+  <text class="sm" x="270" y="134" text-anchor="middle">和旧树 diff</text>
+  <text class="sm" x="270" y="152" text-anchor="middle">（编译器帮忙优化）</text>
+  <rect class="bx-g" x="40" y="180" width="300" height="40" rx="8"/>
+  <text class="sm" x="190" y="205" text-anchor="middle">patch：更新变化的 DOM 节点</text>
+
+  <rect class="bx-p" x="400" y="20" width="340" height="220" rx="14"/>
+  <text class="ttl on-p" x="570" y="46" text-anchor="middle">Vapor Mode</text>
+  <rect class="bx-a" x="420" y="64" width="300" height="34" rx="8"/>
+  <text class="sm" x="570" y="86" text-anchor="middle">count 变化 → 只有用到它的那个小 effect</text>
+  <rect class="bx" x="420" y="110" width="300" height="56" rx="8"/>
+  <text class="mono sm" x="570" y="134" text-anchor="middle">renderEffect(() =&gt;</text>
+  <text class="mono sm" x="570" y="152" text-anchor="middle">setText(n0, count.value))</text>
+  <rect class="bx-g" x="420" y="180" width="300" height="40" rx="8"/>
+  <text class="sm" x="570" y="205" text-anchor="middle">直接改这一个文本节点，没有 diff</text>
+</svg>
+<figcaption>图 9-7　虚拟 DOM 与 Vapor Mode 的更新路径</figcaption>
+</figure>
+
+<p>对写代码的人来说，变化非常小：组件的写法完全一样，只需要在 <code>&lt;script setup&gt;</code> 上加一个 <code>vapor</code> 标记：</p>
+
+<div class="code" data-lang="vue" data-file="Counter.vue"><pre>
+&lt;script setup vapor&gt;
+import { ref } from 'vue'
+const count = ref(0)
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;button @click="count++"&gt;点了 {{ count }} 次&lt;/button&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; Vapor Mode 还在演进中</div>
+  <p>
+    Vapor Mode 随 Vue 3.6 推出，同时 3.6 也把响应式核心换成了基于 alien-signals 思路的新实现。截至本文写作时，Vapor 只支持 <code>&lt;script setup&gt;</code> 的组合式写法，
+    部分功能（例如与一些虚拟 DOM 组件库混用的细节、SSR 水合）仍在完善。<strong>是否在生产中使用、怎么启用，请以 Vue 官方文档和发布说明为准</strong>。
+    好消息是：本章讲的响应式原理在两种模式下完全相同，Vapor 只是让“effect → DOM”这一步更直接。
+  </p>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<div class="tw"><table>
+<thead><tr><th>概念</th><th>一句话</th></tr></thead>
+<tbody>
+<tr><td>track / trigger</td><td>effect 运行时读属性就登记依赖；改属性就重新运行依赖它的 effect</td></tr>
+<tr><td>依赖表</td><td><code>WeakMap&lt;对象, Map&lt;属性, Set&lt;effect&gt;&gt;&gt;</code>（3.5 起改为链表 + 版本号）</td></tr>
+<tr><td>Proxy</td><td>拦截整个对象的操作，所以新增属性、数组下标都能追踪</td></tr>
+<tr><td>ref</td><td>原始值不能被代理，所以用一个带 <code>value</code> getter/setter 的对象包起来</td></tr>
+<tr><td>computed</td><td>惰性 effect + 脏标记 + 缓存</td></tr>
+<tr><td>调度器</td><td>渲染任务进队列、去重、在微任务里统一执行；<code>nextTick</code> 等这个队列</td></tr>
+<tr><td>effectScope</td><td>收集一组 effect，一次停止；组件和 Pinia store 都靠它</td></tr>
+<tr><td>customRef</td><td>自己掌控 track 和 trigger 的时机，例如防抖</td></tr>
+<tr><td>逃生舱</td><td><code>shallowRef</code>、<code>markRaw</code>、<code>toRaw</code>：大数据和第三方对象</td></tr>
+<tr><td>Vapor Mode</td><td>细粒度 effect 直接更新 DOM，跳过虚拟 DOM</td></tr>
+</tbody>
+</table></div>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>给迷你响应式系统加上 <code>deleteProperty</code> 拦截：<code>delete state.x</code> 时触发依赖 <code>x</code> 的 effect。</li>
+    <li>现在 <code>for (const k in state)</code> 这样的遍历不会被追踪。用 <code>ownKeys</code> 拦截和一个特殊的键（比如 <code>Symbol('iterate')</code>）实现它：新增或删除属性时触发遍历过的 effect。</li>
+    <li>实现 <code>watch(getter, cb)</code>：用一个带 scheduler 的 effect，scheduler 里重新运行 getter，并把新旧值传给 <code>cb</code>。</li>
+    <li>把迷你调度器接入演示：连续点击“＋”三次时让总价 effect 只运行一次，观察日志的变化。</li>
+    <li>用 <code>customRef</code> 写一个 <code>useLocalStorageRef(key, initial)</code>：读取时从 localStorage 取，写入时保存并触发更新。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+<script>
+  // 页面里的演示：正文中迷你响应式系统的完整版本（含依赖清理），没有使用 Vue
+  (function () {
+    const root = document.getElementById('rx-demo')
+    if (!root) return
+    const logEl = document.getElementById('rx-log')
+    const log = (cls, text) => {
+      const d = document.createElement('div')
+      d.innerHTML = `<span class="${cls}">${text}</span>`
+      logEl.prepend(d)
+      while (logEl.children.length > 40) logEl.lastChild.remove()
+    }
+
+    const targetMap = new WeakMap()
+    let activeEffect = null
+    function track(target, key) {
+      if (!activeEffect) return
+      let depsMap = targetMap.get(target)
+      if (!depsMap) targetMap.set(target, (depsMap = new Map()))
+      let dep = depsMap.get(key)
+      if (!dep) depsMap.set(key, (dep = new Set()))
+      if (!dep.has(activeEffect)) {
+        dep.add(activeEffect)
+        activeEffect.deps.push(dep)
+      }
+      log('t', `track  ${activeEffect.label} ← ${String(key)}`)
+    }
+    function trigger(target, key) {
+      const dep = targetMap.get(target)?.get(key)
+      if (!dep || !dep.size) { log('', `trigger ${String(key)}：没有 effect 依赖它`); return }
+      ;[...dep].forEach((e) => e())
+    }
+    function reactive(target) {
+      return new Proxy(target, {
+        get(obj, key, receiver) { track(obj, key); return Reflect.get(obj, key, receiver) },
+        set(obj, key, value, receiver) {
+          const old = obj[key]
+          const ok = Reflect.set(obj, key, value, receiver)
+          if (old !== value) { log('', `set    ${String(key)} = ${value}`); trigger(obj, key) }
+          return ok
+        },
+      })
+    }
+    function effect(label, fn) {
+      const run = () => {
+        run.deps.forEach((dep) => dep.delete(run)); run.deps.length = 0
+        const prev = activeEffect
+        activeEffect = run
+        log('e', `run    ${label}`)
+        try { return fn() } finally { activeEffect = prev }
+      }
+      run.deps = []; run.label = label
+      run()
+      return run
+    }
+
+    const state = reactive({ price: 10, qty: 2, note: '' })
+    const $ = (id) => document.getElementById(id)
+    effect('单价显示', () => { $('rx-price').textContent = state.price })
+    effect('数量显示', () => { $('rx-qty').textContent = state.qty })
+    effect('总价显示', () => { $('rx-total').textContent = state.price * state.qty })
+
+    root.addEventListener('click', (e) => {
+      const act = e.target.closest('button')?.dataset.act
+      if (!act) return
+      log('', '──────────')
+      if (act === 'price+') state.price++
+      if (act === 'price-' && state.price > 0) state.price--
+      if (act === 'qty+') state.qty++
+      if (act === 'qty-' && state.qty > 0) state.qty--
+      if (act === 'note') state.note = 'n' + Date.now()
+    })
+  })()
+</script>
+</body>
+</html>

@@ -53,6 +53,8 @@
     <li>用 <strong>插槽 slot</strong> 让组件接收任意内容，用 <code>&lt;component :is&gt;</code> 动态切换组件</li>
     <li>用 <code>&lt;Transition&gt;</code> 和 <code>&lt;TransitionGroup&gt;</code> 做进出场和列表动画，理解 <code>key</code></li>
     <li>在模板里直接生成动态 SVG，用模板引用访问 DOM 元素</li>
+    <li>用 <code>readonly</code> 保护全局状态，用 <code>toRefs</code> 安全地解构<span class="sup">补充</span></li>
+    <li>用 <code>&lt;Teleport&gt;</code> 把浮层渲染到 <code>&lt;body&gt;</code> 下，避开层级和定位问题<span class="sup">补充</span></li>
   </ul>
 </div>
 
@@ -293,6 +295,75 @@ createApp({
   </p>
 </div>
 
+<h3>保护全局状态：readonly<span class="sup">补充</span></h3>
+
+<p>
+  全局 <code>state</code> 有一个隐患：<strong>任何地方都能改它</strong>。某个组件里一句手误的 <code>state.turn++</code>，或者子组件直接修改了传进来的 <code>player.health</code>，
+  游戏就会进入莫名其妙的状态，而且很难查出是谁改的。
+</p>
+
+<p>
+  一个简单的约定可以避免这种问题：<strong>只有游戏逻辑函数能修改状态，组件只能读</strong>。Vue 提供了 <code>readonly()</code>，
+  它返回一个“只读视图”：读取时照样是响应式的，但任何写入都会被拒绝，并在开发环境给出警告。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="游戏逻辑函数修改可写的 state，组件拿到的是 readonly 只读视图">
+  <rect class="bx-a" x="280" y="70" width="200" height="90" rx="14"/>
+  <text class="ttl on-a" x="380" y="98" text-anchor="middle">state（可写）</text>
+  <text class="mono sm" x="380" y="122" text-anchor="middle">reactive({...})</text>
+  <text class="sm" x="380" y="142" text-anchor="middle">真正的数据只有一份</text>
+  <rect class="bx-b" x="20" y="80" width="190" height="70" rx="10"/>
+  <text class="on-b" x="115" y="106" text-anchor="middle">游戏逻辑函数</text>
+  <text class="mono sm" x="115" y="128" text-anchor="middle">playCard() nextTurn()</text>
+  <path class="ln-b" d="M212 115 H276" marker-end="url(#ar)"/>
+  <text class="halo sm on-b" x="244" y="106" text-anchor="middle">读 + 写</text>
+  <rect class="bx-g" x="550" y="40" width="190" height="70" rx="10"/>
+  <text class="on-g" x="645" y="66" text-anchor="middle">readonly(state)</text>
+  <text class="sm" x="645" y="88" text-anchor="middle">交给模板和组件</text>
+  <path class="ln-g" d="M482 100 L546 80" marker-end="url(#ar)"/>
+  <text class="halo sm on-g" x="514" y="76" text-anchor="middle">只读</text>
+  <rect class="bx-r" x="550" y="140" width="190" height="70" rx="10"/>
+  <text class="on-r" x="645" y="166" text-anchor="middle">组件里 state.turn++</text>
+  <text class="sm" x="645" y="188" text-anchor="middle">⚠ 写入被拒绝并警告</text>
+  <path class="ln-r" d="M645 112 V136" marker-end="url(#ar)"/>
+  <text class="lbl" x="380" y="228" text-anchor="middle">只读是“深层”的：state.players[0].health = 0 同样会被拦截</text>
+</svg>
+<figcaption>图 3-3　写入的入口只有一个，读取的地方可以有很多</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="main.js"><pre>
+const { createApp, readonly } = Vue
+
+const app = createApp({
+  setup() {
+    // 模板和子组件拿到的是只读视图；游戏逻辑函数仍然直接修改 state
+    return { state: readonly(state) }
+  },
+  // ...
+})
+</pre></div>
+
+<div class="code" data-lang="text" data-file="在组件里误改时，控制台的警告"><pre>
+[Vue warn] Set operation on key "turn" failed: target is readonly.
+</pre></div>
+
+<p>
+  另外，如果觉得模板里到处写 <code>state.</code> 太啰嗦，可以用 <code>toRefs</code> 把它“安全地”解构成一组 ref（第 2 章讲过，直接解构会丢失响应性）：
+</p>
+
+<div class="code" data-lang="js"><pre>
+setup() {
+  const { turn, players, activeOverlay } = toRefs(readonly(state))
+  return { turn, players, activeOverlay }   // 模板里直接写 turn、players
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 这个思路会贯穿后面的章节</div>
+  <p>“数据只有一份、修改只有一个入口”是状态管理的核心原则。第 6 章的 Pinia 就是把它做成了一套完整的工具，并配上了调试面板。</p>
+</div>
+
 <h3>无所不能的组件</h3>
 
 <p>
@@ -342,7 +413,7 @@ createApp({
   <text class="lbl" x="560" y="262" text-anchor="middle">同一个 GameCard 组件</text>
   <text class="lbl" x="560" y="280" text-anchor="middle">在手牌和浮层里各用了一次 —— 这就是复用</text>
 </svg>
-<figcaption>图 3-3　本章要构建的组件树</figcaption>
+<figcaption>图 3-4　本章要构建的组件树</figcaption>
 </figure>
 
 <h2 id="topbar">第一个组件：顶栏</h2>
@@ -478,7 +549,7 @@ const TopBar = {
   <text class="lbl" x="620" y="120">子组件只“通知”，</text>
   <text class="lbl" x="620" y="138">由父组件决定怎么改</text>
 </svg>
-<figcaption>图 3-4　单向数据流：props down, events up</figcaption>
+<figcaption>图 3-5　单向数据流：props down, events up</figcaption>
 </figure>
 
 <div class="box note">
@@ -574,7 +645,7 @@ const TopBar = {
   <text class="mono sm" x="194" y="26" text-anchor="end">:class="'type-' + def.type"</text>
   <text class="sm" x="194" y="44" text-anchor="end">attack → 红色背景</text>
 </svg>
-<figcaption>图 3-5　GameCard 组件的结构</figcaption>
+<figcaption>图 3-6　GameCard 组件的结构</figcaption>
 </figure>
 
 <div class="code" data-lang="js" data-file="components/ui.js"><pre>
@@ -790,7 +861,7 @@ const state = Vue.reactive({
   <rect class="bx-r" x="250" y="294" width="430" height="22" rx="4"/>
   <text class="mono sm on-r" x="465" y="310" text-anchor="middle">v-leave-to</text>
 </svg>
-<figcaption>图 3-6　进入和离开各有三个类名。Vue 会自动探测 CSS 过渡时长，结束后移除类名</figcaption>
+<figcaption>图 3-7　进入和离开各有三个类名。Vue 会自动探测 CSS 过渡时长，结束后移除类名</figcaption>
 </figure>
 
 <div class="box warn">
@@ -953,7 +1024,7 @@ function testPlayCard(card) {
 
   <text class="lbl" x="380" y="186" text-anchor="middle">DevTools 的 Timeline 面板可以看到每一次组件事件，调试时很有用</text>
 </svg>
-<figcaption>图 3-7　事件一级一级往上，数据一级一级往下</figcaption>
+<figcaption>图 3-8　事件一级一级往上，数据一级一级往下</figcaption>
 </figure>
 
 <h3>用 &lt;TransitionGroup&gt; 给列表做动画</h3>
@@ -1033,7 +1104,7 @@ function testPlayCard(card) {
   <text class="sm" x="570" y="252" text-anchor="middle">c 被真正删除，d 被真正移动</text>
   <text class="sm on-g" x="570" y="272" text-anchor="middle">动画符合直觉</text>
 </svg>
-<figcaption>图 3-8　key 告诉 Vue“哪个元素是谁”</figcaption>
+<figcaption>图 3-9　key 告诉 Vue“哪个元素是谁”</figcaption>
 </figure>
 
 <p>
@@ -1166,7 +1237,7 @@ const GameOverlay = {
   <path class="ln" d="M492 115 H536" marker-end="url(#ar)"/>
   <text class="lbl" x="380" y="226" text-anchor="middle">插槽可以放任何东西：文字、HTML、其他组件。父组件决定“放什么”，子组件决定“放在哪”</text>
 </svg>
-<figcaption>图 3-9　插槽（slot）的内容分发</figcaption>
+<figcaption>图 3-10　插槽（slot）的内容分发</figcaption>
 </figure>
 
 <p>浮层内容需要更多玩家数据。给每位玩家加上这些属性：</p>
@@ -1308,7 +1379,7 @@ const state = Vue.reactive({
   <path class="ln-g" d="M462 110 H526" marker-end="url(#ar)"/>
   <path class="ln-d" d="M462 120 L526 176"/>
 </svg>
-<figcaption>图 3-10　一个 &lt;component&gt; 取代三个 v-if</figcaption>
+<figcaption>图 3-11　一个 &lt;component&gt; 取代三个 v-if</figcaption>
 </figure>
 
 <p>多余的 prop 不会影响各个浮层的工作（没声明的 prop 会作为普通属性透传到根元素上）。在控制台试试：</p>
@@ -1374,6 +1445,76 @@ state.activeOverlay = null
 &lt;/transition&gt;
 </pre></div>
 
+<h3>用 Teleport 把浮层“传送”出去<span class="sup">补充</span></h3>
+
+<p>
+  浮层要盖住整个页面，样式里一般会写 <code>position: fixed</code> 和较大的 <code>z-index</code>。但浮层组件在组件树里的位置可能很深，
+  如果它的某个祖先元素设置了 <code>transform</code>、<code>filter</code>、<code>overflow: hidden</code> 或自己的 <code>z-index</code>，
+  浮层就会被“困”在那个祖先里面：被裁切、定位错乱，或者被别的元素盖住。弹窗、提示框、下拉菜单都会遇到这个问题。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="没有 Teleport 时浮层被祖先元素的层叠上下文困住；使用 Teleport 后浮层渲染在 body 下">
+  <text class="ttl on-r" x="190" y="22" text-anchor="middle">✗ 浮层被困在祖先里</text>
+  <rect class="bx" x="30" y="36" width="320" height="230" rx="10"/>
+  <text class="mono sm" x="44" y="56">&lt;body&gt;</text>
+  <rect class="bx-r" x="50" y="66" width="280" height="150" rx="8"/>
+  <text class="mono sm on-r" x="64" y="86">.game { transform: … }</text>
+  <text class="sm" x="64" y="104">↑ 新的层叠上下文 / 包含块</text>
+  <rect class="bx-d" x="80" y="116" width="220" height="80" rx="6"/>
+  <text class="mono sm" x="190" y="146" text-anchor="middle">.overlay { position: fixed }</text>
+  <text class="sm on-r" x="190" y="170" text-anchor="middle">fixed 变成相对 .game 定位</text>
+  <text class="sm" x="190" y="248" text-anchor="middle">浮层只能盖住 .game 的范围，还可能被裁切</text>
+
+  <path class="ln-d" d="M380 14 V276"/>
+
+  <text class="ttl on-a" x="570" y="22" text-anchor="middle">✓ Teleport 到 body</text>
+  <rect class="bx" x="410" y="36" width="320" height="230" rx="10"/>
+  <text class="mono sm" x="424" y="56">&lt;body&gt;</text>
+  <rect class="bx" x="430" y="66" width="280" height="80" rx="8"/>
+  <text class="mono sm" x="444" y="86">&lt;div id="app"&gt; .game …</text>
+  <text class="sm" x="444" y="106">组件树里 GameOverlay 仍在这里</text>
+  <text class="sm" x="444" y="124">（props、事件、状态都正常）</text>
+  <rect class="bx-a" x="430" y="160" width="280" height="56" rx="8"/>
+  <text class="mono sm on-a" x="570" y="184" text-anchor="middle">.overlay（真实 DOM 在这里）</text>
+  <text class="sm" x="570" y="204" text-anchor="middle">直接相对视口定位 ✓</text>
+  <path class="ln-a" d="M600 148 V156" marker-end="url(#ar-a)"/>
+  <text class="sm" x="570" y="248" text-anchor="middle">逻辑上的位置不变，渲染位置换了</text>
+</svg>
+<figcaption>图 3-12　Teleport：组件留在原地，DOM 被传送到别处</figcaption>
+</figure>
+
+<p>
+  Vue 3 内置了 <code>&lt;Teleport&gt;</code> 组件：它的内容在<strong>组件树里的位置不变</strong>（照样能用父组件的数据、照样能发事件给父组件），
+  但<strong>真实 DOM 会被渲染到 <code>to</code> 指定的元素里</strong>：
+</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;teleport to="body"&gt;
+  &lt;transition name="fade"&gt;
+    &lt;div class="overlay-background" v-if="state.activeOverlay" /&gt;
+  &lt;/transition&gt;
+
+  &lt;transition name="zoom"&gt;
+    &lt;game-overlay v-if="state.activeOverlay" :key="state.activeOverlay" @close="handleOverlayClose"&gt;
+      ...
+    &lt;/game-overlay&gt;
+  &lt;/transition&gt;
+&lt;/teleport&gt;
+</pre></div>
+
+<p>打开开发者工具的 Elements 面板，浮层出现时会作为 <code>&lt;body&gt;</code> 的直接子元素出现；而在 Vue DevTools 的组件树里，它依然在 <code>Game</code> 下面。</p>
+
+<div class="box tip">
+  <div class="t">&#10003; Teleport 的几个细节</div>
+  <ul>
+    <li><code>to</code> 可以是任意 CSS 选择器（<code>to="#modals"</code>），目标元素必须在 Teleport 挂载前就存在。</li>
+    <li><code>&lt;teleport :disabled="isMobile"&gt;</code> 可以按条件关闭传送，内容就地渲染。</li>
+    <li>多个 Teleport 指向同一个目标时，按挂载顺序依次追加。</li>
+    <li>传送后，依赖父级的 CSS 选择器（比如 <code>.game .overlay</code>）会失效，样式要改成不依赖祖先的写法。</li>
+  </ul>
+</div>
+
 <h2 id="world">游戏世界与场景</h2>
 
 <p>界面层基本完成了，接下来是场景：城堡、旗帜、数值气泡和飘动的云。新建 <code>components/world.js</code>，在 <code>ui.js</code> 之后引入。</p>
@@ -1428,7 +1569,7 @@ const PlayerCastle = {
   <text class="sm" x="380" y="252">8/10 的粮食 → 旗帜长、气泡低</text>
   <text class="sm" x="380" y="270">4/10 的生命 → 旗帜短、气泡高</text>
 </svg>
-<figcaption>图 3-11　旗帜长度和气泡位置都由 ratio 计算</figcaption>
+<figcaption>图 3-13　旗帜长度和气泡位置都由 ratio 计算</figcaption>
 </figure>
 
 <div class="code" data-lang="js" data-file="components/world.js"><pre>
@@ -1528,7 +1669,7 @@ const BannerBar = {
   <text class="sm" x="380" y="152">→ 旗帜变短。</text>
   <text class="sm" x="380" y="180">SVG 属性和 HTML 属性的绑定方式完全一样。</text>
 </svg>
-<figcaption>图 3-12　旗帜路径：一笔画出带缺口的长条</figcaption>
+<figcaption>图 3-14　旗帜路径：一笔画出带缺口的长条</figcaption>
 </figure>
 
 <h3>让数值“动”起来</h3>
@@ -1587,7 +1728,7 @@ function tween({ from, to, duration, delay = 0, easing = easeInOutCubic, onUpdat
   <text class="sm" x="440" y="156">④ onUpdate(value) → 写进 ref → 重新渲染</text>
   <text class="sm" x="440" y="180">⑤ t &lt; 1 就预约下一帧</text>
 </svg>
-<figcaption>图 3-13　补间动画就是“每帧算一个中间值”</figcaption>
+<figcaption>图 3-15　补间动画就是“每帧算一个中间值”</figcaption>
 </figure>
 
 <p>然后在旗帜组件里，把计算属性改名为 <code>targetHeight</code>（目标高度），另用一个 ref <code>height</code> 存“正在显示的高度”，侦听目标变化时启动动画：</p>
@@ -1715,7 +1856,7 @@ const SkyCloud = {
   <text class="halo sm on-a" x="379" y="86" text-anchor="middle">名字相同 → 自动连接</text>
   <text class="lbl" x="380" y="184" text-anchor="middle">挂载前 root.value 是 null；挂载后才是真实元素。Vue 3.5+ 也可以写 useTemplateRef('root')</text>
 </svg>
-<figcaption>图 3-14　模板引用：取代原书的 this.$el</figcaption>
+<figcaption>图 3-16　模板引用：取代原书的 this.$el</figcaption>
 </figure>
 
 <div class="vs">
@@ -1816,7 +1957,7 @@ function initPosition() {
   <text class="halo sm" x="744" y="120" text-anchor="end">nextTurn()</text>
 </g>
 </svg>
-<figcaption>图 3-15　一个回合的完整流程</figcaption>
+<figcaption>图 3-17　一个回合的完整流程</figcaption>
 </figure>
 
 <h3>抽牌堆与弃牌堆</h3>
@@ -1856,7 +1997,7 @@ const state = Vue.reactive({
   <path class="ln-a" d="M640 162 V186 H120 V164" marker-end="url(#ar-a)"/>
   <text class="halo sm on-a" x="380" y="190" text-anchor="middle">抽牌堆空了：refillPile() 把弃牌堆倒回去</text>
 </svg>
-<figcaption>图 3-16　卡牌的循环</figcaption>
+<figcaption>图 3-18　卡牌的循环</figcaption>
 </figure>
 
 <div class="box note">
@@ -2031,14 +2172,14 @@ const overlayCloseHandlers = {
 <h3>组装根组件</h3>
 
 <div class="code" data-lang="js" data-file="main.js"><pre>
-const { createApp, onMounted } = Vue
+const { createApp, onMounted, readonly } = Vue
 
 const app = createApp({
   name: 'Game',
   setup() {
     onMounted(beginGame)
     return {
-      state,
+      state: readonly(state),       // 组件只读，修改只能经过游戏逻辑函数
       handlePlayCard: playCard,
       handleCardLeaveEnd: applyCard,
       handleOverlayClose: () =&gt; overlayCloseHandlers[state.activeOverlay](),
@@ -2060,16 +2201,18 @@ const app = createApp({
                  @card-play="handlePlayCard" @card-leave-end="handleCardLeaveEnd" /&gt;
     &lt;/transition&gt;
 
-    &lt;transition name="fade"&gt;
-      &lt;div class="overlay-background" v-if="state.activeOverlay" /&gt;
-    &lt;/transition&gt;
+    &lt;teleport to="body"&gt;
+      &lt;transition name="fade"&gt;
+        &lt;div class="overlay-background" v-if="state.activeOverlay" /&gt;
+      &lt;/transition&gt;
 
-    &lt;transition name="zoom"&gt;
-      &lt;game-overlay v-if="state.activeOverlay" :key="state.activeOverlay" @close="handleOverlayClose"&gt;
-        &lt;component :is="'overlay-content-' + state.activeOverlay"
-                   :player="state.currentPlayer" :opponent="state.currentOpponent" :players="state.players" /&gt;
-      &lt;/game-overlay&gt;
-    &lt;/transition&gt;
+      &lt;transition name="zoom"&gt;
+        &lt;game-overlay v-if="state.activeOverlay" :key="state.activeOverlay" @close="handleOverlayClose"&gt;
+          &lt;component :is="'overlay-content-' + state.activeOverlay"
+                     :player="state.currentPlayer" :opponent="state.currentOpponent" :players="state.players" /&gt;
+        &lt;/game-overlay&gt;
+      &lt;/transition&gt;
+    &lt;/teleport&gt;
   &lt;/div&gt;`,
 })
 
@@ -2112,6 +2255,8 @@ state.activeOverlay = 'player-turn'
 <tr><td>列表过渡</td><td><code>&lt;TransitionGroup tag="div"&gt;</code></td><td>默认不再渲染 <code>&lt;span&gt;</code></td></tr>
 <tr><td>访问 DOM</td><td>模板引用 <code>ref="root"</code></td><td>代替 <code>this.$el</code></td></tr>
 <tr><td>数值动画</td><td>自写 <code>tween()</code> / VueUse</td><td>原书用 TWEEN.js + <code>const vm = this</code></td></tr>
+<tr><td>保护全局状态 <span class="sup">补充</span></td><td><code>readonly(state)</code>、<code>toRefs</code></td><td>原书未涉及</td></tr>
+<tr><td>浮层 / 弹窗 <span class="sup">补充</span></td><td><code>&lt;Teleport to="body"&gt;</code></td><td>Vue 3 新增的内置组件</td></tr>
 </tbody>
 </table></div>
 

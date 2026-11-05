@@ -30,6 +30,8 @@
     <li>认识组件的生命周期钩子</li>
     <li>掌握 <code>v-on</code>、<code>v-bind</code>、<code>v-for</code>、<code>v-if</code>、<code>v-html</code> 和动态 class</li>
     <li>知道为什么 Vue 3 删除了过滤器，以及用什么替代</li>
+    <li>避开响应式的常见陷阱：<code>ref</code> 还是 <code>reactive</code>、解构、整体替换<span class="sup">补充</span></li>
+    <li>用模板引用和 <code>nextTick</code> 操作 DOM，编写第一个自定义指令 <code>v-focus</code><span class="sup">补充</span></li>
   </ul>
 </div>
 
@@ -1047,6 +1049,148 @@ watch(selectedId, (val) =&gt; {
   </p>
 </div>
 
+<h2 id="pitfalls">响应式的几个常见陷阱<span class="sup">补充</span></h2>
+
+<p>
+  到这里我们已经用了好几个 <code>ref</code>，也在第 1 章见过 <code>reactive</code>。初学者遇到的“数据改了界面却不更新”，绝大多数都出在下面几种情况。
+  先理解它们背后的共同原因：<strong>Vue 只能追踪“通过响应式代理”进行的读写</strong>，一旦你拿到的是代理里面的“普通值”，追踪就断了。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="响应式代理与普通值：解构、整体替换会让变量脱离代理，失去响应性">
+  <rect class="bx-a" x="270" y="20" width="220" height="90" rx="14"/>
+  <text class="ttl on-a" x="380" y="46" text-anchor="middle">reactive 代理</text>
+  <text class="mono sm" x="380" y="70" text-anchor="middle">state = reactive({</text>
+  <text class="mono sm" x="380" y="88" text-anchor="middle">count: 0, user: {…} })</text>
+
+  <rect class="bx-g" x="20" y="170" width="220" height="100" rx="12"/>
+  <text class="ttl on-g" x="130" y="194" text-anchor="middle">✓ 通过代理访问</text>
+  <text class="mono sm" x="130" y="220" text-anchor="middle">state.count++</text>
+  <text class="mono sm" x="130" y="240" text-anchor="middle">{{ state.count }}</text>
+  <text class="sm" x="130" y="260" text-anchor="middle">读写都被追踪</text>
+  <path class="ln-g" d="M300 112 L180 166" marker-end="url(#ar)"/>
+
+  <rect class="bx-r" x="270" y="170" width="220" height="100" rx="12"/>
+  <text class="ttl on-r" x="380" y="194" text-anchor="middle">✗ 解构出普通值</text>
+  <text class="mono sm" x="380" y="220" text-anchor="middle">let { count } = state</text>
+  <text class="mono sm" x="380" y="240" text-anchor="middle">count++  // 只改了副本</text>
+  <text class="sm" x="380" y="260" text-anchor="middle">和代理再无关系</text>
+  <path class="ln-r" d="M380 112 V166" marker-end="url(#ar)"/>
+
+  <rect class="bx-r" x="520" y="170" width="220" height="100" rx="12"/>
+  <text class="ttl on-r" x="630" y="194" text-anchor="middle">✗ 整体替换变量</text>
+  <text class="mono sm" x="630" y="220" text-anchor="middle">let s = reactive({…})</text>
+  <text class="mono sm" x="630" y="240" text-anchor="middle">s = reactive({…新的})</text>
+  <text class="sm" x="630" y="260" text-anchor="middle">模板还连着旧的代理</text>
+  <path class="ln-r" d="M460 112 L580 166" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 2-11　响应性只存在于“代理”上，拿到的普通值不会被追踪</figcaption>
+</figure>
+
+<h3>陷阱一：解构 reactive 对象</h3>
+
+<div class="vs">
+  <div class="old"><div class="h">✗ 失去响应性</div>
+<div class="code" data-lang="js"><pre>
+const state = reactive({ count: 0 })
+const { count } = state      // count 只是数字 0
+// 之后 state.count++，count 不会变
+</pre></div></div>
+  <div class="new"><div class="h">✓ 用 toRefs 解构成一组 ref</div>
+<div class="code" data-lang="js"><pre>
+const state = reactive({ count: 0 })
+const { count } = toRefs(state)   // count 是 ref
+// count.value 和 state.count 始终同步
+</pre></div></div>
+</div>
+
+<p>同样的道理也适用于把 reactive 对象的某个属性传给函数：<code>useSomething(state.count)</code> 传进去的是当时的数字。要传“活”的值，就传 <code>toRef(state, 'count')</code> 或一个 getter <code>() =&gt; state.count</code>。</p>
+
+<h3>陷阱二：整体替换 reactive 对象</h3>
+
+<div class="vs">
+  <div class="old"><div class="h">✗ 模板仍然连着旧对象</div>
+<div class="code" data-lang="js"><pre>
+let filters = reactive({ keyword: '' })
+function reset() {
+  filters = reactive({ keyword: '' })
+}
+</pre></div></div>
+  <div class="new"><div class="h">✓ 用 ref 包住，替换 .value</div>
+<div class="code" data-lang="js"><pre>
+const filters = ref({ keyword: '' })
+function reset() {
+  filters.value = { keyword: '' }  // 新对象也会被自动代理
+}
+</pre></div></div>
+</div>
+
+<h3>陷阱三：模板里只有“顶层”的 ref 会自动解包</h3>
+
+<div class="code" data-lang="js"><pre>
+const count = ref(1)
+const obj = { count }                 // 普通对象里放了一个 ref
+
+// 模板中：
+// {{ count + 1 }}       → 2   顶层 ref，自动解包
+// {{ obj.count + 1 }}   → "[object Object]1"   没有解包！
+// {{ obj.count.value + 1 }} 或者把 obj 也做成 reactive 才行
+</pre></div>
+
+<h3>那到底用 ref 还是 reactive？</h3>
+
+<div class="tw"><table>
+<thead><tr><th></th><th><code>ref</code></th><th><code>reactive</code></th></tr></thead>
+<tbody>
+<tr><td>能装什么</td><td>任何值：数字、字符串、对象、数组</td><td>只能是对象、数组、Map、Set</td></tr>
+<tr><td>JS 里读写</td><td><code>x.value</code></td><td>直接 <code>x.prop</code></td></tr>
+<tr><td>整体替换</td><td>✓ <code>x.value = 新值</code></td><td>✗ 会断开</td></tr>
+<tr><td>解构</td><td>不需要解构</td><td>✗ 需要 <code>toRefs</code></td></tr>
+<tr><td>适合</td><td><strong>默认选择</strong></td><td>一组紧密相关、不会被整体替换的数据（比如第 3 章的游戏状态）</td></tr>
+</tbody>
+</table></div>
+
+<div class="box key">
+  <div class="t">&#9733; 官方建议：默认用 ref</div>
+  <p>
+    <code>ref</code> 的限制最少：可以装任何类型、可以整体替换、传给函数也不会丢失响应性。多写的 <code>.value</code> 反而是一个提醒：“这是个响应式的值”。
+    本教程的组件代码也一直以 <code>ref</code> 为主。
+  </p>
+</div>
+
+<h3>陷阱四：改了数据，DOM 不是立刻变的</h3>
+
+<p>
+  修改响应式数据后，Vue <strong>不会马上</strong>更新 DOM，而是把这一轮所有的修改攒起来，在当前同步代码执行完后统一更新一次（同一个数据改了 100 次，DOM 也只更新一次）。
+  所以紧跟在修改后面去读 DOM，读到的还是旧的：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="Vue 把同一轮的修改放进队列，在下一个微任务中统一更新 DOM，nextTick 等待这次更新完成">
+  <rect class="bx-b" x="20" y="40" width="250" height="140" rx="12"/>
+  <text class="ttl on-b" x="145" y="64" text-anchor="middle">当前同步代码</text>
+  <text class="mono sm" x="36" y="92">notes.value.push(note)</text>
+  <text class="mono sm" x="36" y="114">selectedId.value = note.id</text>
+  <text class="mono sm" x="36" y="136">editor.value  // 还是 null！</text>
+  <text class="sm on-r" x="36" y="162">此时 DOM 还没更新</text>
+  <path class="ln" d="M272 110 H326" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="330" y="60" width="180" height="100" rx="12"/>
+  <text class="ttl on-a" x="420" y="86" text-anchor="middle">更新队列</text>
+  <text class="sm" x="420" y="110" text-anchor="middle">合并这一轮所有修改</text>
+  <text class="sm" x="420" y="130" text-anchor="middle">统一重新渲染一次</text>
+  <path class="ln" d="M512 110 H566" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="570" y="40" width="170" height="140" rx="12"/>
+  <text class="ttl on-g" x="655" y="64" text-anchor="middle">DOM 已更新</text>
+  <text class="mono sm" x="655" y="96" text-anchor="middle">await nextTick()</text>
+  <text class="sm" x="655" y="120" text-anchor="middle">之后的代码在这里执行</text>
+  <text class="mono sm" x="655" y="146" text-anchor="middle">editor.value.focus() ✓</text>
+  <text class="lbl" x="380" y="214" text-anchor="middle">nextTick 返回一个 Promise：“等这一轮 DOM 更新完成之后”</text>
+</svg>
+<figcaption>图 2-12　批量更新与 nextTick</figcaption>
+</figure>
+
+<p>下一节就会用到它。</p>
+
 <h2 id="toolbar">笔记工具栏</h2>
 
 <p>在编辑器上方加一个工具栏，放三个功能：重命名、收藏、删除。</p>
@@ -1155,7 +1299,7 @@ const sortedNotes = computed(() =&gt;
 
   <text class="lbl" x="380" y="204" text-anchor="middle">JS 的 sort 是稳定排序：第二次排序时，同为收藏（或同为未收藏）的笔记保持第一次的时间顺序</text>
 </svg>
-<figcaption>图 2-11　两次排序得到“收藏优先、组内按时间”的顺序</figcaption>
+<figcaption>图 2-13　两次排序得到“收藏优先、组内按时间”的顺序</figcaption>
 </figure>
 
 <div class="box warn">
@@ -1295,6 +1439,113 @@ const charactersCount = computed(() =&gt; {
 &lt;span class="characters"&gt;&lt;span class="label"&gt;字符&lt;/span&gt;&lt;span class="value"&gt;{{ charactersCount }}&lt;/span&gt;&lt;/span&gt;
 </pre></div>
 
+<h2 id="focus">自动聚焦：模板引用与自定义指令<span class="sup">补充</span></h2>
+
+<p>
+  一个体验上的小改进：新建笔记后，光标应该直接落在编辑器里，用户可以立刻开始打字。这需要拿到 <code>&lt;textarea&gt;</code> 的真实 DOM 元素，调用它的 <code>focus()</code> 方法。
+</p>
+
+<h3>方法一：模板引用 + nextTick</h3>
+
+<p>第 3 章会正式介绍<strong>模板引用</strong>：在元素上写 <code>ref="名字"</code>，<code>setup()</code> 里用同名的 ref（或 Vue 3.5 的 <code>useTemplateRef('名字')</code>）就能拿到这个元素：</p>
+
+<div class="code" data-lang="html"><pre>
+&lt;textarea ref="editor" v-model="selectedNote.content"&gt;&lt;/textarea&gt;
+</pre></div>
+
+<div class="code" data-lang="js"><pre>
+const { createApp, ref, computed, watch, nextTick, useTemplateRef } = Vue
+
+// 在 setup() 里：
+const editor = useTemplateRef('editor')      // 也可以写 const editor = ref(null)
+
+async function addNote() {
+  // ……创建 note，push 进数组……
+  selectNote(note)
+  await nextTick()          // 等 Vue 把编辑器渲染出来
+  editor.value?.focus()
+}
+</pre></div>
+
+<p>
+  为什么必须 <code>await nextTick()</code>？如果之前没有选中任何笔记，编辑器被 <code>v-if</code> 移除了，<code>editor.value</code> 是 <code>null</code>。
+  我们刚刚修改了 <code>selectedId</code>，但正如上一节所说，DOM 要等到这一轮代码执行完才更新。
+</p>
+
+<h3>方法二：自定义指令 v-focus</h3>
+
+<p>
+  “元素出现时自动聚焦”是一个与业务无关、到处都可能用到的 DOM 操作。Vue 提供了<strong>自定义指令</strong>来封装这类逻辑：
+  一个指令就是一个对象，里面是在元素生命周期各个时刻被调用的钩子。
+</p>
+
+<div class="code" data-lang="js" data-file="script.js"><pre>
+// 自定义指令：元素插入页面后自动获得焦点
+const vFocus = {
+  mounted(el) {
+    el.focus()
+  },
+}
+
+createApp({ /* ... */ })
+  .directive('focus', vFocus)     // 全局注册，模板里写 v-focus
+  .mount('#notebook')
+</pre></div>
+
+<div class="code" data-lang="html"><pre>
+&lt;textarea v-focus :key="selectedNote.id" v-model="selectedNote.content"&gt;&lt;/textarea&gt;
+</pre></div>
+
+<p>
+  注意那个 <code>:key</code>：切换笔记时，<code>&lt;textarea&gt;</code> 默认会被复用（只是内容变了），<code>mounted</code> 钩子不会再次触发。
+  给它一个随笔记变化的 key，每次切换都会创建一个新的元素，于是每次都会自动聚焦 —— 又一次用到了“改变 key 来强制重新创建”的技巧。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 232" role="img" aria-label="自定义指令的钩子在元素生命周期中被调用的时机">
+  <path class="ln" d="M20 110 H740" marker-end="url(#ar)"/>
+  <rect class="bx" x="30" y="40" width="110" height="50" rx="8"/>
+  <text class="mono sm" x="85" y="62" text-anchor="middle">created</text>
+  <text class="sm" x="85" y="80" text-anchor="middle">属性绑定前</text>
+  <rect class="bx" x="150" y="40" width="110" height="50" rx="8"/>
+  <text class="mono sm" x="205" y="62" text-anchor="middle">beforeMount</text>
+  <text class="sm" x="205" y="80" text-anchor="middle">插入 DOM 前</text>
+  <rect class="bx-a" x="270" y="40" width="120" height="50" rx="8"/>
+  <text class="mono sm on-a" x="330" y="62" text-anchor="middle">mounted</text>
+  <text class="sm" x="330" y="80" text-anchor="middle">已在页面上 ✓</text>
+  <rect class="bx" x="400" y="40" width="110" height="50" rx="8"/>
+  <text class="mono sm" x="455" y="62" text-anchor="middle">beforeUpdate</text>
+  <text class="sm" x="455" y="80" text-anchor="middle">所在组件更新前</text>
+  <rect class="bx" x="520" y="40" width="100" height="50" rx="8"/>
+  <text class="mono sm" x="570" y="62" text-anchor="middle">updated</text>
+  <text class="sm" x="570" y="80" text-anchor="middle">更新后</text>
+  <rect class="bx-r" x="630" y="40" width="110" height="50" rx="8"/>
+  <text class="mono sm on-r" x="685" y="62" text-anchor="middle">unmounted</text>
+  <text class="sm" x="685" y="80" text-anchor="middle">清理</text>
+  <text class="sm" x="380" y="146" text-anchor="middle">每个钩子都会收到：el（真实元素）、binding（值、参数、修饰符）、vnode 等</text>
+  <text class="mono sm" x="380" y="170" text-anchor="middle">v-focus:delay.once="300"</text>
+  <text class="mono sm" x="380" y="188" text-anchor="middle">→ binding.arg = 'delay'　binding.modifiers = { once: true }　binding.value = 300</text>
+  <text class="lbl" x="380" y="216" text-anchor="middle">大部分指令只需要 mounted（初始化）和 unmounted（清理事件监听等）</text>
+</svg>
+<figcaption>图 2-14　自定义指令的钩子</figcaption>
+</figure>
+
+<div class="box tip">
+  <div class="t">&#10003; 什么时候用指令，什么时候用组件</div>
+  <p>
+    指令适合“给一个现有元素加一点 DOM 行为”：聚焦、点击外部关闭、懒加载图片、复制到剪贴板、权限控制显示……
+    如果要渲染新的结构，那就应该写组件。第 5 章还会写一个 <code>v-click-outside</code> 指令。
+  </p>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 在单文件组件里</div>
+  <p>
+    第 4 章开始使用 <code>&lt;script setup&gt;</code> 后，以 <code>v</code> 开头、驼峰命名的变量会被自动识别为局部指令：
+    <code>const vFocus = { mounted: (el) =&gt; el.focus() }</code>，模板里直接写 <code>v-focus</code>，不需要注册。
+  </p>
+</div>
+
 <h2 id="demo">在线试一试</h2>
 
 <p>下面是本章应用的精简版（去掉了 Markdown 渲染和本地存储），可以新建、选择、重命名、收藏、删除，状态栏实时统计：</p>
@@ -1368,7 +1619,7 @@ const charactersCount = computed(() =&gt; {
             &lt;i class="material-icons"&gt;delete&lt;/i&gt;
           &lt;/button&gt;
         &lt;/div&gt;
-        &lt;textarea v-model="selectedNote.content"&gt;&lt;/textarea&gt;
+        &lt;textarea v-focus :key="selectedNote.id" v-model="selectedNote.content"&gt;&lt;/textarea&gt;
         &lt;div class="toolbar status-bar"&gt;
           &lt;span class="date"&gt;&lt;span class="label"&gt;创建于&lt;/span&gt;&lt;span class="value"&gt;{{ formatDate(selectedNote.created) }}&lt;/span&gt;&lt;/span&gt;
           &lt;span class="lines"&gt;&lt;span class="label"&gt;行&lt;/span&gt;&lt;span class="value"&gt;{{ linesCount }}&lt;/span&gt;&lt;/span&gt;
@@ -1470,7 +1721,10 @@ createApp({
       addNote, selectNote, removeNote, favoriteNote, formatDate,
     }
   },
-}).mount('#notebook')
+})
+  // 自定义指令：新出现的编辑器自动获得焦点
+  .directive('focus', { mounted: (el) =&gt; el.focus() })
+  .mount('#notebook')
 </pre></div>
 
 <div class="box note">
@@ -1497,6 +1751,9 @@ createApp({
 <tr><td>列表</td><td><code>v-for</code> + <code>:key</code></td><td>key 用稳定唯一的 id</td></tr>
 <tr><td>条件</td><td><code>v-if</code> / <code>v-else</code> / <code>v-show</code></td><td>移除 vs. 隐藏</td></tr>
 <tr><td>原始 HTML</td><td><code>v-html</code></td><td>用户内容务必先消毒</td></tr>
+<tr><td>响应式陷阱 <span class="sup">补充</span></td><td><code>toRefs</code>、用 <code>ref</code> 包住可替换的对象</td><td>默认用 ref</td></tr>
+<tr><td>操作 DOM <span class="sup">补充</span></td><td>模板引用 + <code>await nextTick()</code></td><td>DOM 更新是批量、异步的</td></tr>
+<tr><td>自定义指令 <span class="sup">补充</span></td><td><code>app.directive('focus', { mounted })</code></td><td>封装与业务无关的 DOM 行为</td></tr>
 </tbody>
 </table></div>
 
@@ -1504,7 +1761,7 @@ createApp({
   <h3>动手练习</h3>
   <ol>
     <li>给侧边栏加一个搜索框，用计算属性过滤出标题或内容包含关键字的笔记（提示：不要在 <code>v-for</code> 的同一元素上写 <code>v-if</code>）。</li>
-    <li>新建笔记后，让光标自动聚焦到编辑器里（提示：模板引用 <code>ref="editor"</code> + <code>nextTick</code>）。</li>
+    <li>写一个 <code>v-autosize</code> 指令：让 textarea 的高度随内容自动增长（提示：在 <code>mounted</code> 里监听 <code>input</code> 事件，设置 <code>el.style.height = el.scrollHeight + 'px'</code>，别忘了在 <code>unmounted</code> 里移除监听）。</li>
     <li>在状态栏再加一项“预计阅读时间”：按每分钟 300 字估算。</li>
     <li>在笔记内容里写 <code>&lt;img src=x onerror="alert(1)"&gt;</code>，先去掉 <code>DOMPurify.sanitize</code> 看看会发生什么，再加回来对比。</li>
     <li>用 <code>watchEffect</code> 改写保存逻辑，比较两种写法的区别。</li>

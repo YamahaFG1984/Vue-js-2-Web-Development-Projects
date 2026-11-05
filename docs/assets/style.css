@@ -482,3 +482,11 @@ figcaption {
   border: 1px dashed var(--line-2);
   &:hover { color: var(--accent-2); border-color: var(--accent); }
 }
+
+/* “补充”标签：标出原书之外新增的内容 */
+.sup {
+  display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+  padding: 1px 7px; border-radius: 4px; margin-left: 6px; vertical-align: 3px; line-height: 1.6;
+  background: var(--purple-bg); color: var(--purple); border: 1px solid var(--purple);
+}
+h4 .sup { vertical-align: 1px; }

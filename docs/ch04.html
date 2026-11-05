@@ -26,6 +26,9 @@
     <li>看懂项目结构：<code>index.html</code> → <code>main.js</code> → <code>App.vue</code></li>
     <li>理解模板是如何被编译成渲染函数的，会写简单的 <code>h()</code> 和 JSX</li>
     <li>掌握单文件组件的三个块，尤其是 <code>&lt;script setup&gt;</code> 和 <code>&lt;style scoped&gt;</code></li>
+    <li>用环境变量区分开发、测试、生产环境的配置<span class="sup">补充</span></li>
+    <li>在 Vue 中使用 TypeScript：带类型的 props、emits、ref 和模板引用<span class="sup">补充</span></li>
+    <li>按功能组织项目目录，了解路径别名和自动导入<span class="sup">补充</span></li>
   </ul>
 </div>
 
@@ -552,6 +555,87 @@ npm run preview   # 在本地用一个静态服务器预览 dist/
   </p>
 </div>
 
+<h2 id="envvars">环境变量与构建模式<span class="sup">补充</span></h2>
+
+<p>
+  真实项目几乎都有“不同环境不同配置”的需求：开发时 API 在 <code>localhost:3000</code>，生产环境在 <code>https://api.example.com</code>；
+  测试环境要打开调试日志，生产环境要关掉。把这些值写死在代码里，每次部署都得改代码。Vite 的做法是 <strong>.env 文件 + 构建模式</strong>。
+</p>
+
+<h3>.env 文件</h3>
+
+<div class="code" data-lang="bash" data-file=".env（所有模式都会加载）"><pre>
+VITE_APP_TITLE=我的衬衫铺
+</pre></div>
+
+<div class="code" data-lang="bash" data-file=".env.development（npm run dev 时加载）"><pre>
+VITE_API_BASE=/api/
+VITE_DEBUG=true
+</pre></div>
+
+<div class="code" data-lang="bash" data-file=".env.production（npm run build 时加载）"><pre>
+VITE_API_BASE=https://api.example.com/
+VITE_DEBUG=false
+</pre></div>
+
+<p>在代码里通过 <code>import.meta.env</code> 读取：</p>
+
+<div class="code" data-lang="js"><pre>
+const baseUrl = import.meta.env.VITE_API_BASE        // 开发时是 '/api/'，构建后是正式地址
+
+if (import.meta.env.DEV) {                            // 内置变量：是否开发环境
+  console.log('当前模式：', import.meta.env.MODE)     // 'development' / 'production' / 自定义
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="Vite 根据模式加载不同的 .env 文件，并在构建时把 import.meta.env 替换成具体值">
+  <rect class="bx-b" x="20" y="30" width="200" height="56" rx="10"/>
+  <text class="mono sm on-b" x="120" y="54" text-anchor="middle">npm run dev</text>
+  <text class="sm" x="120" y="74" text-anchor="middle">mode = development</text>
+  <rect class="bx-p" x="20" y="110" width="200" height="56" rx="10"/>
+  <text class="mono sm on-p" x="120" y="134" text-anchor="middle">npm run build</text>
+  <text class="sm" x="120" y="154" text-anchor="middle">mode = production</text>
+  <rect class="bx-a" x="20" y="190" width="200" height="56" rx="10"/>
+  <text class="mono sm on-a" x="120" y="214" text-anchor="middle">vite build --mode staging</text>
+  <text class="sm" x="120" y="234" text-anchor="middle">自定义模式</text>
+
+  <rect class="bx" x="260" y="30" width="230" height="216" rx="12"/>
+  <text class="ttl" x="375" y="54" text-anchor="middle">加载顺序（后者覆盖前者）</text>
+  <rect class="bx" x="280" y="66" width="190" height="30" rx="6"/><text class="mono sm" x="375" y="86" text-anchor="middle">.env</text>
+  <rect class="bx" x="280" y="104" width="190" height="30" rx="6"/><text class="mono sm" x="375" y="124" text-anchor="middle">.env.local</text>
+  <rect class="bx" x="280" y="142" width="190" height="30" rx="6"/><text class="mono sm" x="375" y="162" text-anchor="middle">.env.[mode]</text>
+  <rect class="bx-a" x="280" y="180" width="190" height="30" rx="6"/><text class="mono sm on-a" x="375" y="200" text-anchor="middle">.env.[mode].local</text>
+  <text class="sm" x="375" y="232" text-anchor="middle">*.local 不提交 Git，放个人配置</text>
+  <path class="ln" d="M222 58 H256" marker-end="url(#ar)"/>
+  <path class="ln" d="M222 138 H256" marker-end="url(#ar)"/>
+  <path class="ln" d="M222 218 H256" marker-end="url(#ar)"/>
+
+  <rect class="bx-g" x="560" y="60" width="180" height="150" rx="12"/>
+  <text class="ttl on-g" x="650" y="86" text-anchor="middle">构建产物</text>
+  <text class="mono sm" x="650" y="114" text-anchor="middle">import.meta.env</text>
+  <text class="mono sm" x="650" y="132" text-anchor="middle">.VITE_API_BASE</text>
+  <text class="sm" x="650" y="156" text-anchor="middle">被直接替换为</text>
+  <text class="mono sm on-g" x="650" y="180" text-anchor="middle">"https://api…"</text>
+  <path class="ln-g" d="M492 138 H556" marker-end="url(#ar)"/>
+  <text class="lbl" x="380" y="276" text-anchor="middle">环境变量在构建时被“写死”进 JS 文件 —— 改了 .env 要重新构建才会生效</text>
+</svg>
+<figcaption>图 4-6　模式、.env 文件与构建产物</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; 前端没有秘密</div>
+  <p>
+    只有以 <code>VITE_</code> 开头的变量才会暴露给前端代码，这是 Vite 的保护措施。但请记住：<strong>暴露给前端的任何值，用户都能在浏览器里看到</strong>。
+    API 密钥、数据库密码、OAuth 客户端密钥绝不能放进 <code>VITE_</code> 变量，它们只能留在服务器上。
+  </p>
+</div>
+
+<div class="box tip">
+  <div class="t">&#10003; 给环境变量加上类型提示</div>
+  <p>TypeScript 项目可以在 <code>env.d.ts</code> 里声明 <code>interface ImportMetaEnv { readonly VITE_API_BASE: string }</code>，编辑器就能补全，拼错名字时会报错。</p>
+</div>
+
 <h2 id="sfc">单文件组件（SFC）</h2>
 
 <p>
@@ -599,7 +683,7 @@ npm run preview   # 在本地用一个静态服务器预览 dist/
   <path class="ln-a" d="M492 163 H536" marker-end="url(#ar-a)"/>
   <path class="ln-a" d="M492 176 L536 252" marker-end="url(#ar-a)"/>
 </svg>
-<figcaption>图 4-6　一个 .vue 文件 = 模板 + 脚本 + 样式</figcaption>
+<figcaption>图 4-7　一个 .vue 文件 = 模板 + 脚本 + 样式</figcaption>
 </figure>
 
 <p>新建 <code>src/Test.vue</code>：</p>
@@ -750,20 +834,10 @@ export default {
   </p>
 </div>
 
-<details class="box deep">
-<summary class="t" style="cursor:pointer">&#128269; 可选：加上 TypeScript（点击展开）</summary>
-<p>
-  只要在 create-vue 里勾选 TypeScript，并把 <code>&lt;script setup&gt;</code> 写成 <code>&lt;script setup lang="ts"&gt;</code>，就能获得完整的类型检查。
-  比如 props 可以用类型来声明：
-</p>
-<div class="code" data-lang="ts"><pre>
-const props = defineProps&lt;{
-  movie: { id: number; title: string }
-  highlighted?: boolean
-}&gt;()
-</pre></div>
-<p>本教程为了照顾初学者使用 JavaScript，但所有示例都能平滑迁移到 TypeScript。</p>
-</details>
+<div class="box note">
+  <div class="t">&#9432; TypeScript</div>
+  <p>本章末尾专门有一节讲如何在 Vue 中使用 TypeScript，包括带类型的 props、emits 和模板引用。</p>
+</div>
 
 <h3>JSX</h3>
 
@@ -870,7 +944,7 @@ return () =&gt; h('ul', { class: 'movies' },
 
   <text class="lbl" x="380" y="228" text-anchor="middle">每个组件一个唯一的哈希属性 → 选择器只能匹配本组件的元素</text>
 </svg>
-<figcaption>图 4-7　scoped 样式靠一个唯一的 data-v 属性实现隔离</figcaption>
+<figcaption>图 4-8　scoped 样式靠一个唯一的 data-v 属性实现隔离</figcaption>
 </figure>
 
 <div class="box tip">
@@ -1035,7 +1109,7 @@ const movies = ref([
   <text class="sm" x="420" y="140">适合到处都要用的基础组件（按钮、图标）</text>
   <text class="sm" x="420" y="160">缺点：看不出组件从哪来，无法剔除</text>
 </svg>
-<figcaption>图 4-8　两种让模板认识组件的方式</figcaption>
+<figcaption>图 4-9　两种让模板认识组件的方式</figcaption>
 </figure>
 
 <div class="box note">
@@ -1044,6 +1118,239 @@ const movies = ref([
 </div>
 
 <p>最后在 <code>main.js</code> 里把 <code>Movies</code> 作为根组件挂载，就能看到一个漂亮的电影列表了。</p>
+
+<h2 id="typescript">在 Vue 中使用 TypeScript<span class="sup">补充</span></h2>
+
+<p>
+  TypeScript 给 JavaScript 加上了类型：变量是什么类型、函数接收什么参数、对象有哪些属性。编辑器据此给出补全，在你写错时立刻标红。
+  现在大多数 Vue 项目都使用 TypeScript，Vue 3 本身也是用 TypeScript 写的，类型支持非常完整。
+</p>
+
+<div class="box note">
+  <div class="t">&#9432; 本教程的约定</div>
+  <p>
+    为了不给初学者增加负担，后面几章的正文仍然使用 JavaScript，并在关键处附上 TypeScript 写法的对照。
+    学完这一节，你就能把任何一个示例改写成 TypeScript。
+  </p>
+</div>
+
+<h3>开启 TypeScript</h3>
+
+<p>在 <code>npm create vue@latest</code> 的功能菜单里勾选 TypeScript，生成的项目会多出这些东西：</p>
+
+<div class="tree"><b>demo/</b>
+├── tsconfig.json          <i># TypeScript 配置（引用下面两个）</i>
+├── tsconfig.app.json      <i># 应用代码的配置</i>
+├── tsconfig.node.json     <i># vite.config.ts 等 Node 侧文件的配置</i>
+├── env.d.ts               <i># 全局类型声明（如 .vue 文件、环境变量）</i>
+├── vite.config.<b>ts</b>
+└── src/
+    ├── main.<b>ts</b>
+    └── App.vue            <i># 里面写 &lt;script setup lang="ts"&gt;</i></div>
+
+<div class="code" data-lang="json" data-file="package.json（scripts 节选）"><pre>
+"build": "run-p type-check \"build-only {@}\" --",
+"build-only": "vite build",
+"type-check": "vue-tsc --build"
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="Vite 只是去掉类型并不检查，类型检查由编辑器和 vue-tsc 完成">
+  <rect class="bx-b" x="20" y="40" width="200" height="120" rx="12"/>
+  <text class="ttl on-b" x="120" y="66" text-anchor="middle">编辑器</text>
+  <text class="sm" x="120" y="92" text-anchor="middle">Vue - Official 扩展</text>
+  <text class="sm" x="120" y="112" text-anchor="middle">写代码时实时标红</text>
+  <text class="sm" x="120" y="132" text-anchor="middle">（模板里也能检查）</text>
+  <rect class="bx-a" x="280" y="40" width="200" height="120" rx="12"/>
+  <text class="ttl on-a" x="380" y="66" text-anchor="middle">Vite（dev / build）</text>
+  <text class="sm" x="380" y="92" text-anchor="middle">只把类型“擦掉”</text>
+  <text class="sm on-r" x="380" y="112" text-anchor="middle">不做类型检查！</text>
+  <text class="sm" x="380" y="132" text-anchor="middle">所以才这么快</text>
+  <rect class="bx-g" x="540" y="40" width="200" height="120" rx="12"/>
+  <text class="ttl on-g" x="640" y="66" text-anchor="middle">vue-tsc</text>
+  <text class="mono sm" x="640" y="92" text-anchor="middle">npm run type-check</text>
+  <text class="sm" x="640" y="112" text-anchor="middle">构建前 / CI 中</text>
+  <text class="sm" x="640" y="132" text-anchor="middle">检查全部文件</text>
+  <text class="lbl" x="380" y="200" text-anchor="middle">类型错误不会阻止开发服务器运行 —— 所以要靠编辑器提示和 CI 中的 type-check 把关</text>
+</svg>
+<figcaption>图 4-10　谁负责检查类型</figcaption>
+</figure>
+
+<h3>带类型的 props 和 emits</h3>
+
+<p>用 TypeScript 时，<code>defineProps</code> 和 <code>defineEmits</code> 可以直接接收一个<strong>类型参数</strong>，不再需要运行时的选项对象：</p>
+
+<div class="code" data-lang="vue" data-file="src/Movie.vue"><pre>
+&lt;script setup lang="ts"&gt;
+export interface Movie {
+  id: number
+  title: string
+  year?: number          // ? 表示可选
+}
+
+// Vue 3.5+：解构 props 时可以直接写默认值，而且解构出的变量依然是响应式的
+const { movie, highlighted = false } = defineProps&lt;{
+  movie: Movie
+  highlighted?: boolean
+}&gt;()
+
+const emit = defineEmits&lt;{
+  select: [id: number]               // 事件名: [参数列表]
+  favorite: [id: number, on: boolean]
+}&gt;()
+
+function onClick() {
+  emit('select', movie.id)           // ✓
+  // emit('select', movie.title)     // ✗ 编辑器报错：string 不能赋给 number
+}
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;li class="movie" :class="{ highlighted }" @click="onClick"&gt;
+    {{ movie.title }} &lt;small v-if="movie.year"&gt;({{ movie.year }})&lt;/small&gt;
+  &lt;/li&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>父组件里用错的时候，模板也会被检查：</p>
+
+<div class="code" data-lang="vue"><pre>
+&lt;Movie :movie="{ id: 1, title: 'Star Wars' }" /&gt;      &lt;!-- ✓ --&gt;
+&lt;Movie :movie="{ id: '1' }" /&gt;                        &lt;!-- ✗ id 应该是 number，缺少 title --&gt;
+&lt;Movie :movie="m" @select="(id) =&gt; id.toFixed()" /&gt;   &lt;!-- ✓ id 被推断为 number --&gt;
+</pre></div>
+
+<h3>ref、computed 与模板引用</h3>
+
+<div class="code" data-lang="ts"><pre>
+import { ref, computed, useTemplateRef } from 'vue'
+import type { Movie } from './Movie.vue'
+
+const count = ref(0)                       // 自动推断为 Ref&lt;number&gt;
+const movies = ref&lt;Movie[]&gt;([])            // 初始值是空数组时，显式给出类型
+const selected = ref&lt;Movie | null&gt;(null)
+
+const total = computed(() =&gt; movies.value.length)   // 推断为 ComputedRef&lt;number&gt;
+
+// 模板引用：告诉 TS 这是一个 input 元素
+const input = useTemplateRef&lt;HTMLInputElement&gt;('input')
+function focus() {
+  input.value?.focus()     // value 可能是 null（挂载前），所以用 ?.
+}
+</pre></div>
+
+<div class="tw"><table>
+<thead><tr><th>要声明类型的东西</th><th>写法</th></tr></thead>
+<tbody>
+<tr><td>props</td><td><code>defineProps&lt;{ a: string; b?: number }&gt;()</code></td></tr>
+<tr><td>emits</td><td><code>defineEmits&lt;{ change: [value: string] }&gt;()</code></td></tr>
+<tr><td>v-model</td><td><code>defineModel&lt;string&gt;()</code></td></tr>
+<tr><td>插槽</td><td><code>defineSlots&lt;{ default(props: { item: Movie }): any }&gt;()</code></td></tr>
+<tr><td>ref</td><td><code>ref&lt;Movie[]&gt;([])</code>（能推断时可省略）</td></tr>
+<tr><td>模板引用</td><td><code>useTemplateRef&lt;HTMLInputElement&gt;('input')</code></td></tr>
+<tr><td>provide / inject</td><td><code>InjectionKey&lt;T&gt;</code>（第 5 章下篇会用到）</td></tr>
+<tr><td>泛型组件</td><td><code>&lt;script setup lang="ts" generic="T"&gt;</code></td></tr>
+</tbody>
+</table></div>
+
+<details class="box deep">
+<summary class="t" style="cursor:pointer">&#128269; 泛型组件（点击展开）</summary>
+<p>一个通用的下拉选择组件，它的选项可以是任意类型 —— 而且使用时类型能被正确推断：</p>
+<div class="code" data-lang="vue" data-file="src/BaseSelect.vue"><pre>
+&lt;script setup lang="ts" generic="T"&gt;
+defineProps&lt;{
+  options: T[]
+  label: (item: T) =&gt; string
+}&gt;()
+const model = defineModel&lt;T&gt;()
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;ul&gt;
+    &lt;li v-for="(item, i) in options" :key="i"
+        :class="{ active: item === model }" @click="model = item"&gt;
+      {{ label(item) }}
+    &lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/template&gt;
+</pre></div>
+<p><code>&lt;BaseSelect :options="movies" :label="(m) =&gt; m.title" v-model="selected" /&gt;</code> 中，<code>m</code> 自动被推断为 <code>Movie</code>。</p>
+</details>
+
+<div class="box tip">
+  <div class="t">&#10003; 渐进地引入</div>
+  <p>
+    TypeScript 不是“全有或全无”。一个项目可以同时有 <code>.js</code> 和 <code>.ts</code> 文件、<code>lang="ts"</code> 和普通的 <code>&lt;script setup&gt;</code>。
+    可以先从最容易出错的地方（API 返回的数据结构、store、通用组件的 props）开始加类型。
+  </p>
+</div>
+
+<h2 id="organize">项目怎么组织<span class="sup">补充</span></h2>
+
+<p>小项目按“文件类型”分目录就够了；项目变大后，更推荐<strong>按功能（feature）</strong>组织，把一个功能相关的组件、组合式函数、store、API 放在一起：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 280" role="img" aria-label="按文件类型组织与按功能组织的目录结构对比">
+  <rect class="bx" x="20" y="20" width="340" height="240" rx="12"/>
+  <text class="ttl" x="190" y="44" text-anchor="middle">按类型组织（小项目）</text>
+  <text class="mono sm" x="40" y="74">src/</text>
+  <text class="mono sm" x="56" y="96">components/  <tspan class="on-r">TicketList.vue …</tspan></text>
+  <text class="mono sm" x="56" y="118">composables/ <tspan class="on-r">useTickets.js useAuth.js …</tspan></text>
+  <text class="mono sm" x="56" y="140">stores/      <tspan class="on-r">tickets.js user.js …</tspan></text>
+  <text class="mono sm" x="56" y="162">api/         <tspan class="on-r">tickets.js auth.js …</tspan></text>
+  <text class="sm" x="40" y="200">改一个“工单”功能，要在 4 个目录里来回跳；</text>
+  <text class="sm" x="40" y="220">删掉一个功能，很难确定删干净了</text>
+
+  <rect class="bx-a" x="400" y="20" width="340" height="240" rx="12"/>
+  <text class="ttl on-a" x="570" y="44" text-anchor="middle">按功能组织（中大型项目）</text>
+  <text class="mono sm" x="420" y="74">src/</text>
+  <text class="mono sm" x="436" y="96">features/</text>
+  <text class="mono sm on-a" x="452" y="118">tickets/  <tspan class="sm" style="fill:var(--fg-soft)">组件 + composable + store + api</tspan></text>
+  <text class="mono sm on-a" x="452" y="140">auth/     <tspan class="sm" style="fill:var(--fg-soft)">登录相关的一切</tspan></text>
+  <text class="mono sm" x="436" y="162">shared/   <tspan class="sm" style="fill:var(--fg-soft)">通用组件、工具函数</tspan></text>
+  <text class="mono sm" x="436" y="184">router/  main.js  App.vue</text>
+  <text class="sm" x="420" y="220">一个功能的代码在一起，边界清晰</text>
+  <text class="sm" x="420" y="240">功能之间只通过公开的入口（index.js）互相引用</text>
+</svg>
+<figcaption>图 4-11　两种目录组织方式</figcaption>
+</figure>
+
+<h3>路径别名 @</h3>
+
+<p>
+  组件嵌套深了以后，<code>import X from '../../../components/X.vue'</code> 这种相对路径很难维护。create-vue 默认配置了别名 <code>@</code> 指向 <code>src</code>：
+</p>
+
+<div class="code" data-lang="js" data-file="vite.config.js（create-vue 生成）"><pre>
+import { fileURLToPath, URL } from 'node:url'
+
+export default defineConfig({
+  plugins: [vue()],
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
+})
+</pre></div>
+
+<div class="code" data-lang="js"><pre>
+import BaseButton from '@/shared/components/BaseButton.vue'   // 不管在哪个文件里，写法都一样
+</pre></div>
+
+<h3>自动导入：方便，但要权衡</h3>
+
+<p>
+  社区插件 <code>unplugin-auto-import</code> 和 <code>unplugin-vue-components</code> 可以省去 import：在任何文件里直接用 <code>ref</code>、<code>computed</code>，
+  模板里直接用 <code>components/</code> 下的组件，插件会在编译时自动补上导入语句（Nuxt 默认就是这样工作的）。
+</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#128077;</span><h4>好处</h4><p>代码更短，大量重复的 import 消失了；未使用的组件依然能被摇树优化。</p></div>
+  <div class="card"><span class="ic">&#9888;&#65039;</span><h4>代价</h4><p>看代码时不知道变量从哪来；依赖编辑器和生成的类型声明文件才有提示；新人上手可能困惑。</p></div>
+</div>
+
+<p>本教程坚持显式 import，让每个名字的来源一目了然；团队可以根据习惯自行选择。</p>
 
 <h2 id="summary">小结</h2>
 
@@ -1060,6 +1367,9 @@ const movies = ref([
 <tr><td><code>components: { Movie }</code></td><td>导入即可使用</td></tr>
 <tr><td>node-sass + sass-loader 等</td><td>只装 <code>sass</code> / <code>less</code> / <code>stylus</code></td></tr>
 <tr><td>只能有一个根元素</td><td>支持多根节点</td></tr>
+<tr><td>—</td><td><span class="sup">补充</span> <code>.env.[mode]</code> + <code>import.meta.env.VITE_*</code></td></tr>
+<tr><td>—</td><td><span class="sup">补充</span> <code>&lt;script setup lang="ts"&gt;</code>、<code>defineProps&lt;T&gt;()</code>、<code>vue-tsc</code></td></tr>
+<tr><td>—</td><td><span class="sup">补充</span> 按功能组织目录、<code>@</code> 别名</td></tr>
 </tbody>
 </table></div>
 
@@ -1071,6 +1381,8 @@ const movies = ref([
     <li>给 <code>Movie.vue</code> 加一个“收藏”按钮，点击时 <code>emit('favorite')</code>，在 <code>Movies.vue</code> 里统计收藏数。</li>
     <li>运行 <code>npm run build</code>，观察 <code>dist/</code> 的内容；修改一个组件后再构建一次，看看哪些文件名变了。</li>
     <li>试一试 CSS 里的 <code>v-bind()</code>：用一个 <code>&lt;input type="range"&gt;</code> 控制标题的字号。</li>
+    <li>新建 <code>.env.development</code> 和 <code>.env.production</code>，让页面标题在开发时显示“【开发】我的应用”，构建后显示正式标题。</li>
+    <li>创建一个勾选了 TypeScript 的项目，把 <code>Movie.vue</code> 改写成 TS 版本，然后故意传错 prop 类型，分别观察编辑器和 <code>npm run type-check</code> 的报错。</li>
   </ol>
 </div>
 

@@ -1,0 +1,876 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 13 章 · AI 应用前端：流式聊天界面 — Vue 3 项目实战教程</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .chat { display: flex; flex-direction: column; height: 380px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+  .chat-list { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 85%; padding: 8px 12px; border-radius: 12px; line-height: 1.6; font-size: 14px; overflow-wrap: anywhere; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; white-space: pre-wrap; }
+  .msg.assistant { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+  .msg.assistant p { margin: 0 0 6px; }
+  .msg.assistant p:last-child { margin-bottom: 0; }
+  .msg.assistant ul { margin: 4px 0; padding-left: 20px; }
+  .msg.assistant code { font-family: var(--mono); font-size: 12.5px; background: var(--panel); padding: 1px 4px; border-radius: 4px; }
+  .msg.assistant pre { background: var(--panel); padding: 8px 10px; border-radius: 6px; overflow-x: auto; margin: 6px 0; }
+  .msg.assistant pre code { background: none; padding: 0; }
+  .msg .cursor { display: inline-block; width: 7px; height: 1em; background: var(--accent); vertical-align: -2px; margin-left: 2px; animation: blink 1s steps(2) infinite; }
+  .msg .note { display: block; margin-top: 4px; font-size: 12px; color: var(--fg-faint); }
+  @keyframes blink { 50% { opacity: 0; } }
+  .chat-input { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--line); align-items: flex-end; }
+  .chat-input textarea { flex: 1; min-height: 40px !important; max-height: 120px; resize: none; font-family: inherit !important; font-size: 14px !important; }
+  .reasoning { color: var(--fg-faint); font-size: 12.5px; margin-bottom: 6px; }
+  .reasoning summary { cursor: pointer; }
+  .reasoning p { white-space: pre-wrap; margin: 4px 0 0 !important; border-left: 3px solid var(--line); padding-left: 8px; }
+  .chat-hints { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px 10px; }
+  .chat-hints button { font-size: 12px !important; padding: 2px 10px !important; }
+</style>
+</head>
+<body data-chapter="13">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 13 章 · 进阶专题</span>
+<h1>AI 应用前端：流式聊天界面</h1>
+<p class="lede">
+  如今很多应用都内置了一个 AI 助手。它的界面看似简单，就是一个聊天框，但要做好并不容易：回答要<strong>一个字一个字地流出来</strong>，
+  用户要能<strong>随时停止</strong>，Markdown 和代码要<strong>安全地渲染</strong>，滚动要跟得上又不能打扰用户往上翻。
+  本章用 Vue 3 做一个完整的流式聊天界面，后端用轻量的 <strong>Hono</strong> 框架调用 <strong>DeepSeek</strong> API。第 8 章学过的 SSE，在这里会派上大用场。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>理解 AI 应用的基本架构，以及为什么 API 密钥绝不能放在前端</li>
+    <li>理解流式输出的价值，以及 SSE 数据是怎么一块一块到达的</li>
+    <li>用 Hono 写一个流式转发接口：调用 DeepSeek、翻译事件格式、客户端断开时停止生成</li>
+    <li>把 API 密钥放进 <code>.env</code> 并加入 <code>.gitignore</code></li>
+    <li>用 <code>fetch</code> + <code>ReadableStream</code> 读取流，写一个 <code>useChat</code> 组合式函数，并展示模型的“思考过程”</li>
+    <li>用 <code>AbortController</code> 实现“停止生成”</li>
+    <li>安全地渲染流式 Markdown：节流、markdown-it、DOMPurify</li>
+    <li>处理聊天界面的细节：自动滚动、回车发送与中文输入法、无障碍</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="arch">整体架构</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="浏览器中的 Vue 应用把消息 POST 给自己的服务器，服务器持有 API 密钥、做校验和限流，再以流式方式调用 DeepSeek API，并把文本片段通过 SSE 转发回浏览器">
+  <rect class="bx-a" x="20" y="50" width="200" height="140" rx="12"/>
+  <text class="ttl on-a" x="120" y="76" text-anchor="middle">浏览器（Vue）</text>
+  <text class="sm" x="120" y="102" text-anchor="middle">useChat()</text>
+  <text class="sm" x="120" y="122" text-anchor="middle">渲染 Markdown</text>
+  <text class="sm" x="120" y="142" text-anchor="middle">停止按钮</text>
+  <text class="sm on-r" x="120" y="170" text-anchor="middle">✗ 没有 API 密钥</text>
+
+  <rect class="bx-b" x="290" y="50" width="200" height="140" rx="12"/>
+  <text class="ttl on-b" x="390" y="76" text-anchor="middle">你的服务器（Hono）</text>
+  <text class="sm" x="390" y="102" text-anchor="middle">持有 API 密钥</text>
+  <text class="sm" x="390" y="122" text-anchor="middle">登录校验、限流</text>
+  <text class="sm" x="390" y="142" text-anchor="middle">系统提示词</text>
+  <text class="sm" x="390" y="162" text-anchor="middle">翻译并转发流</text>
+
+  <rect class="bx-p" x="560" y="50" width="180" height="140" rx="12"/>
+  <text class="ttl on-p" x="650" y="76" text-anchor="middle">DeepSeek API</text>
+  <text class="sm" x="650" y="102" text-anchor="middle">流式生成</text>
+  <text class="sm" x="650" y="122" text-anchor="middle">先思考，再回答</text>
+  <text class="sm" x="650" y="142" text-anchor="middle">一段一段返回</text>
+
+  <path class="ln-a" d="M220 96 H286" marker-end="url(#ar-a)"/>
+  <text class="lbl halo" x="253" y="86" text-anchor="middle">① POST</text>
+  <path class="ln-a" d="M490 96 H556" marker-end="url(#ar-a)"/>
+  <text class="lbl halo" x="523" y="86" text-anchor="middle">② 带密钥</text>
+  <path class="ln-g" d="M556 150 H494" marker-end="url(#ar)"/>
+  <path class="ln-g" d="M286 150 H224" marker-end="url(#ar)"/>
+  <text class="lbl" x="390" y="226" text-anchor="middle">③ 文本片段原路流回：DeepSeek → 服务器（翻译格式）→ SSE → 浏览器</text>
+</svg>
+<figcaption>图 13-1　AI 聊天应用的三方架构</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; API 密钥永远不能出现在前端代码里</div>
+  <p>
+    第 4 章讲过：所有 <code>VITE_</code> 开头的环境变量都会被<strong>原样打包进 JS 文件</strong>，任何人打开开发者工具都能看到。
+    一旦泄露，别人就能用你的账户无限调用、产生费用。所以一定要有一个自己的后端：密钥只放在服务器的 <code>.env</code> 文件里（并加入 <code>.gitignore</code>），并且在这里做登录校验和限流（比如每个用户每分钟最多 10 次）。
+  </p>
+</div>
+
+<h2 id="streaming">为什么要流式输出</h2>
+
+<p>
+  大模型生成一段长回答可能要十几秒甚至更久。如果等它全部生成完再一次性返回，用户会盯着转圈图标干等。
+  流式输出则是模型每生成一小段文字就立刻发过来，用户<strong>不到一秒就能看到第一个字</strong>，然后边生成边阅读：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="时间轴对比：非流式要等到全部生成完才显示；流式在很短时间后就开始显示第一段文字，并持续追加">
+  <text class="ttl" x="20" y="44">非流式</text>
+  <rect class="bx-d" x="110" y="26" width="520" height="30" rx="6"/>
+  <text class="sm" x="370" y="46" text-anchor="middle">等待中……（屏幕上什么都没有）</text>
+  <rect class="bx-a" x="630" y="26" width="110" height="30" rx="6"/>
+  <text class="sm on-a" x="685" y="46" text-anchor="middle">全部显示</text>
+
+  <text class="ttl" x="20" y="114">流式</text>
+  <rect class="bx-d" x="110" y="96" width="50" height="30" rx="6"/>
+  <rect class="bx-a" x="164" y="96" width="70" height="30" rx="6"/>
+  <rect class="bx-a" x="238" y="96" width="70" height="30" rx="6"/>
+  <rect class="bx-a" x="312" y="96" width="70" height="30" rx="6"/>
+  <rect class="bx-a" x="386" y="96" width="70" height="30" rx="6"/>
+  <rect class="bx-a" x="460" y="96" width="70" height="30" rx="6"/>
+  <rect class="bx-a" x="534" y="96" width="70" height="30" rx="6"/>
+  <rect class="bx-a" x="608" y="96" width="70" height="30" rx="6"/>
+  <text class="sm on-a" x="199" y="116" text-anchor="middle">Vue 3</text>
+  <text class="sm on-a" x="273" y="116" text-anchor="middle">的响应</text>
+  <text class="sm on-a" x="347" y="116" text-anchor="middle">式系统</text>
+  <text class="sm on-a" x="421" y="116" text-anchor="middle">基于</text>
+  <text class="sm on-a" x="495" y="116" text-anchor="middle">Proxy</text>
+  <text class="sm on-a" x="569" y="116" text-anchor="middle">……</text>
+  <text class="sm on-a" x="643" y="116" text-anchor="middle">完成</text>
+  <path class="ln" d="M110 152 H740" marker-end="url(#ar)"/>
+  <text class="lbl" x="740" y="172" text-anchor="end">时间 →</text>
+  <path class="ln-a" d="M164 140 V128" marker-end="url(#ar-a)"/>
+  <text class="lbl halo" x="164" y="192" text-anchor="middle">首字时间</text>
+  <path class="ln-d" d="M164 180 V156"/>
+</svg>
+<figcaption>图 13-2　总耗时差不多，但流式让用户几乎立刻看到内容</figcaption>
+</figure>
+
+<p>
+  传输格式就是第 8 章的 <strong>SSE</strong>：服务器保持连接不关闭，每次写一段 <code>event: …\ndata: …\n\n</code>。
+  不过第 8 章用的 <code>EventSource</code> 只能发 GET 请求，而聊天需要用 POST 把整段对话发过去，所以前端要改用 <code>fetch</code> 自己读取响应流。
+</p>
+
+<h2 id="server">后端：用 Hono 转发 DeepSeek 的流</h2>
+
+<p>
+  后端我们用 <strong>Hono</strong>。它是一个很小的 Web 框架，路由写法和 Express 很像，但基于浏览器同款的 <code>Request</code> / <code>Response</code> 标准，
+  同一份代码可以跑在 Node.js、Bun、Deno 和 Cloudflare Workers 上。它还自带了我们正需要的 SSE 工具 <code>streamSSE</code>。
+  模型用 <strong>DeepSeek</strong>，它的接口与 OpenAI 格式兼容，用普通的 <code>fetch</code> 就能调用，不需要额外的 SDK。
+</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#128293;</span><h4>Hono</h4><p>轻量、基于 Web 标准、TypeScript 友好；<code>hono/streaming</code> 提供 <code>streamSSE</code>。</p></div>
+  <div class="card"><span class="ic">&#128737;</span><h4>@hono/zod-validator</h4><p>用第 5 章学过的 Zod 校验请求体，校验不通过的请求根本进不了处理函数。</p></div>
+  <div class="card"><span class="ic">&#129302;</span><h4>DeepSeek API</h4><p>OpenAI 兼容的 <code>/chat/completions</code> 接口，<code>stream: true</code> 时以 SSE 返回。</p></div>
+</div>
+
+<h3>准备工作：密钥放进 .env，并且不提交</h3>
+
+<div class="code" data-lang="bash"><pre>
+npm i hono @hono/node-server @hono/zod-validator zod
+</pre></div>
+
+<div class="code" data-lang="bash" data-file=".env（只在本机或服务器上）"><pre>
+DEEPSEEK_API_KEY=sk-...
+</pre></div>
+
+<div class="code" data-lang="bash" data-file=".gitignore"><pre>
+.env
+.env.*
+!.env.example      # 只提交一个不含真实密钥的模板
+node_modules/
+</pre></div>
+
+<p>
+  Node.js 20.6 起可以用 <code>node --env-file=.env server/index.js</code> 直接读取 <code>.env</code>，不需要再装 dotenv。
+  仓库里只提交 <code>.env.example</code>（内容是 <code>DEEPSEEK_API_KEY=sk-你的密钥</code>），别人克隆后复制一份再填上自己的密钥。
+</p>
+
+<div class="box warn">
+  <div class="t">&#9888; 密钥一旦提交，就当它已经泄露</div>
+  <p>
+    git 会永久保存历史，删掉文件再提交一次并不能把密钥从历史里抹去，GitHub 上的公开仓库还会被机器人在几分钟内扫描到。
+    如果不小心提交了，第一件事是到 DeepSeek 控制台<strong>作废这个密钥、换一个新的</strong>，然后再清理历史。
+  </p>
+</div>
+
+<h3>上游的格式和我们的格式</h3>
+
+<p>
+  DeepSeek 返回的也是 SSE，但每一条都是一大段 JSON，而且推理模型会先流出“思考过程”（<code>reasoning_content</code>），再流出正式回答（<code>content</code>），最后是一个不是 JSON 的 <code>[DONE]</code>。
+  服务器把它<strong>翻译</strong>成我们自己定义的、更简单的几种事件，这样前端完全不用关心用的是哪家模型：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="协议转换：DeepSeek 的 SSE 每条是包含 choices 和 delta 的 JSON，reasoning_content 转成 reasoning 事件，content 转成 delta 事件，finish_reason 和 usage 转成 done 事件，DONE 表示结束">
+  <rect class="bx-p" x="20" y="20" width="330" height="250" rx="12"/>
+  <text class="ttl on-p" x="185" y="46" text-anchor="middle">DeepSeek 发来的（上游）</text>
+  <text class="mono sm" x="36" y="80">data: {"choices":[{"delta":</text>
+  <text class="mono sm" x="52" y="98">{"reasoning_content":"用户问"}}]}</text>
+  <text class="mono sm" x="36" y="128">data: {"choices":[{"delta":</text>
+  <text class="mono sm" x="52" y="146">{"content":"ref 是"}}]}</text>
+  <text class="mono sm" x="36" y="176">data: {"choices":[{"delta":{},</text>
+  <text class="mono sm" x="52" y="194">"finish_reason":"stop"}],</text>
+  <text class="mono sm" x="52" y="212">"usage":{…}}</text>
+  <text class="mono sm" x="36" y="242">data: [DONE]</text>
+
+  <rect class="bx-a" x="410" y="20" width="330" height="250" rx="12"/>
+  <text class="ttl on-a" x="575" y="46" text-anchor="middle">我们发给浏览器的</text>
+  <text class="mono sm" x="426" y="80">event: reasoning</text>
+  <text class="mono sm" x="426" y="98">data: {"text":"用户问"}</text>
+  <text class="mono sm" x="426" y="128">event: delta</text>
+  <text class="mono sm" x="426" y="146">data: {"text":"ref 是"}</text>
+  <text class="mono sm" x="426" y="176">event: done</text>
+  <text class="mono sm" x="426" y="194">data: {"finishReason":"stop",</text>
+  <text class="mono sm" x="426" y="212">"usage":{…}}</text>
+  <text class="sm" x="426" y="242">（[DONE] 只用来结束循环）</text>
+
+  <path class="ln-a" d="M352 92 H406" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M352 140 H406" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M352 196 H406" marker-end="url(#ar-a)"/>
+</svg>
+<figcaption>图 13-3　服务器把上游格式翻译成三种简单事件</figcaption>
+</figure>
+
+<h3>完整的服务器代码</h3>
+
+<p>解析上游 SSE 用的正是下一节要写的 <code>readSSE()</code>，前后端共用一个解析函数：</p>
+
+<div class="code" data-lang="js" data-file="server/index.js"><pre>
+import { Hono } from 'hono'
+import { serve } from '@hono/node-server'
+import { streamSSE } from 'hono/streaming'
+import { zValidator } from '@hono/zod-validator'
+import { z } from 'zod'
+import { readSSE } from '../src/lib/readSSE.js'
+
+const API_KEY = process.env.DEEPSEEK_API_KEY       // 用 node --env-file=.env 启动时读入
+if (!API_KEY) throw new Error('缺少 DEEPSEEK_API_KEY，请在 .env 中配置')
+
+const SYSTEM_PROMPT = '你是一个友好的 Vue 助教。用简体中文回答，适当使用 Markdown 和代码块。'
+
+// 只接受 user / assistant 交替出现、以 user 结尾的纯文本消息
+const ChatBody = z.object({
+  messages: z
+    .array(z.object({
+      role: z.enum(['user', 'assistant']),
+      content: z.string().min(1).max(8000),
+    }))
+    .min(1)
+    .max(50)
+    .refine(
+      (ms) =&gt; ms.every((m, i) =&gt; m.role === (i % 2 === 0 ? 'user' : 'assistant')) &amp;&amp; ms.at(-1).role === 'user',
+      '消息必须以 user 开始、交替出现、以 user 结束',
+    ),
+})
+
+const app = new Hono()
+
+app.post(
+  '/api/chat',
+  zValidator('json', ChatBody, (result, c) =&gt; {
+    if (!result.success) return c.json({ message: '消息格式不正确' }, 400)
+  }),
+  async (c) =&gt; {
+    const { messages } = c.req.valid('json')
+    const upstreamAbort = new AbortController()
+
+    const upstream = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'deepseek-flash',
+        stream: true,
+        reasoning_effort: 'low',                   // 聊天场景少想一点，回答更快
+        stream_options: { include_usage: true },   // 最后一块附带 token 用量
+        messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages],
+      }),
+      signal: upstreamAbort.signal,
+    })
+
+    if (!upstream.ok) {
+      console.error('DeepSeek 返回错误', upstream.status, await upstream.text())
+      const message = upstream.status === 429 ? '请求太频繁，请稍后再试' : 'AI 服务暂时不可用'
+      return c.json({ message }, 502)              // 不把上游的错误细节暴露给前端
+    }
+
+    return streamSSE(
+      c,
+      async (stream) =&gt; {
+        // 浏览器断开（用户点了停止或关掉页面）→ 中止对 DeepSeek 的请求，不再产生费用
+        stream.onAbort(() =&gt; upstreamAbort.abort())
+
+        let finishReason = null
+        let usage = null
+        for await (const { data } of readSSE(upstream.body)) {
+          if (data === '[DONE]') break
+          const chunk = JSON.parse(data)
+          const choice = chunk.choices?.[0]
+          if (choice?.delta?.reasoning_content) {
+            await stream.writeSSE({ event: 'reasoning', data: JSON.stringify({ text: choice.delta.reasoning_content }) })
+          }
+          if (choice?.delta?.content) {
+            await stream.writeSSE({ event: 'delta', data: JSON.stringify({ text: choice.delta.content }) })
+          }
+          if (choice?.finish_reason) finishReason = choice.finish_reason
+          if (chunk.usage) usage = chunk.usage
+        }
+        await stream.writeSSE({ event: 'done', data: JSON.stringify({ finishReason, usage }) })
+      },
+      // 第三个参数：流式过程中出错时调用
+      async (err, stream) =&gt; {
+        if (upstreamAbort.signal.aborted) return   // 是我们主动中止的，不算错误
+        console.error(err)
+        await stream.writeSSE({ event: 'error', data: JSON.stringify({ message: '生成失败，请稍后重试' }) })
+      },
+    )
+  },
+)
+
+serve({ fetch: app.fetch, port: 3000 })
+</pre></div>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#128272;</span><h4>校验输入</h4><p>限制条数、长度和角色顺序。前端发来的任何东西都可能被篡改。</p></div>
+  <div class="card"><span class="ic">&#9209;</span><h4>断开即停止</h4><p><code>stream.onAbort</code> 在浏览器断开时触发，用 <code>AbortController</code> 中止上游的 <code>fetch</code>。</p></div>
+  <div class="card"><span class="ic">&#128232;</span><h4>翻译事件</h4><p>上游格式只在服务器里出现。以后换成别家模型，只改这一个文件。</p></div>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 关于 DeepSeek 的几个参数</div>
+  <p>
+    <code>finish_reason</code> 为 <code>stop</code> 表示正常结束，<code>length</code> 表示达到长度上限被截断，<code>content_filter</code> 表示内容被过滤，前端可以据此显示不同的提示。
+    思考过程只用来展示，<strong>不要</strong>在下一轮把它作为历史发回去。本文写作时可用的模型是 <code>deepseek-flash</code> 和 <code>deepseek-v4-pro</code>，
+    可以用 <code>GET https://api.deepseek.com/models</code> 查询当前的模型列表；模型名和参数以 DeepSeek 官方文档为准。
+  </p>
+</div>
+
+<p>运行 <code>node --env-file=.env --watch server/index.js</code> 启动服务器。开发时让 Vite 把 <code>/api</code> 代理过去（第 5 章用过同样的配置）：<code>server: { proxy: { '/api': 'http://localhost:3000' } }</code>。</p>
+
+<div class="box tip">
+  <div class="t">&#10003; 先用 curl 试一试</div>
+  <p>前端还没写的时候，可以直接用 <code>curl -N</code> 看到流式事件一条条打印出来（<code>-N</code> 表示不缓冲）：</p>
+<div class="code" data-lang="bash"><pre>
+curl -N localhost:3000/api/chat -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"用一句话解释 ref"}]}'
+</pre></div>
+</div>
+
+<h2 id="read-stream">读取流：前后端共用的解析器</h2>
+
+<p>
+  不管是服务器读 DeepSeek，还是浏览器读我们的服务器，<code>fetch</code> 返回的 <code>response.body</code> 都是一个 <code>ReadableStream</code>，可以一块一块地读。但要注意：
+  网络传输的“块”和 SSE 的“事件”<strong>并不对齐</strong>。一个块里可能有半个事件，也可能有好几个事件，所以必须自己做缓冲：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="网络数据块与 SSE 事件不对齐：第一块包含一个完整事件和半个事件，第二块包含后半个事件；解析器把数据追加到缓冲区，每遇到空行就切出一个完整事件">
+  <text class="ttl" x="20" y="36">网络到达的块</text>
+  <rect class="bx-b" x="20" y="48" width="330" height="40" rx="6"/>
+  <text class="mono sm" x="30" y="73">event: delta↵data: {"text":"Vue"}↵↵event: de</text>
+  <rect class="bx-b" x="360" y="48" width="380" height="40" rx="6"/>
+  <text class="mono sm" x="370" y="73">lta↵data: {"text":" 3"}↵↵event: done↵data: {…}↵↵</text>
+
+  <rect class="bx-a" x="200" y="116" width="360" height="50" rx="10"/>
+  <text class="ttl on-a" x="380" y="138" text-anchor="middle">缓冲区 buffer</text>
+  <text class="sm" x="380" y="156" text-anchor="middle">追加新块 → 每遇到空行（↵↵）切出一个完整事件 → 剩下的留着</text>
+  <path class="ln" d="M185 90 L300 112" marker-end="url(#ar)"/>
+  <path class="ln" d="M550 90 L460 112" marker-end="url(#ar)"/>
+
+  <rect class="bx-g" x="20" y="196" width="230" height="44" rx="8"/>
+  <text class="mono sm" x="135" y="223" text-anchor="middle">delta  {"text":"Vue"}</text>
+  <rect class="bx-g" x="265" y="196" width="230" height="44" rx="8"/>
+  <text class="mono sm" x="380" y="223" text-anchor="middle">delta  {"text":" 3"}</text>
+  <rect class="bx-g" x="510" y="196" width="230" height="44" rx="8"/>
+  <text class="mono sm" x="625" y="223" text-anchor="middle">done   {…}</text>
+  <path class="ln-g" d="M300 168 L150 192" marker-end="url(#ar)"/>
+  <path class="ln-g" d="M380 168 V192" marker-end="url(#ar)"/>
+  <path class="ln-g" d="M460 168 L610 192" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 13-4　块不等于事件：用缓冲区按空行切分</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="src/lib/readSSE.js"><pre>
+// 把一个 SSE 响应体变成异步迭代器：for await (const { event, data } of readSSE(body))
+// data 是原始字符串，由调用者决定怎么解析（DeepSeek 最后会发一个非 JSON 的 [DONE]）
+export async function* readSSE(body) {
+  const reader = body.pipeThrough(new TextDecoderStream()).getReader()   // 字节 → 文本
+  let buffer = ''
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) return
+    buffer += value.replaceAll('\r\n', '\n')
+    let end
+    while ((end = buffer.indexOf('\n\n')) !== -1) {      // 找到一个完整事件
+      const raw = buffer.slice(0, end)
+      buffer = buffer.slice(end + 2)
+      let event = 'message'
+      const data = []
+      for (const line of raw.split('\n')) {
+        if (line.startsWith('event:')) event = line.slice(6).trim()
+        else if (line.startsWith('data:')) data.push(line.slice(5).trimStart())
+        // 以冒号开头的是注释（比如保活用的 ": keep-alive"），忽略
+      }
+      if (data.length) yield { event, data: data.join('\n') }
+    }
+  }
+}
+</pre></div>
+
+<p>
+  这个函数在两个地方都会用到：服务器用它解析 DeepSeek 的流，浏览器用它解析我们服务器的流。所以它不擅自 <code>JSON.parse</code>，
+  而是把 <code>data</code> 原样交给调用者。按照 SSE 规范，一个事件可以有多行 <code>data:</code>，要用换行拼起来；以冒号开头的行是注释，服务器有时用它保持连接不断。
+</p>
+
+<div class="box tip">
+  <div class="t">&#10003; 为什么用 TextDecoderStream</div>
+  <p>
+    一个汉字在 UTF-8 里占 3 个字节，网络块可能恰好在一个汉字中间断开。如果每块单独用 <code>new TextDecoder().decode(chunk)</code> 解码，就会出现乱码“�”。
+    <code>TextDecoderStream</code> 会自动保留不完整的字节，等下一块到达再拼起来解码。
+  </p>
+</div>
+
+<h2 id="usechat">useChat：聊天的状态与逻辑</h2>
+
+<p>把所有聊天逻辑封装进一个组合式函数。先看它的状态变化：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="聊天状态机：idle 发送后进入 streaming；streaming 收到 done 回到 idle，用户停止也回到 idle 并标记已停止，出错进入 error；error 可以重试回到 streaming">
+  <rect class="bx" x="40" y="80" width="150" height="70" rx="35"/>
+  <text class="ttl" x="115" y="110" text-anchor="middle">idle</text>
+  <text class="sm" x="115" y="130" text-anchor="middle">可以输入</text>
+  <rect class="bx-a" x="305" y="80" width="150" height="70" rx="35"/>
+  <text class="ttl on-a" x="380" y="110" text-anchor="middle">streaming</text>
+  <text class="sm" x="380" y="130" text-anchor="middle">显示“停止”按钮</text>
+  <rect class="bx-r" x="570" y="80" width="150" height="70" rx="35"/>
+  <text class="ttl on-r" x="645" y="110" text-anchor="middle">error</text>
+  <text class="sm" x="645" y="130" text-anchor="middle">显示“重试”</text>
+
+  <path class="ln-a" d="M190 100 H301" marker-end="url(#ar-a)"/>
+  <text class="lbl halo" x="246" y="90" text-anchor="middle">send()</text>
+  <path class="ln" d="M305 130 H194" marker-end="url(#ar)"/>
+  <text class="lbl halo" x="246" y="148" text-anchor="middle">done</text>
+  <path class="ln-r" d="M455 100 H566" marker-end="url(#ar)"/>
+  <text class="lbl halo" x="510" y="90" text-anchor="middle">出错</text>
+  <path class="ln" d="M600 152 C 560 210, 440 210, 410 154" marker-end="url(#ar)"/>
+  <text class="lbl halo" x="505" y="208" text-anchor="middle">retry()</text>
+  <path class="ln-d" d="M350 78 C 320 20, 160 20, 130 76" marker-end="url(#ar)"/>
+  <text class="lbl halo" x="240" y="30" text-anchor="middle">stop()：保留已生成的部分，标记“已停止”</text>
+</svg>
+<figcaption>图 13-5　聊天的三种状态</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="src/composables/useChat.js"><pre>
+import { ref, computed } from 'vue'
+import { readSSE } from '@/lib/readSSE'
+
+export function useChat(endpoint = '/api/chat') {
+  const messages = ref([]) // { id, role, content, reasoning?, stopped?, truncated?, error? }
+  const status = ref('idle') // 'idle' | 'streaming' | 'error'
+  const isStreaming = computed(() =&gt; status.value === 'streaming')
+  let controller = null
+
+  // 发给服务器的历史：只保留 role 和 content（思考过程不回传）。
+  // 出错或还没输出正文就被停止的回复，连同它前面的提问一起跳过，保证 user / assistant 严格交替
+  const history = () =&gt; {
+    const result = []
+    for (const { role, content, error } of messages.value) {
+      if (role === 'assistant' &amp;&amp; (!content || error)) { result.pop(); continue }
+      result.push({ role, content })
+    }
+    return result
+  }
+
+  async function run() {
+    const body = JSON.stringify({ messages: history() })
+    messages.value.push({ id: crypto.randomUUID(), role: 'assistant', content: '', reasoning: '' })
+    // 注意：从响应式数组里取出来的是代理，修改它才会触发更新（第 9 章）
+    const reply = messages.value.at(-1)
+
+    controller = new AbortController()
+    status.value = 'streaming'
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        signal: controller.signal,
+      })
+      if (!res.ok) throw new Error((await res.json().catch(() =&gt; null))?.message || `HTTP ${res.status}`)
+
+      for await (const { event, data } of readSSE(res.body)) {
+        const payload = JSON.parse(data)
+        if (event === 'reasoning') reply.reasoning += payload.text
+        else if (event === 'delta') reply.content += payload.text
+        else if (event === 'error') throw new Error(payload.message)
+        else if (event === 'done' &amp;&amp; payload.finishReason === 'length') reply.truncated = true
+      }
+      status.value = 'idle'
+    } catch (err) {
+      if (err.name === 'AbortError') { // 用户主动停止，不算错误
+        reply.stopped = true
+        status.value = 'idle'
+      } else {
+        reply.error = err.message
+        status.value = 'error'
+      }
+    } finally {
+      controller = null
+    }
+  }
+
+  function send(text) {
+    if (!text.trim() || isStreaming.value) return
+    messages.value.push({ id: crypto.randomUUID(), role: 'user', content: text.trim() })
+    return run()
+  }
+
+  function stop() {
+    controller?.abort() // fetch 中断 → 连接关闭 → 服务器 onAbort → 中止对 DeepSeek 的请求
+  }
+
+  function retry() {
+    if (messages.value.at(-1)?.error) messages.value.pop() // 去掉出错的那条回复
+    return run()
+  }
+
+  return { messages, status, isStreaming, send, stop, retry }
+}
+</pre></div>
+
+<p>几个值得注意的地方：</p>
+<ul>
+  <li><strong>停止的链路</strong>：<code>stop()</code> 一行代码就串起了整条链路。<code>controller.abort()</code> 让 <code>fetch</code> 的读取抛出 <code>AbortError</code>，
+    同时浏览器关闭连接；Hono 的 <code>stream.onAbort</code> 随之触发，中止服务器对 DeepSeek 的请求。</li>
+  <li><strong>思考过程</strong>：<code>reasoning</code> 事件追加到 <code>reply.reasoning</code>，只用于展示，<code>history()</code> 不会把它发回服务器。</li>
+  <li><strong>历史必须交替</strong>：如果模型还在思考时用户就点了停止，这条回复的正文是空的。只把它过滤掉的话，历史里会出现两条连续的 user 消息，
+    被服务器的校验拒绝。所以 <code>history()</code> 遇到没有有效正文的回复时，连同它前面的提问一起跳过。</li>
+</ul>
+
+<h2 id="markdown">安全地渲染 Markdown</h2>
+
+<p>
+  模型的回答是 Markdown 文本，需要转成 HTML 再用 <code>v-html</code> 显示。这里有两个问题：<strong>安全</strong>和<strong>性能</strong>。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="渲染流水线：流式文本先节流，每 80 毫秒最多更新一次，再经 markdown-it 转成 HTML，DOMPurify 清理危险标签，最后 v-html 显示">
+  <rect class="bx-a" x="20" y="60" width="130" height="80" rx="12"/>
+  <text class="ttl on-a" x="85" y="88" text-anchor="middle">流式文本</text>
+  <text class="sm" x="85" y="112" text-anchor="middle">每秒几十次变化</text>
+  <rect class="bx-b" x="185" y="60" width="130" height="80" rx="12"/>
+  <text class="ttl on-b" x="250" y="88" text-anchor="middle">节流</text>
+  <text class="sm" x="250" y="112" text-anchor="middle">最多 80ms 一次</text>
+  <rect class="bx-p" x="350" y="60" width="130" height="80" rx="12"/>
+  <text class="ttl on-p" x="415" y="88" text-anchor="middle">markdown-it</text>
+  <text class="sm" x="415" y="112" text-anchor="middle">Markdown → HTML</text>
+  <rect class="bx-r" x="515" y="60" width="110" height="80" rx="12"/>
+  <text class="ttl on-r" x="570" y="88" text-anchor="middle">DOMPurify</text>
+  <text class="sm" x="570" y="112" text-anchor="middle">清除危险内容</text>
+  <rect class="bx-g" x="660" y="60" width="80" height="80" rx="12"/>
+  <text class="ttl on-g" x="700" y="98" text-anchor="middle">v-html</text>
+  <path class="ln" d="M150 100 H181" marker-end="url(#ar)"/>
+  <path class="ln" d="M315 100 H346" marker-end="url(#ar)"/>
+  <path class="ln" d="M480 100 H511" marker-end="url(#ar)"/>
+  <path class="ln" d="M625 100 H656" marker-end="url(#ar)"/>
+  <text class="lbl" x="250" y="172" text-anchor="middle">性能：减少重复解析</text>
+  <text class="lbl" x="490" y="172" text-anchor="middle">安全：防止 XSS</text>
+</svg>
+<figcaption>图 13-6　从流式文本到安全的 HTML</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; v-html 是 XSS 的入口</div>
+  <p>
+    模型的输出会受用户输入影响，甚至可能被网页内容、文档里藏着的指令（提示词注入）诱导，输出 <code>&lt;img src=x onerror="偷走 cookie"&gt;</code> 这样的代码。
+    所以要两道防线：markdown-it 默认 <code>html: false</code>，原始 HTML 会被转义；渲染结果再经过 DOMPurify 清理一遍。
+  </p>
+</div>
+
+<div class="code" data-lang="js" data-file="src/lib/markdown.js"><pre>
+import MarkdownIt from 'markdown-it'
+import DOMPurify from 'dompurify'
+
+// 模块级单例，所有消息共用一个实例
+const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
+
+export function renderMarkdown(text) {
+  return DOMPurify.sanitize(md.render(text))
+}
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="src/components/ChatMessage.vue"><pre>
+&lt;script setup&gt;
+import { computed, toRef } from 'vue'
+import { refThrottled } from '@vueuse/core'
+import { renderMarkdown } from '@/lib/markdown'
+
+const props = defineProps({ message: Object, streaming: Boolean })
+
+// 内容每 80ms 最多重新解析一次；最后一次变化保证会被渲染
+const content = refThrottled(toRef(() =&gt; props.message.content), 80)
+const html = computed(() =&gt; renderMarkdown(content.value))
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div v-if="message.role === 'user'" class="msg user"&gt;{{ message.content }}&lt;/div&gt;
+  &lt;div v-else class="msg assistant"&gt;
+    &lt;!-- 思考过程：还没开始回答时展开，开始回答后自动收起 --&gt;
+    &lt;details v-if="message.reasoning" class="reasoning" :open="streaming &amp;&amp; !message.content"&gt;
+      &lt;summary&gt;{{ streaming &amp;&amp; !message.content ? '思考中…' : '思考过程' }}&lt;/summary&gt;
+      &lt;p&gt;{{ message.reasoning }}&lt;/p&gt;
+    &lt;/details&gt;
+    &lt;div v-html="html" /&gt;
+    &lt;span v-if="streaming" class="cursor" aria-hidden="true" /&gt;
+    &lt;small v-if="message.stopped" class="note"&gt;已停止生成&lt;/small&gt;
+    &lt;small v-if="message.truncated" class="note"&gt;回答过长，已被截断&lt;/small&gt;
+    &lt;small v-if="message.error" class="note error"&gt;{{ message.error }}&lt;/small&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>
+  思考过程放在原生的 <code>&lt;details&gt;</code> 里：模型还在思考、正文没出来时展开，让用户知道“它在干活”；正文开始输出后自动收起，想看可以再点开。
+  思考过程是纯文本，用 <code>{{ }}</code> 插值即可。
+</p>
+
+<div class="box tip">
+  <div class="t">&#10003; 代码高亮放到最后</div>
+  <p>
+    代码高亮（比如 Shiki）比较耗时，而且流式过程中代码块经常是不完整的。可以只在这条消息<strong>生成结束后</strong>再做高亮，
+    并用动态 <code>import('shiki')</code> 按需加载，不影响首屏体积。用户消息和思考过程用 <code>{{ }}</code> 插值显示，Vue 会自动转义，不需要 v-html。
+  </p>
+</div>
+
+<h2 id="ux">界面细节</h2>
+
+<p>下面的演示把本章的逻辑都放在了一起。为了不需要后端，它用一个定时器<strong>模拟</strong>流式返回（先思考、再回答），其他部分（状态、停止、思考过程、Markdown、自动滚动、输入法处理）和真实实现一样。完整可运行的版本见仓库的 <code>examples/ch13-ai-chat</code>：</p>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · 流式聊天（模拟数据）</div>
+  <div class="body">
+    <div id="demo-chat" v-cloak>
+      <div class="chat">
+        <div class="chat-list" ref="list" role="log" :aria-busy="isStreaming">
+          <div v-if="!messages.length" class="muted">试着问一个问题，或者点下面的示例。回答生成时可以点“停止”，也可以往上滚动看看自动滚动会不会打扰你。</div>
+          <div v-for="(m, i) in messages" :key="m.id" class="msg" :class="m.role">
+            <template v-if="m.role === 'user'">{{ m.content }}</template>
+            <template v-else>
+              <details v-if="m.reasoning" class="reasoning" :open="isStreaming && i === messages.length - 1 && !m.content">
+                <summary>{{ isStreaming && i === messages.length - 1 && !m.content ? '思考中…' : '思考过程' }}</summary>
+                <p>{{ m.reasoning }}</p>
+              </details>
+              <div v-html="render(m.content)"></div>
+              <span v-if="isStreaming && i === messages.length - 1" class="cursor" aria-hidden="true"></span>
+              <span v-if="m.stopped" class="note">已停止生成</span>
+            </template>
+          </div>
+        </div>
+        <div class="chat-hints" v-if="!isStreaming">
+          <button class="ghost" v-for="q in samples" :key="q" @click="send(q)">{{ q }}</button>
+        </div>
+        <div class="chat-input">
+          <textarea v-model="input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行" aria-label="消息"
+            @keydown.enter.exact="onEnter"></textarea>
+          <button v-if="isStreaming" class="ghost" @click="stop">停止</button>
+          <button v-else :disabled="!input.trim()" @click="submit">发送</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>自动滚动：跟随，但不强迫</h3>
+
+<p>
+  新文字到达时应该自动滚到底部，但如果用户正往上翻看之前的内容，就不能把他拽回来。规则是：<strong>只有当用户本来就在底部附近时才自动滚动</strong>：
+</p>
+
+<div class="code" data-lang="js" data-file="ChatView.vue（script 部分）"><pre>
+import { useTemplateRef, watch, nextTick } from 'vue'
+import { useScroll } from '@vueuse/core'
+
+const list = useTemplateRef('list')
+const { arrivedState } = useScroll(list, { offset: { bottom: 60 } })
+
+watch(() =&gt; messages.value.at(-1)?.content, async () =&gt; {
+  if (!arrivedState.bottom) return          // 用户在往上翻，不打扰
+  await nextTick()                          // 等新内容渲染出来（第 2 章）
+  list.value.scrollTop = list.value.scrollHeight
+})
+</pre></div>
+
+<h3>回车发送与中文输入法</h3>
+
+<p>
+  这是中文用户最容易遇到的 bug：用拼音输入法打字时，按回车是为了<strong>确认候选词</strong>，如果此时消息被发出去了，用户会非常恼火。
+  浏览器在输入法组字期间触发的键盘事件，<code>isComposing</code> 为 <code>true</code>，判断一下即可：
+</p>
+
+<div class="code" data-lang="vue"><pre>
+&lt;textarea v-model="input" @keydown.enter.exact="onEnter" /&gt;
+
+&lt;script setup&gt;
+function onEnter(e) {
+  if (e.isComposing || e.keyCode === 229) return   // 输入法正在组字，交给输入法
+  e.preventDefault()                               // 阻止换行
+  submit()
+}
+// Shift+Enter 不匹配 .exact，会保留默认的换行行为
+&lt;/script&gt;
+</pre></div>
+
+<h3>其他值得做的细节</h3>
+
+<div class="tw"><table>
+<thead><tr><th>细节</th><th>做法</th></tr></thead>
+<tbody>
+<tr><td>读屏软件</td><td>消息列表用 <code>role="log"</code>；生成中设置 <code>aria-busy="true"</code>，避免逐字朗读，结束后再朗读完整回答</td></tr>
+<tr><td>保存对话</td><td>把 <code>messages</code> 放进 Pinia，用第 6 章的持久化插件存到 localStorage，或者保存到服务器</td></tr>
+<tr><td>复制和重新生成</td><td>每条回复加“复制”按钮（<code>navigator.clipboard.writeText</code>）和“重新生成”（删掉最后一条回复再 <code>run()</code>）</td></tr>
+<tr><td>长对话</td><td>对话越长，每次请求发送的内容越多、费用越高。限制保留的轮数，或在服务器端对早期内容做摘要。<code>done</code> 事件里的 <code>usage</code> 可以用来统计 token 用量</td></tr>
+<tr><td>防止重复提交</td><td>生成期间禁用发送；服务器端按用户限流</td></tr>
+</tbody>
+</table></div>
+
+<div class="box deep">
+  <div class="t">&#128270; 现成的封装</div>
+  <p>
+    理解了原理之后，也可以使用社区的封装来省去样板代码，例如 Vercel AI SDK 提供的 Vue 绑定（<code>@ai-sdk/vue</code>），它把消息状态、流式解析、停止和重试都包好了。
+    用 Nuxt 的话，后端接口可以直接写在 <code>server/api/chat.post.js</code> 里（第 7 章）；本章的 Hono 代码也几乎不用改就能部署到 Cloudflare Workers 这类边缘平台。无论用什么封装，本章的几个要点都不变：
+    密钥在服务端、流要能中止、Markdown 要清理、输入法要处理。
+  </p>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<div class="tw"><table>
+<thead><tr><th>主题</th><th>要点</th></tr></thead>
+<tbody>
+<tr><td>架构</td><td>浏览器 → 自己的服务器（密钥、校验、限流）→ DeepSeek API；密钥放 <code>.env</code> 并加入 <code>.gitignore</code>，绝不进前端</td></tr>
+<tr><td>后端</td><td>Hono + <code>zValidator</code> 校验；<code>fetch</code> DeepSeek 并用 <code>readSSE</code> 解析；<code>streamSSE</code> 翻译成 <code>reasoning</code> / <code>delta</code> / <code>done</code>；<code>onAbort</code> 时中止上游</td></tr>
+<tr><td>读取流</td><td><code>fetch</code> + <code>TextDecoderStream</code> + 按空行切分的缓冲区，包装成异步迭代器，前后端共用</td></tr>
+<tr><td>useChat</td><td><code>messages</code> + <code>status</code> 状态机；修改响应式代理上的回复；<code>AbortController</code> 停止；历史保持严格交替</td></tr>
+<tr><td>Markdown</td><td>节流 → markdown-it（<code>html: false</code>）→ DOMPurify → <code>v-html</code></td></tr>
+<tr><td>体验</td><td>在底部才自动滚动；<code>isComposing</code> 处理输入法；<code>role="log"</code> + <code>aria-busy</code></td></tr>
+</tbody>
+</table></div>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>运行仓库里的 <code>examples/ch13-ai-chat</code>（按 README 配好 <code>.env</code>），打开开发者工具的 Network 面板，观察 <code>/api/chat</code> 响应是怎么一段一段到达的。</li>
+    <li>在 <code>stream.onAbort</code> 里打印日志，点“停止”后确认服务器确实中止了对 DeepSeek 的请求。</li>
+    <li>在页面上加一个开关，让用户在 <code>deepseek-flash</code> 和 <code>deepseek-v4-pro</code> 之间切换（服务器端要用 Zod 校验只允许这两个值）；再用 <code>done</code> 事件里的 <code>usage</code> 显示本次用掉的 token 数。</li>
+    <li>给每条回复加“复制”和“重新生成”按钮。</li>
+    <li>把对话保存到 Pinia 并持久化，刷新页面后对话还在；再做一个侧边栏，支持多个会话切换。</li>
+    <li>生成结束后用 Shiki 给代码块加上高亮，并在代码块右上角加一个“复制代码”按钮。</li>
+    <li>把第 5 章客服中心的“常见问题”页改成一个 AI 助手：在系统提示词里放入 FAQ 内容，让它只根据这些内容回答。</li>
+  </ol>
+</div>
+
+<div class="box key">
+  <div class="t">&#9733; 写在最后</div>
+  <p>
+    到这里，你已经从一个 <code>{{ message }}</code> 走到了响应式原理、组件库、大型架构、跨端和 AI 应用。Vue 和它的生态还会继续变化，
+    但你在这些章节里建立的思维方式：数据驱动视图、组件化、关注点分离、先理解原理再用工具，会一直有用。祝你构建出自己的好作品！
+  </p>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+<script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+<script>
+  if (window.Vue) {
+    const { createApp, ref, computed, watch, nextTick, onBeforeUnmount } = Vue
+
+    // 极简 Markdown：先转义，再处理代码块、行内代码、粗体、列表（演示用，真实项目用 markdown-it + DOMPurify）
+    const esc = (s) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+    function render(src) {
+      const parts = esc(src).split(/```(?:\w+)?\n?/)
+      return parts.map((p, i) => {
+        if (i % 2) return `<pre><code>${p.replace(/\n$/, '')}</code></pre>`
+        return p.split(/\n{2,}/).filter((b) => b.trim()).map((b) => {
+          const inline = (t) => t.replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+          if (/^\s*[-*] /m.test(b) && b.trim().split('\n').every((l) => /^\s*[-*] /.test(l)))
+            return '<ul>' + b.trim().split('\n').map((l) => `<li>${inline(l.replace(/^\s*[-*] /, ''))}</li>`).join('') + '</ul>'
+          return `<p>${inline(b).replace(/\n/g, '<br>')}</p>`
+        }).join('')
+      }).join('')
+    }
+
+    const answers = {
+      'ref 和 reactive 有什么区别？': '简单来说：\n\n- **ref** 可以装任何值，在 JS 里用 `.value` 读写，可以整体替换\n- **reactive** 只能装对象，直接读写属性，但**不能整体替换**，解构会丢失响应性\n\n官方建议默认使用 `ref`。例如：\n\n```js\nconst count = ref(0)\ncount.value++\n```\n\n第 2 章的“响应式的几个常见陷阱”一节有详细对比。',
+      '怎么实现停止生成？': '核心是 `AbortController`：\n\n```js\nconst controller = new AbortController()\nfetch(url, { signal: controller.signal })\n// 点击停止时\ncontroller.abort()\n```\n\n调用 `abort()` 后，读取流的代码会抛出 **AbortError**，同时浏览器关闭连接。服务器监听到连接关闭，再调用 `stream.abort()` 停止向模型请求，这样就**不会继续产生费用**。',
+      '给我讲讲 SSE': '**SSE**（Server-Sent Events）是服务器向浏览器单向推送数据的标准。\n\n它的格式非常简单，每个事件由几行文本组成，以一个空行结束：\n\n```\nevent: delta\ndata: {"text":"你好"}\n\n```\n\n优点：\n\n- 基于普通 HTTP，代理友好\n- `EventSource` 自带断线重连\n- 比 WebSocket 简单得多\n\n缺点是只能单向推送，并且 `EventSource` 只支持 GET，所以聊天场景通常用 `fetch` 自己读取流。',
+    }
+    const fallback = (q) => `这是一个**模拟**的回答，演示页面没有连接真实的模型。\n\n你问的是：“${q}”\n\n在真实应用中，这里的文字会由服务器通过 SSE 一段一段推送过来，前端用 \`readSSE()\` 解析后追加到 \`reply.content\` 上，Vue 的响应式系统会自动更新界面。`
+
+    createApp({
+      setup() {
+        const messages = ref([])
+        const status = ref('idle')
+        const isStreaming = computed(() => status.value === 'streaming')
+        const input = ref('')
+        const list = ref(null)
+        const samples = Object.keys(answers)
+        let timer = null
+        let id = 0
+
+        // 模拟流：每 30~70ms 吐出 1~4 个字符
+        // 先吐出思考过程，再吐出正文
+        function fakeStream(reasoning, text, onReasoning, onDelta, onDone) {
+          let i = 0
+          const all = reasoning.length + text.length
+          const tick = () => {
+            if (i >= all) { timer = null; onDone(); return }
+            const n = 1 + Math.floor(Math.random() * 4)
+            if (i < reasoning.length) { onReasoning(reasoning.slice(i, Math.min(i + n, reasoning.length))); i = Math.min(i + n, reasoning.length) }
+            else { onDelta(text.slice(i - reasoning.length, i - reasoning.length + n)); i += n }
+            timer = setTimeout(tick, 30 + Math.random() * 40)
+          }
+          timer = setTimeout(tick, 400)   // 模拟“首字时间”
+        }
+
+        function send(text) {
+          text = text.trim()
+          if (!text || isStreaming.value) return
+          messages.value.push({ id: id++, role: 'user', content: text })
+          messages.value.push({ id: id++, role: 'assistant', content: '', reasoning: '' })
+          const reply = messages.value.at(-1)
+          status.value = 'streaming'
+          const thinking = `用户问的是“${text}”。先给出简短的结论，再补充一个例子或要点，用中文和 Markdown 回答。`
+          fakeStream(thinking, answers[text] || fallback(text), (d) => { reply.reasoning += d }, (d) => { reply.content += d }, () => { status.value = 'idle' })
+        }
+        function stop() {
+          clearTimeout(timer); timer = null
+          messages.value.at(-1).stopped = true
+          status.value = 'idle'
+        }
+        function submit() { const t = input.value; input.value = ''; send(t) }
+        function onEnter(e) {
+          if (e.isComposing || e.keyCode === 229) return
+          e.preventDefault(); submit()
+        }
+
+        // 只有用户本来就在底部附近时才自动滚动
+        let nearBottom = true
+        watch(list, (el) => el && el.addEventListener('scroll', () => {
+          nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+        }))
+        watch(() => { const m = messages.value.at(-1); return m && m.content + (m.reasoning || '') }, async () => {
+          if (!nearBottom || !list.value) return
+          await nextTick()
+          list.value.scrollTop = list.value.scrollHeight
+        })
+        watch(() => messages.value.length, async () => {
+          await nextTick(); nearBottom = true
+          if (list.value) list.value.scrollTop = list.value.scrollHeight
+        })
+        onBeforeUnmount(() => clearTimeout(timer))
+
+        return { messages, isStreaming, input, list, samples, render, send, stop, submit, onEnter }
+      }
+    }).mount('#demo-chat')
+  }
+</script>
+</body>
+</html>

@@ -7,21 +7,26 @@
   'use strict';
 
   const CHAPTERS = [
-    { n: 1, t: '初识 React 19',            d: 'UI = f(state)、组件、JSX 与第一个 createRoot', part: '第一部分 · 基础' },
-    { n: 2, t: '项目一：Markdown 笔记本',  d: 'useState、派生数据、useEffect、列表与条件渲染、不可变更新' },
-    { n: 3, t: '项目二：城堡决斗卡牌游戏', d: '组件树、props 与回调、children、useReducer、Motion 动画与 SVG' },
-    { n: 4, t: '工程化：Vite 与渲染原理',  d: 'Vite + React、渲染与提交、React Compiler、样式方案', part: '第二部分 · 工程化开发' },
-    { n: 5, t: '项目三：客服支持中心',     d: 'React Router 7、Context、自定义 Hook、TanStack Query、表单 Actions' },
-    { n: 6, t: '项目四：地理定位博客',     d: 'Zustand 状态管理、OAuth 登录、react-leaflet、render props' },
-    { n: 7, t: '项目五：在线商店与规模化', d: 'ESLint、Vitest + Testing Library、react-i18next、Next.js 与服务端组件', part: '第三部分 · 规模化与全栈' },
-    { n: 8, t: '项目六：Meteor 实时仪表盘', d: 'Meteor 3 + React：useTracker、useFind、方法与发布订阅' },
-    { n: 9, t: '附录：Vue ↔ React 对照',   d: '同一个概念在两个框架里怎么写', part: '附录' }
+    { id: '1', t: '初识 React 19',            d: 'UI = f(state)、组件、JSX 与第一个 createRoot', part: '第一部分 · 基础' },
+    { id: '2', t: '项目一：Markdown 笔记本',  d: 'useState、派生数据、useEffect、列表与条件渲染、不可变更新' },
+    { id: '3', t: '项目二：城堡决斗卡牌游戏', d: '组件树、props 与回调、children、useReducer、Motion 动画与 SVG' },
+    { id: '4', t: '工程化：Vite 与渲染原理',  d: 'Vite + React、渲染与提交、React Compiler、样式方案', part: '第二部分 · 工程化开发' },
+    { id: '5', t: '项目三：客服支持中心',     d: 'React Router 7、Context、自定义 Hook、TanStack Query、表单 Actions' },
+    { id: '6', t: '项目四：地理定位博客',     d: 'Zustand 状态管理、OAuth 登录、react-leaflet、render props' },
+    { id: '7', t: '项目五：在线商店与规模化', d: 'ESLint、Vitest + Testing Library、react-i18next、Next.js 与服务端组件', part: '第三部分 · 规模化与全栈' },
+    { id: '8', t: '项目六：Meteor 实时仪表盘', d: 'Meteor 3 + React：useTracker、useFind、方法与发布订阅' },
+    { id: '9', t: '附录：Vue ↔ React 对照',   d: '同一个概念在两个框架里怎么写', part: '附录' }
   ];
 
   const pad = (n) => String(n).padStart(2, '0');
-  const href = (n) => `ch${pad(n)}.html`;
-
-  const cur = Number.parseInt(document.body.dataset.chapter || '0', 10);
+  // 每个条目：id（页面 data-chapter）、num（侧边栏编号）、label（“第 N 章”）、file（文件名）
+  for (const c of CHAPTERS) {
+    c.num ??= c.id;
+    c.label ??= `第 ${c.id} 章`;
+    c.file ??= `ch${pad(c.id)}.html`;
+  }
+  const cur = document.body.dataset.chapter || '0';
+  const curIndex = CHAPTERS.findIndex((c) => c.id === cur);
 
   /* ---------- 侧边栏 ---------- */
   const side = document.getElementById('sidebar');
@@ -29,9 +34,9 @@
     const brand = '<a class="brand" href="index.html"><span class="flame">' +
       '<svg viewBox="-11 -10 22 20" width="18" height="16" aria-hidden="true"><circle r="2" fill="#fff"/><g fill="none" stroke="#fff" stroke-width="1"><ellipse rx="10" ry="4"/><ellipse rx="10" ry="4" transform="rotate(60)"/><ellipse rx="10" ry="4" transform="rotate(120)"/></g></svg></span>' +
       '<span>React 项目实战<small>用 6 个应用学会现代 React</small></span></a>';
-    const links = CHAPTERS.map(({ n, t, part }) =>
+    const links = CHAPTERS.map(({ id, num, t, part, file }) =>
       (part ? `<div class="part">${part}</div>` : '') +
-      `<a class="ch${n === cur ? ' active' : ''}" href="${href(n)}"><span class="n">${n}</span><span>${t}</span></a>`
+      `<a class="ch${id === cur ? ' active' : ''}" href="${file}"><span class="n">${num}</span><span>${t}</span></a>`
     );
     const sw = '<a class="switch" href="../index.html">&#8644; 切换到 Vue 版教程</a>';
     side.innerHTML = brand + sw + links.join('');
@@ -185,14 +190,14 @@
 
   /* ---------- 上一章 / 下一章 ---------- */
   const pager = document.getElementById('pager');
-  if (pager && cur) {
-    const prev = CHAPTERS.find((c) => c.n === cur - 1);
-    const next = CHAPTERS.find((c) => c.n === cur + 1);
+  if (pager && curIndex !== -1) {
+    const prev = CHAPTERS[curIndex - 1];
+    const next = CHAPTERS[curIndex + 1];
     const prevLink = prev
-      ? `<a class="prev" href="${href(prev.n)}"><span>&larr; 上一章</span>第 ${prev.n} 章 · ${prev.t}</a>`
+      ? `<a class="prev" href="${prev.file}"><span>&larr; 上一章</span>${prev.label} · ${prev.t}</a>`
       : '<a class="prev" href="index.html"><span>&larr; 返回</span>课程首页</a>';
     const nextLink = next
-      ? `<a class="next" href="${href(next.n)}"><span>下一章 &rarr;</span>第 ${next.n} 章 · ${next.t}</a>`
+      ? `<a class="next" href="${next.file}"><span>下一章 &rarr;</span>${next.label} · ${next.t}</a>`
       : '<a class="next ph" href="#">.</a>';
     pager.className = 'pager';
     pager.innerHTML = prevLink + nextLink;
@@ -202,9 +207,9 @@
   const grid = document.getElementById('toc-grid');
   if (grid) {
     grid.className = 'toc-grid';
-    grid.innerHTML = CHAPTERS.map(({ n, t, d }) =>
-      `<a class="toc-card" href="${href(n)}">` +
-      `<div class="n">第 ${n} 章</div>` +
+    grid.innerHTML = CHAPTERS.map(({ label, t, d, file }) =>
+      `<a class="toc-card" href="${file}">` +
+      `<div class="n">${label}</div>` +
       `<div class="t">${t}</div>` +
       `<div class="d">${d}</div></a>`
     ).join('');
