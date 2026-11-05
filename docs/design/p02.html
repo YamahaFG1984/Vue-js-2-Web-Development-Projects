@@ -1,0 +1,1570 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>项目 2 · 记账本 — 从设计到实现</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="assets/design.css">
+</head>
+<body data-chapter="2">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">项目 2 · 第一阶段 · 状态思维</span>
+<h1>记账本</h1>
+<p class="lede">
+  番茄钟只有一个计时器，状态屈指可数。记账本是第一个真正“有数据”的应用：一条条记录、一组分类、按月汇总、按天分组、按分类筛选。
+  这一篇会是整个系列里最像 Django 的一篇：两张“表”，加上一串“查询”。你的数据建模经验会在这里派上大用场，
+  但也会看到，前端多出了一类后端几乎不用操心的状态：界面状态。
+</p>
+
+<div class="goals">
+  <h4>本篇目标</h4>
+  <ul>
+    <li>区分两类状态：<strong>领域数据</strong>（记录、分类）和<strong>界面状态</strong>（看哪个月、筛选什么、正在编辑哪条）</li>
+    <li>把派生数据组织成一条<strong>派生链</strong>，就像串起来的 QuerySet</li>
+    <li>前端也要<strong>规范化</strong>：记录只存分类 id，金额用整数“分”，日期用日历字符串</li>
+    <li><strong>表单草稿</strong>和已保存的数据分开；状态放在离使用者最近的地方</li>
+    <li>Vue 3：<code>v-for</code> 与 <code>key</code>、表单 <code>v-model</code>、用 <code>key</code> 重置组件、事件逐层转交、多个组合式函数协作</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="demo">先看成品</h2>
+
+<p>
+  演示里已经预置了几条本月的记录。试试：记一笔、点“编辑”、点支出构成里的分类做筛选、切换月份，
+  再点一下“把「餐饮」改名”，看看所有餐饮记录是不是一起变了。右边照例是实时的状态和派生数据。
+</p>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · 记账本（右侧为实时状态）</div>
+  <div class="body">
+    <div id="demo-ledger" v-cloak class="ldg">
+      <div class="ldg-main">
+        <div class="ldg-head">
+          <button class="ghost" @click="month = shift(month, -1)" aria-label="上个月">‹</button>
+          <strong>{{ month.replace('-', ' 年 ') }} 月</strong>
+          <button class="ghost" @click="month = shift(month, 1)" aria-label="下个月">›</button>
+          <button class="ghost" style="margin-left:auto" @click="toggleName">把「{{ categoryById.food.name }}」改名</button>
+        </div>
+        <div class="ldg-sum">
+          <div><small>收入</small><b class="inc">{{ money(totals.income) }}</b></div>
+          <div><small>支出</small><b class="exp">{{ money(totals.expense) }}</b></div>
+          <div><small>结余</small><b>{{ money(totals.balance) }}</b></div>
+        </div>
+        <form class="ldg-form" @submit.prevent="submit" novalidate>
+          <span class="ldg-seg">
+            <button type="button" :class="{ on: draft.type === 'expense' }" @click="setType('expense')">支出</button>
+            <button type="button" :class="{ on: draft.type === 'income' }" @click="setType('income')">收入</button>
+          </span>
+          <input v-model="draft.amountText" inputmode="decimal" placeholder="金额" style="width:90px" aria-label="金额">
+          <input v-model="draft.date" type="date" aria-label="日期">
+          <input v-model="draft.note" placeholder="备注" style="width:90px" aria-label="备注">
+          <span class="ldg-chips">
+            <button v-for="c in options" :key="c.id" type="button" :class="{ on: c.id === draft.categoryId }"
+                    :style="{ '--c': c.color }" @click="draft.categoryId = c.id">{{ c.name }}</button>
+          </span>
+          <span>
+            <button type="submit">{{ editingId ? '保存修改' : '记一笔' }}</button>
+            <button v-if="editingId" type="button" class="ghost" @click="cancelEdit" style="margin-left:6px">取消</button>
+          </span>
+          <span v-if="error" class="ldg-err">{{ error }}</span>
+        </form>
+        <div class="ldg-chart">
+          <button v-for="s in categoryStats" :key="s.category.id" type="button" :class="{ on: s.category.id === filterId }"
+                  @click="filterId = filterId === s.category.id ? null : s.category.id">
+            <span>{{ s.category.name }}</span><i><b :style="{ width: s.ratio * 100 + '%', background: s.category.color }"></b></i><span>{{ money(s.amount) }}</span>
+          </button>
+          <p v-if="!categoryStats.length" class="muted">本月还没有支出</p>
+        </div>
+        <div v-for="g in dayGroups" :key="g.date" class="ldg-day">
+          <div class="ldg-dh"><span>{{ g.date.slice(5) }}</span><small>支 {{ money(g.expense) }}<template v-if="g.income"> · 收 {{ money(g.income) }}</template></small></div>
+          <div v-for="r in g.items" :key="r.id" class="ldg-rec" :class="{ editing: r.id === editingId }">
+            <i :style="{ background: categoryById[r.categoryId]?.color }"></i>
+            <span>{{ categoryById[r.categoryId]?.name }}<small v-if="r.note"> · {{ r.note }}</small></span>
+            <b :class="categoryById[r.categoryId]?.type === 'income' ? 'inc' : 'exp'">{{ money(r.amount) }}</b>
+            <button class="ghost" @click="startEdit(r.id)">编辑</button>
+            <button class="ghost" @click="remove(r.id)">删除</button>
+          </div>
+        </div>
+        <p v-if="!dayGroups.length" class="muted">这个月没有记录</p>
+      </div>
+      <div class="pomo-state">
+        <div class="h st">领域数据</div>
+        <div><span class="k">records:</span> {{ records.length }} 条</div>
+        <div class="ldg-json">{{ lastRecord }}</div>
+        <div><span class="k">categories:</span> {{ categories.length }} 个</div>
+        <div class="h st">界面状态</div>
+        <div><span class="k">month:</span> "{{ month }}"</div>
+        <div><span class="k">filterId:</span> {{ filterId ? '"' + filterId + '"' : 'null' }}</div>
+        <div><span class="k">editingId:</span> {{ editingId ? '"' + editingId + '"' : 'null' }}</div>
+        <div class="h st" style="color:var(--green)">表单草稿</div>
+        <div class="ldg-json">{{ JSON.stringify(draft) }}</div>
+        <div class="h dv">派生</div>
+        <div><span class="k">monthRecords:</span> {{ monthRecords.length }} 条</div>
+        <div><span class="k">visibleRecords:</span> {{ visibleRecords.length }} 条</div>
+        <div><span class="k">dayGroups:</span> {{ dayGroups.length }} 组</div>
+        <div><span class="k">categoryStats:</span> {{ categoryStats.length }} 项</div>
+        <div><span class="k">totals.balance:</span> {{ totals.balance }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p>
+  留意几个细节。第一，<code>records</code> 里每条记录的 <code>amount</code> 是整数（单位是分），<code>categoryId</code> 只是一个 id，没有分类名，也没有“收入还是支出”。
+  第二，点“编辑”时，<code>editingId</code> 只记下了 id，表单编辑的是右边那份<strong>草稿</strong>；在草稿里随便改，记录本身纹丝不动，直到点“保存修改”。
+  这三个设计决定，第 5 步会一个个讲清楚来由。
+</p>
+
+<div class="box dj">
+  <div class="t">Django 对照</div>
+  <p>
+    如果用 Django 写记账本，你会建两个 Model：<code>Category</code> 和 <code>Record</code>，<code>Record.category</code> 是外键；
+    “本月按天分组”是一条 <code>filter().values('date').annotate(Sum('amount'))</code>；编辑用 <code>ModelForm(instance=record)</code>。
+    这一篇在前端做的是同一件事：同样的两张表、同样的查询、同样的“表单与模型分离”，只是全部发生在浏览器内存里。
+  </p>
+</div>
+
+<h2 id="req">第 1 步：需求与草图</h2>
+
+<ul>
+  <li>记一笔：金额、收入还是支出、分类、日期、备注</li>
+  <li>按月查看，可以切换到上个月、下个月；显示本月的收入、支出、结余</li>
+  <li>记录按天分组，新的日期在前，每天显示小计</li>
+  <li>显示本月各分类的支出占比，点一个分类就只看这个分类的记录</li>
+  <li>每条记录可以编辑、删除</li>
+  <li>刷新页面数据还在</li>
+</ul>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 316" role="img" aria-label="记账本草图：顶部月份切换，汇总卡片，左侧表单和支出构成，右侧按天分组的记录列表；六个会变的地方用编号标出">
+  <rect class="bx" x="20" y="14" width="420" height="292" rx="12"/>
+  <text class="ttl" x="36" y="40">记账本</text>
+  <text class="lbl" x="330" y="40" text-anchor="middle">‹  2026 年 11 月  ›</text>
+  <rect class="bx-d" x="32" y="52" width="128" height="34" rx="6"/>
+  <text class="sm" x="96" y="73" text-anchor="middle">收入 8,000.00</text>
+  <rect class="bx-d" x="166" y="52" width="128" height="34" rx="6"/>
+  <text class="sm" x="230" y="73" text-anchor="middle">支出 185.50</text>
+  <rect class="bx-d" x="300" y="52" width="128" height="34" rx="6"/>
+  <text class="sm" x="364" y="73" text-anchor="middle">结余 7,814.50</text>
+
+  <rect class="bx" x="32" y="96" width="150" height="122" rx="8"/>
+  <text class="sm" x="44" y="114" style="fill:var(--fg)">记一笔</text>
+  <rect class="bx-d" x="44" y="122" width="126" height="18" rx="4"/>
+  <text class="sm" x="50" y="135">129.00</text>
+  <rect class="bx-a" x="44" y="148" width="36" height="16" rx="8"/>
+  <rect class="bx-d" x="84" y="148" width="36" height="16" rx="8"/>
+  <rect class="bx-d" x="124" y="148" width="36" height="16" rx="8"/>
+  <rect class="bx-d" x="44" y="172" width="126" height="18" rx="4"/>
+  <rect class="bx-a" x="44" y="196" width="46" height="16" rx="5"/>
+
+  <rect class="bx" x="32" y="226" width="150" height="70" rx="8"/>
+  <text class="sm" x="44" y="244" style="fill:var(--fg)">支出构成</text>
+  <rect x="44" y="252" width="90" height="6" rx="3" style="fill:var(--purple)"/>
+  <rect x="44" y="266" width="40" height="6" rx="3" style="fill:var(--red)"/>
+  <rect x="44" y="280" width="10" height="6" rx="3" style="fill:var(--blue)"/>
+
+  <rect class="bx" x="192" y="96" width="236" height="200" rx="8"/>
+  <text class="sm" x="204" y="114">11月6日 周五</text><text class="sm" x="416" y="114" text-anchor="end">支 147.00</text>
+  <rect x="200" y="120" width="220" height="26" rx="4" style="fill:var(--accent-bg)"/>
+  <text class="sm" x="210" y="137" style="fill:var(--fg)">购物 · 耳机</text><text class="sm on-r" x="412" y="137" text-anchor="end">−129.00</text>
+  <text class="sm" x="210" y="164" style="fill:var(--fg)">餐饮 · 午饭</text><text class="sm on-r" x="412" y="164" text-anchor="end">−18.00</text>
+  <text class="sm" x="204" y="192">11月5日 周四</text><text class="sm" x="416" y="192" text-anchor="end">支 38.50</text>
+  <text class="sm" x="210" y="216" style="fill:var(--fg)">交通 · 地铁</text><text class="sm on-r" x="412" y="216" text-anchor="end">−6.00</text>
+  <text class="sm" x="210" y="242" style="fill:var(--fg)">餐饮 · 火锅</text><text class="sm on-r" x="412" y="242" text-anchor="end">−32.50</text>
+  <text class="sm" x="204" y="270">11月1日 周日</text><text class="sm" x="416" y="270" text-anchor="end">收 8,000.00</text>
+
+  <g class="badge">
+    <circle cx="398" cy="24" r="9" class="bx-p"/><text class="sm on-p" x="398" y="28" text-anchor="middle">1</text>
+    <circle cx="430" cy="52" r="9" class="bx-p"/><text class="sm on-p" x="430" y="56" text-anchor="middle">2</text>
+    <circle cx="182" cy="122" r="9" class="bx-p"/><text class="sm on-p" x="182" y="126" text-anchor="middle">3</text>
+    <circle cx="182" cy="236" r="9" class="bx-p"/><text class="sm on-p" x="182" y="240" text-anchor="middle">4</text>
+    <circle cx="428" cy="186" r="9" class="bx-p"/><text class="sm on-p" x="428" y="190" text-anchor="middle">5</text>
+    <circle cx="192" cy="133" r="9" class="bx-p"/><text class="sm on-p" x="192" y="137" text-anchor="middle">6</text>
+  </g>
+
+  <text class="ttl on-p" x="470" y="40">圈出来的 6 处，哪些要记住？</text>
+  <text x="470" y="80">① 正在看哪个月</text>
+  <text x="470" y="112">② 本月收入、支出、结余</text>
+  <text x="470" y="144">③ 表单里正在填的内容</text>
+  <text x="470" y="176">④ 本月各分类的支出占比</text>
+  <text x="470" y="208">⑤ 按天分组的记录、每天小计</text>
+  <text x="470" y="240">⑥ 正在编辑哪一条（高亮）</text>
+  <text class="sm" x="470" y="280">另外还有看不见的：全部记录、全部分类</text>
+</svg>
+<figcaption>图 2-1　草图：编号是会变的地方</figcaption>
+</figure>
+
+<div class="box tip">
+  <div class="t">停一下：先自己填设计卡</div>
+  <p>
+    这次多想一个问题：状态格里的东西，哪些是<strong>业务数据</strong>（换个界面也还在），哪些只是<strong>“现在怎么看”</strong>（换个界面就没意义了）？
+    再想一下：一条记录应该存哪些字段？
+  </p>
+</div>
+
+<h2 id="card">第 2 步：设计卡（第一版）</h2>
+
+<p>照例把草图上的 6 处逐个过一遍，问“要记住，还是能算出来”：</p>
+
+<div class="tw"><table>
+  <tr><th>草图上的东西</th><th>能算出来吗？</th><th>放哪一格</th></tr>
+  <tr><td>全部记录、全部分类</td><td>不能，这是用户录入的数据本身</td><td>状态：<strong>领域数据</strong></td></tr>
+  <tr><td>① 正在看哪个月</td><td>不能，用户切换的</td><td>状态：<strong>界面状态</strong> <code>month</code></td></tr>
+  <tr><td>② 收入、支出、结余</td><td>能：本月记录求和</td><td>派生 <code>totals</code></td></tr>
+  <tr><td>③ 表单里正在填的内容</td><td>不能</td><td>状态：<strong>表单草稿</strong> <code>draft</code></td></tr>
+  <tr><td>④ 各分类支出占比</td><td>能：本月支出按分类求和</td><td>派生 <code>categoryStats</code></td></tr>
+  <tr><td>⑤ 按天分组的列表</td><td>能：本月记录按日期分组</td><td>派生 <code>dayGroups</code></td></tr>
+  <tr><td>⑥ 正在编辑哪一条</td><td>不能</td><td>状态：<strong>界面状态</strong> <code>editingId</code></td></tr>
+</table></div>
+
+<p>这次的状态明显分成了几类，值得停下来看清楚：</p>
+
+<div class="cards">
+  <div class="card"><h4 style="color:var(--accent-2)">领域数据</h4><p>记录、分类。换一个界面（比如手机 App）它们也还在，需要持久化。相当于 Django 的数据库。</p></div>
+  <div class="card"><h4 style="color:var(--blue)">界面状态</h4><p>看哪个月、筛选哪个分类、正在编辑哪条。只关乎“现在怎么看”，刷新后回到默认值也无妨。相当于 <code>request.GET</code> 里的参数。</p></div>
+  <div class="card"><h4 style="color:var(--green)">表单草稿</h4><p>用户正在输入、还没提交的内容。可能不完整、不合法，提交前和领域数据毫无关系。相当于 Django 的 Form 实例。</p></div>
+</div>
+
+<p>
+  后端出身的人设计状态时，往往只想到第一类，因为在 Django 里另外两类“不用存”：<code>request.GET</code> 随请求来去，表单随 POST 提交。
+  但前端应用一直活着，这两类状态也必须有个地方放，而且它们<strong>放在哪</strong>，直接决定了组件怎么拆（第 3 步）。
+</p>
+
+<p>第一版设计卡：</p>
+
+<div class="dcard">
+  <div class="title">记账本 · 设计卡 v1<small>有三处会在第 5 步被推翻，你能先找出来吗？</small></div>
+  <div class="st"><h5>状态</h5><pre><b>领域数据</b>
+records   [{ id, amount: 32.5（元）, type: 'expense',
+             category: '餐饮', date, note }]
+<b>界面状态</b>
+month       '2026-11'
+editingId   正在编辑的记录 id，或 null
+<b>表单草稿</b>
+draft       { type, amount, category, date, note }</pre></div>
+  <div class="dv"><h5>派生</h5><pre>monthRecords  = records 里 date 属于 month 的
+totals        = monthRecords 分收入 / 支出求和
+categoryStats = monthRecords 的支出按分类求和
+dayGroups     = monthRecords 按 date 分组、倒序</pre></div>
+  <div class="ev"><h5>事件</h5><pre>提交表单  → 新增或更新记录；清空草稿
+点“编辑”  → editingId = 记录 id；草稿 = 记录的副本
+点“取消”  → editingId = null
+点“删除”  → 从 records 移除
+切换月份  → month ± 1</pre></div>
+  <div class="fx"><h5>副作用</h5><pre>records 一变 → 存进 localStorage</pre></div>
+</div>
+
+<h3 id="chain">派生链：一串 QuerySet</h3>
+
+<p>
+  派生格里的四项不是各算各的，它们有依赖关系：先从全部记录里挑出本月的，再从本月的算出合计、构成和分组。把依赖画出来：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="派生链：records 经 month 过滤得到 monthRecords，再经 filterId 筛选得到 visibleRecords，再分组得到 dayGroups；monthRecords 另外分叉出 totals 和 categoryStats">
+  <rect class="bx-d" x="205" y="12" width="130" height="30" rx="6"/>
+  <text class="sm" x="270" y="31" text-anchor="middle">界面状态 month</text>
+  <rect class="bx-d" x="405" y="12" width="130" height="30" rx="6"/>
+  <text class="sm" x="470" y="31" text-anchor="middle">界面状态 filterId</text>
+  <path class="ln" d="M270 42 V56" marker-end="url(#ar)"/>
+  <path class="ln" d="M470 42 V56" marker-end="url(#ar)"/>
+
+  <rect class="bx-a" x="20" y="60" width="130" height="44" rx="8"/>
+  <text class="mono on-a" x="85" y="79" text-anchor="middle">records</text>
+  <text class="sm" x="85" y="96" text-anchor="middle">状态：全部记录</text>
+  <rect class="bx-b" x="205" y="60" width="130" height="44" rx="8"/>
+  <text class="mono on-b" x="270" y="79" text-anchor="middle">monthRecords</text>
+  <text class="sm" x="270" y="96" text-anchor="middle">本月的记录</text>
+  <rect class="bx-b" x="405" y="60" width="130" height="44" rx="8"/>
+  <text class="mono on-b" x="470" y="79" text-anchor="middle">visibleRecords</text>
+  <text class="sm" x="470" y="96" text-anchor="middle">筛选后的记录</text>
+  <rect class="bx-b" x="605" y="60" width="135" height="44" rx="8"/>
+  <text class="mono on-b" x="672" y="79" text-anchor="middle">dayGroups</text>
+  <text class="sm" x="672" y="96" text-anchor="middle">按天分组</text>
+  <path class="ln-b" d="M150 82 H201" marker-end="url(#ar)"/>
+  <path class="ln-b" d="M335 82 H401" marker-end="url(#ar)"/>
+  <path class="ln-b" d="M535 82 H601" marker-end="url(#ar)"/>
+  <text class="sm" x="672" y="128" text-anchor="middle">→ RecordList</text>
+
+  <path class="ln-b" d="M250 104 V126 H205 V146" marker-end="url(#ar)"/>
+  <path class="ln-b" d="M290 104 V126 H355 V146" marker-end="url(#ar)"/>
+  <rect class="bx-b" x="150" y="150" width="110" height="40" rx="8"/>
+  <text class="mono on-b" x="205" y="175" text-anchor="middle">totals</text>
+  <rect class="bx-b" x="290" y="150" width="130" height="40" rx="8"/>
+  <text class="mono on-b" x="355" y="175" text-anchor="middle">categoryStats</text>
+  <text class="sm" x="205" y="210" text-anchor="middle">→ SummaryCards</text>
+  <text class="sm" x="355" y="210" text-anchor="middle">→ CategoryChart</text>
+
+  <rect class="bx-d" x="450" y="148" width="290" height="46" rx="8"/>
+  <text class="sm" x="595" y="167" text-anchor="middle">分叉点在筛选之前：</text>
+  <text class="sm" x="595" y="184" text-anchor="middle">筛选只影响列表，不影响合计和构成</text>
+</svg>
+<figcaption>图 2-2　派生链（filterId 是第 6 步变更三才加入的，这里先画上）</figcaption>
+</figure>
+
+<p>每一环都能对应到一句 Django 查询：</p>
+
+<div class="tw"><table>
+  <tr><th>前端 computed</th><th>Django 里大致相当于</th></tr>
+  <tr><td><code>records</code></td><td><code>Record.objects.all()</code></td></tr>
+  <tr><td><code>monthRecords</code></td><td><code>.filter(date__startswith='2026-11')</code></td></tr>
+  <tr><td><code>totals</code></td><td><code>.values('category__type').annotate(Sum('amount'))</code></td></tr>
+  <tr><td><code>categoryStats</code></td><td><code>.filter(category__type='expense').values('category').annotate(total=Sum('amount')).order_by('-total')</code></td></tr>
+  <tr><td><code>visibleRecords</code></td><td><code>.filter(category_id=filter_id)</code>（有筛选时）</td></tr>
+  <tr><td><code>dayGroups</code></td><td><code>.values('date').annotate(...)</code>，再在模板里用 <code>{% regroup %}</code></td></tr>
+</table></div>
+
+<p>
+  区别在于：Django 的 QuerySet 每个请求重新求值一次；而 <code>computed</code> 会<strong>缓存</strong>结果，只有它依赖的东西变了才重算。
+  切换月份时，<code>monthRecords</code> 和下游全部重算；只改了筛选时，<code>monthRecords</code>、<code>totals</code>、<code>categoryStats</code> 都不会重算，只有 <code>visibleRecords</code> 和 <code>dayGroups</code> 会。
+  这条依赖链画清楚了，性能和正确性都有保证。
+</p>
+
+<h2 id="components">第 3 步：组件拆分</h2>
+
+<p>
+  上一篇的规则是“状态放在所有用到它的组件的最近公共祖先上”。这一篇补上另一半：<strong>也不要放得比需要的更高</strong>。
+  表单草稿只有表单自己用，那它就该是表单组件<strong>自己的</strong>状态，App 根本不需要知道用户正在敲什么。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 316" role="img" aria-label="组件树：App 持有领域数据和界面状态；RecordForm 自己持有表单草稿；其余子组件通过 props 接收数据、通过事件报告操作">
+  <rect class="bx-a" x="150" y="14" width="460" height="72" rx="12"/>
+  <text class="ttl on-a" x="380" y="38" text-anchor="middle">App</text>
+  <text class="sm on-a" x="380" y="58" text-anchor="middle">领域数据（useLedger）：records · categories</text>
+  <text class="sm on-b" x="380" y="76" text-anchor="middle">界面状态：month · filterId · editingId · showManager</text>
+  <path class="ln" d="M380 86 V118"/>
+  <path class="ln" d="M70 118 H690"/>
+  <path class="ln" d="M70 118 V146" marker-end="url(#ar)"/>
+  <path class="ln" d="M194 118 V146" marker-end="url(#ar)"/>
+  <path class="ln" d="M318 118 V146" marker-end="url(#ar)"/>
+  <path class="ln" d="M442 118 V146" marker-end="url(#ar)"/>
+  <path class="ln" d="M566 118 V146" marker-end="url(#ar)"/>
+  <path class="ln" d="M690 118 V146" marker-end="url(#ar)"/>
+
+  <rect class="bx" x="14" y="150" width="112" height="86" rx="9"/>
+  <text class="ttl" x="70" y="172" text-anchor="middle" style="font-size:12px">MonthSwitcher</text>
+  <text class="sm on-b" x="70" y="194" text-anchor="middle">↓ v-model month</text>
+  <text class="sm on-p" x="70" y="212" text-anchor="middle">↑ update:month</text>
+
+  <rect class="bx" x="138" y="150" width="112" height="86" rx="9"/>
+  <text class="ttl" x="194" y="172" text-anchor="middle" style="font-size:12px">SummaryCards</text>
+  <text class="sm on-b" x="194" y="194" text-anchor="middle">↓ totals</text>
+  <text class="sm" x="194" y="212" text-anchor="middle">↑ 无</text>
+
+  <rect class="bx-g" x="262" y="150" width="112" height="86" rx="9"/>
+  <text class="ttl on-g" x="318" y="172" text-anchor="middle" style="font-size:12px">RecordForm</text>
+  <text class="sm on-b" x="318" y="190" text-anchor="middle">↓ categories, initial</text>
+  <text class="sm on-p" x="318" y="207" text-anchor="middle">↑ submit / cancel</text>
+  <text class="sm on-g" x="318" y="226" text-anchor="middle" style="font-weight:700">自己的状态：draft</text>
+
+  <rect class="bx" x="386" y="150" width="112" height="86" rx="9"/>
+  <text class="ttl" x="442" y="172" text-anchor="middle" style="font-size:12px">CategoryChart</text>
+  <text class="sm on-b" x="442" y="194" text-anchor="middle">↓ stats, selectedId</text>
+  <text class="sm on-p" x="442" y="212" text-anchor="middle">↑ select</text>
+
+  <rect class="bx" x="510" y="150" width="112" height="86" rx="9"/>
+  <text class="ttl" x="566" y="172" text-anchor="middle" style="font-size:12px">RecordList</text>
+  <text class="sm on-b" x="566" y="194" text-anchor="middle">↓ groups, editingId</text>
+  <text class="sm on-p" x="566" y="212" text-anchor="middle">↑ edit / remove</text>
+
+  <rect class="bx" x="634" y="150" width="112" height="86" rx="9"/>
+  <text class="ttl" x="690" y="172" text-anchor="middle" style="font-size:11.5px">CategoryManager</text>
+  <text class="sm on-b" x="690" y="194" text-anchor="middle">↓ categories, usage</text>
+  <text class="sm on-p" x="690" y="212" text-anchor="middle">↑ update / remove</text>
+
+  <path class="ln" d="M566 236 V258" marker-end="url(#ar)"/>
+  <rect class="bx" x="510" y="262" width="112" height="44" rx="9"/>
+  <text class="ttl" x="566" y="280" text-anchor="middle" style="font-size:12px">RecordItem</text>
+  <text class="sm on-p" x="566" y="297" text-anchor="middle">↑ edit / remove</text>
+
+  <rect class="bx-a" x="20" y="268" width="14" height="14" rx="3"/><text class="sm" x="40" y="280">领域数据</text>
+  <rect class="bx-b" x="110" y="268" width="14" height="14" rx="3"/><text class="sm" x="130" y="280">界面状态</text>
+  <rect class="bx-g" x="200" y="268" width="14" height="14" rx="3"/><text class="sm" x="220" y="280">组件自己的局部状态</text>
+  <text class="sm" x="20" y="302">RecordItem 的事件经 RecordList 原样转交给 App</text>
+</svg>
+<figcaption>图 2-3　组件树和状态的位置</figcaption>
+</figure>
+
+<p>和番茄钟相比，这里多了三个值得注意的地方：</p>
+<ol class="steps">
+  <li><strong>草稿放在 RecordForm 里。</strong>用户每敲一个键，只有表单自己重新渲染；只有点“保存”时，表单才通过 <code>submit</code> 事件交出一份完整、合法的数据。
+    App 拿到的永远是“干净”的结果，这就是“状态放在离使用者最近的地方”。</li>
+  <li><strong>事件可以逐层转交。</strong>“删除”按钮在 RecordItem 里，但删除操作要由持有 <code>records</code> 的 App 来做。
+    RecordItem 发出 <code>remove</code>，RecordList 收到后原样再发一次，App 才收到。层数多了这会很啰嗦，后面的项目会介绍 <code>provide</code> / <code>inject</code> 和 Pinia；但两三层以内，老老实实转交最清楚。</li>
+  <li><strong>RecordItem 接收的是查好的分类对象</strong>，而不是整个 <code>categoryById</code>。子组件只拿自己需要的东西，接口越窄越好复用。</li>
+</ol>
+
+<h2 id="static">第 4 步：静态原型</h2>
+
+<p>
+  做法和上一篇一样：先把草图翻成写死数据的模板，再逐个检查写死的值来自设计卡的哪一格。这一步代码比较长，就不贴了（结构和最终模板一样），只看对照表：
+</p>
+
+<div class="tw"><table>
+  <tr><th>原型里写死的值</th><th>将来从哪里来</th></tr>
+  <tr><td>“2026 年 11 月”</td><td><code>month</code>（界面状态）</td></tr>
+  <tr><td>“收入 8,000.00”等三个数</td><td><code>totals</code>（派生）</td></tr>
+  <tr><td>表单输入框里的 “129.00”</td><td><code>draft.amountText</code>（表单草稿）</td></tr>
+  <tr><td>三根长短不一的横条</td><td><code>categoryStats</code>（派生）</td></tr>
+  <tr><td>“11月6日 周五 · 支 147.00”</td><td><code>dayGroups</code> 的一项（派生）</td></tr>
+  <tr><td>“购物 · 耳机”那一行的高亮背景</td><td><code>r.id === editingId</code>（由界面状态派生）</td></tr>
+  <tr><td>“购物”两个字和它的紫色</td><td>？？？</td></tr>
+</table></div>
+
+<p>
+  最后一行是个伏笔：分类的名字和颜色存在哪？设计卡 v1 里记录上只有 <code>category: '餐饮'</code> 这个名字，颜色根本无处可存。
+  原型和设计卡的互相校对，又一次提前暴露了问题。我们先带着它往下走，5.3 节解决。
+</p>
+
+<h2 id="impl">第 5 步：逐步实现</h2>
+
+<h3 id="s1">5.1 记一笔，显示列表</h3>
+<div class="flow"><span>需求：能记一笔、看到列表和合计</span><i>→</i><span class="on">设计卡 v1，不用改</span><i>→</i><span>代码</span></div>
+
+<p>先不拆组件，全部写在 App.vue 里，照着设计卡 v1 翻译：</p>
+
+<div class="code" data-lang="vue" data-file="src/App.vue（5.1 朴素版）"><pre>
+&lt;script setup&gt;
+import { ref, computed } from 'vue'
+import { today } from './utils/date'
+
+const CATEGORIES = ['餐饮', '交通', '购物', '工资']
+const records = ref([])
+const draft = ref({ type: 'expense', amount: 0, category: '餐饮', date: today(), note: '' })
+
+const expense = computed(() =&gt; records.value
+  .filter((r) =&gt; r.type === 'expense')
+  .reduce((sum, r) =&gt; sum + r.amount, 0))
+
+function addRecord() {
+  records.value.push({ id: crypto.randomUUID(), ...draft.value })
+  draft.value = { ...draft.value, amount: 0, note: '' } // 保留类型、分类、日期，方便连续记账
+}
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;form @submit.prevent="addRecord"&gt;
+    &lt;select v-model="draft.type"&gt;&lt;option value="expense"&gt;支出&lt;/option&gt;&lt;option value="income"&gt;收入&lt;/option&gt;&lt;/select&gt;
+    &lt;input v-model.number="draft.amount" type="number" step="0.01"&gt;
+    &lt;select v-model="draft.category"&gt;&lt;option v-for="c in CATEGORIES" :key="c"&gt;{{ c }}&lt;/option&gt;&lt;/select&gt;
+    &lt;input v-model="draft.date" type="date"&gt;
+    &lt;input v-model="draft.note" placeholder="备注"&gt;
+    &lt;button&gt;保存&lt;/button&gt;
+  &lt;/form&gt;
+  &lt;p&gt;支出合计：{{ expense }}&lt;/p&gt;
+  &lt;ul&gt;
+    &lt;li v-for="r in records" :key="r.id"&gt;{{ r.date }} {{ r.category }} {{ r.amount }} {{ r.note }}&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>
+  注意 <code>v-for</code> 上的 <code>:key="r.id"</code>：它告诉 Vue 每一行对应哪条记录。以后删除中间某条、或者列表重新排序时，Vue 靠 key 认出“这一行还是那条记录”，
+  而不是按位置复用 DOM，从而避免输入框内容错位等怪问题。<strong>key 要用数据自己的 id，不要用数组下标</strong>，这也是记录需要一个 <code>id</code> 字段的原因之一。
+</p>
+
+<h3 id="wall1">撞墙一：0.1 + 0.2 = 0.30000000000000004</h3>
+
+<p>记两笔支出：0.1 元和 0.2 元。合计显示：</p>
+
+<div class="code" data-lang="text"><pre>
+支出合计：0.30000000000000004
+</pre></div>
+
+<p>
+  这不是 Vue 的问题，而是所有使用 IEEE 754 浮点数的语言都会有的问题：0.1 和 0.2 在二进制里都是无限循环小数，存进去就已经有误差了。
+  Python 里 <code>0.1 + 0.2</code> 也是这个结果，所以 Django 里存钱用的是 <code>DecimalField</code>。
+  JavaScript 没有内置的十进制数类型，通行做法是：<strong>用整数“分”存储和计算，只在输入和显示时换算成“元”</strong>。
+  整数在 2<sup>53</sup> 以内是精确的，加减永远不会出错。
+</p>
+
+<p>
+  输入框也要跟着改。<code>v-model.number</code> 会把输入立刻转成浮点数，“12.” 这种输入到一半的内容会被转成 12，用户输入的原样文本也就丢了。
+  草稿里应该保留<strong>用户敲的原始文本</strong> <code>amountText</code>，提交时再解析成分：
+</p>
+
+<div class="code" data-lang="js" data-file="src/utils/money.js"><pre>
+// 金额一律用“分”（整数）存储和计算，只在输入和显示时与“元”互相转换。
+// 原因：0.1 + 0.2 === 0.30000000000000004，浮点数不适合表示钱。
+
+/** 把用户输入的“元”文本转成分；格式不对返回 null。'12.5' → 1250 */
+export function parseYuan(text) {
+  const m = /^\s*(\d{1,9})(?:\.(\d{1,2}))?\s*$/.exec(text)
+  if (!m) return null
+  return Number(m[1]) * 100 + Number((m[2] ?? '').padEnd(2, '0'))
+}
+
+/** 分 → 便于编辑的“元”文本。1250 → '12.50' */
+export function centsToText(cents) {
+  return `${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, '0')}`
+}
+
+const fmt = new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' })
+/** 分 → 显示用的金额。1250 → '¥12.50' */
+export const formatCents = (cents) =&gt; fmt.format(cents / 100)
+</pre></div>
+
+<div class="dcard">
+  <div class="title">设计卡 v2 · 金额<small>推翻第一处</small></div>
+  <div class="st"><h5>状态</h5><pre>records  [{ ..., amount: <del>32.5（元）</del> <ins>3250（分，整数）</ins> }]
+draft    { ..., <del>amount</del> <ins>amountText: '32.5'（原始文本）</ins> }</pre></div>
+  <div class="dv"><h5>派生</h5><pre><ins>draft 里的金额 = parseYuan(amountText)，格式不对为 null</ins>
+<ins>显示 = formatCents(分)</ins></pre></div>
+  <div class="ev"><h5>事件</h5><pre>提交表单 → <ins>先解析金额，不合法就不提交</ins></pre></div>
+  <div class="fx"><h5>副作用</h5><pre>不变</pre></div>
+</div>
+
+<div class="box note">
+  <div class="t">日期也有同样的陷阱</div>
+  <p>
+    “哪一天”是日历上的日期，不是时间轴上的某个时刻。<code>new Date('2026-11-06')</code> 会被当成 <strong>UTC</strong> 零点解析，
+    在美洲的时区里显示出来就是 11 月 5 日。所以记录的 <code>date</code> 直接存 <code>'2026-11-06'</code> 这样的字符串
+    （正好也是 <code>&lt;input type="date"&gt;</code> 的值格式），比较大小、按月过滤都用字符串操作。
+    这和 Django 区分 <code>DateField</code> 与 <code>DateTimeField</code> 是一个道理。
+  </p>
+</div>
+
+<div class="code" data-lang="js" data-file="src/utils/date.js"><pre>
+// “哪一天”用 'YYYY-MM-DD' 字符串存储：它是日历上的日期，不是某个时刻，
+// 存成时间戳或 Date 会被时区换算成前一天或后一天。
+
+/** 本地时区的今天，形如 '2026-11-06' */
+export const today = () =&gt; new Date().toLocaleDateString('sv')
+
+/** '2026-11-06' → '2026-11' */
+export const monthOf = (date) =&gt; date.slice(0, 7)
+
+/** 月份加减：shiftMonth('2026-01', -1) → '2025-12' */
+export function shiftMonth(month, delta) {
+  const [y, m] = month.split('-').map(Number)
+  const d = new Date(y, m - 1 + delta, 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+const WEEK = '日一二三四五六'
+/** '2026-11-06' → '11月6日 周五' */
+export function formatDay(date) {
+  const [y, m, d] = date.split('-').map(Number)
+  return `${m}月${d}日 周${WEEK[new Date(y, m - 1, d).getDay()]}`
+}
+</pre></div>
+
+<h3 id="s2">5.2 按月查看，按天分组</h3>
+<div class="flow"><span>需求：按月看、按天分组、显示收支结余</span><i>→</i><span class="on">设计卡 v1 已有派生链</span><i>→</i><span>代码</span></div>
+
+<p>
+  界面状态 <code>month</code> 是一个普通的 <code>ref</code>。切换月份的小组件用 <code>defineModel</code>，父组件写 <code>v-model="month"</code> 就行：
+</p>
+
+<div class="code" data-lang="vue" data-file="src/components/MonthSwitcher.vue"><pre>
+&lt;script setup&gt;
+import { shiftMonth } from '../utils/date'
+
+const month = defineModel({ type: String, required: true }) // 'YYYY-MM'
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="month-switcher"&gt;
+    &lt;button class="ghost" aria-label="上个月" @click="month = shiftMonth(month, -1)"&gt;‹&lt;/button&gt;
+    &lt;strong&gt;{{ month.replace('-', ' 年 ') }} 月&lt;/strong&gt;
+    &lt;button class="ghost" aria-label="下个月" @click="month = shiftMonth(month, 1)"&gt;›&lt;/button&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>然后把派生链一环一环写成 <code>computed</code>（这里还是 v1 的数据结构，记录上有 <code>type</code>）：</p>
+
+<div class="code" data-lang="js" data-file="src/App.vue（5.2 派生链）"><pre>
+const month = ref(monthOf(today()))
+
+const monthRecords = computed(() =&gt; records.value.filter((r) =&gt; monthOf(r.date) === month.value))
+
+const totals = computed(() =&gt; {
+  let income = 0
+  let expense = 0
+  for (const r of monthRecords.value) {
+    if (r.type === 'income') income += r.amount
+    else expense += r.amount
+  }
+  return { income, expense, balance: income - expense }
+})
+
+const dayGroups = computed(() =&gt; {
+  const groups = new Map()
+  for (const r of monthRecords.value) {
+    if (!groups.has(r.date)) groups.set(r.date, { date: r.date, items: [], income: 0, expense: 0 })
+    const g = groups.get(r.date)
+    g.items.unshift(r) // 同一天里后记的在前
+    if (r.type === 'income') g.income += r.amount
+    else g.expense += r.amount
+  }
+  return [...groups.values()].sort((a, b) =&gt; b.date.localeCompare(a.date))
+})
+</pre></div>
+
+<p>模板里用两层 <code>v-for</code> 渲染分组：</p>
+
+<div class="code" data-lang="vue"><pre>
+&lt;div v-for="g in dayGroups" :key="g.date"&gt;
+  &lt;h4&gt;{{ formatDay(g.date) }} &lt;small&gt;支 {{ formatCents(g.expense) }}&lt;/small&gt;&lt;/h4&gt;
+  &lt;ul&gt;
+    &lt;li v-for="r in g.items" :key="r.id"&gt;{{ r.category }} {{ formatCents(r.amount) }}&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/div&gt;
+</pre></div>
+
+<div class="box tip">
+  <div class="t">一个 computed 只做一件事</div>
+  <p>
+    也可以写一个大 <code>computed</code>，一次循环把过滤、求和、分组全做完。但拆成一环一环有两个好处：每一环都能单独看懂、单独测试；
+    而且缓存的粒度更细，某一环的输入没变，它就不会重算。这和把一个复杂 SQL 拆成几个有名字的子查询是同一种思路。
+  </p>
+</div>
+
+<h3 id="s3">5.3 分类：撞墙二，前端也要规范化</h3>
+<div class="flow"><span>需求：分类有图标和颜色，显示支出构成</span><i>→</i><span class="on">改设计卡</span><i>→</i><span>代码</span></div>
+
+<p>
+  第 4 步留下的伏笔来了：每个分类要有图标和颜色。按 v1 的结构，记录上只有分类名 <code>category: '餐饮'</code>，那颜色存哪？
+  最顺手的做法是“在记录上再加两个字段”：
+</p>
+
+<div class="code" data-lang="js"><pre>
+{ id: 'r1', amount: 3250, type: 'expense', category: '餐饮', icon: '🍜', color: '#e8590c', date: '2026-11-05' }
+</pre></div>
+
+<p>如果你在 Django 里看到有人这样建表，你会立刻指出问题：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="左：每条记录都抄一份分类名称、颜色、类型，改名要改所有行；右：分类单独存放，记录只存 categoryId">
+  <rect class="bx-d" x="20" y="14" width="340" height="246" rx="12" style="fill:none"/>
+  <text class="ttl on-r" x="190" y="38" text-anchor="middle">✗ 每条记录抄一份分类信息</text>
+  <rect class="bx" x="36" y="52" width="308" height="24"/>
+  <text class="sm" x="76" y="68" text-anchor="middle">amount</text>
+  <text class="sm" x="146" y="68" text-anchor="middle">category</text>
+  <text class="sm" x="226" y="68" text-anchor="middle">color</text>
+  <text class="sm" x="306" y="68" text-anchor="middle">type</text>
+  <rect class="bx" x="36" y="76" width="308" height="24"/>
+  <text class="mono sm" x="76" y="92" text-anchor="middle" style="fill:var(--fg)">3250</text>
+  <text class="sm on-r" x="146" y="92" text-anchor="middle">餐饮</text>
+  <text class="mono sm on-r" x="226" y="92" text-anchor="middle">#e8590c</text>
+  <text class="sm on-r" x="306" y="92" text-anchor="middle">expense</text>
+  <rect class="bx" x="36" y="100" width="308" height="24"/>
+  <text class="mono sm" x="76" y="116" text-anchor="middle" style="fill:var(--fg)">600</text>
+  <text class="sm" x="146" y="116" text-anchor="middle" style="fill:var(--fg)">交通</text>
+  <text class="mono sm" x="226" y="116" text-anchor="middle" style="fill:var(--fg)">#1c7ed6</text>
+  <text class="sm" x="306" y="116" text-anchor="middle" style="fill:var(--fg)">expense</text>
+  <rect class="bx" x="36" y="124" width="308" height="24"/>
+  <text class="mono sm" x="76" y="140" text-anchor="middle" style="fill:var(--fg)">1800</text>
+  <text class="sm on-r" x="146" y="140" text-anchor="middle">餐饮</text>
+  <text class="mono sm on-r" x="226" y="140" text-anchor="middle">#e8590c</text>
+  <text class="sm on-r" x="306" y="140" text-anchor="middle">expense</text>
+  <text class="sm" x="190" y="180" text-anchor="middle">“餐饮”的名称、颜色、类型抄了两遍</text>
+  <text class="sm on-r" x="190" y="204" text-anchor="middle">改名 → 要改所有餐饮记录，漏一条就对不上</text>
+  <text class="sm on-r" x="190" y="228" text-anchor="middle">而且 type 其实由分类决定，存在记录上也是冗余</text>
+
+  <rect class="bx-a" x="400" y="14" width="340" height="246" rx="12" style="fill:none"/>
+  <text class="ttl on-a" x="570" y="38" text-anchor="middle">✓ 分类单独存放，记录只存 id</text>
+  <text class="sm on-a" x="420" y="58">categories</text>
+  <rect class="bx" x="420" y="64" width="304" height="22"/>
+  <text class="sm" x="462" y="79" text-anchor="middle">id</text>
+  <text class="sm" x="532" y="79" text-anchor="middle">name</text>
+  <text class="sm" x="606" y="79" text-anchor="middle">color</text>
+  <text class="sm" x="684" y="79" text-anchor="middle">type</text>
+  <rect class="bx-a" x="420" y="86" width="304" height="22"/>
+  <text class="mono sm on-a" x="462" y="101" text-anchor="middle">food</text>
+  <text class="sm" x="532" y="101" text-anchor="middle" style="fill:var(--fg)">餐饮</text>
+  <text class="mono sm" x="606" y="101" text-anchor="middle" style="fill:var(--fg)">#e8590c</text>
+  <text class="sm" x="684" y="101" text-anchor="middle" style="fill:var(--fg)">expense</text>
+  <rect class="bx" x="420" y="108" width="304" height="22"/>
+  <text class="mono sm" x="462" y="123" text-anchor="middle" style="fill:var(--fg)">transport</text>
+  <text class="sm" x="532" y="123" text-anchor="middle" style="fill:var(--fg)">交通</text>
+  <text class="mono sm" x="606" y="123" text-anchor="middle" style="fill:var(--fg)">#1c7ed6</text>
+  <text class="sm" x="684" y="123" text-anchor="middle" style="fill:var(--fg)">expense</text>
+
+  <text class="sm on-a" x="520" y="162">records</text>
+  <rect class="bx" x="520" y="168" width="204" height="22"/>
+  <text class="sm" x="556" y="183" text-anchor="middle">amount</text>
+  <text class="sm" x="624" y="183" text-anchor="middle">categoryId</text>
+  <text class="sm" x="694" y="183" text-anchor="middle">date</text>
+  <rect class="bx" x="520" y="190" width="204" height="22"/>
+  <text class="mono sm" x="556" y="205" text-anchor="middle" style="fill:var(--fg)">3250</text>
+  <text class="mono sm on-a" x="624" y="205" text-anchor="middle">food</text>
+  <text class="mono sm" x="694" y="205" text-anchor="middle" style="fill:var(--fg)">11-05</text>
+  <rect class="bx" x="520" y="212" width="204" height="22"/>
+  <text class="mono sm" x="556" y="227" text-anchor="middle" style="fill:var(--fg)">600</text>
+  <text class="mono sm" x="624" y="227" text-anchor="middle" style="fill:var(--fg)">transport</text>
+  <text class="mono sm" x="694" y="227" text-anchor="middle" style="fill:var(--fg)">11-05</text>
+  <rect class="bx" x="520" y="234" width="204" height="22"/>
+  <text class="mono sm" x="556" y="249" text-anchor="middle" style="fill:var(--fg)">1800</text>
+  <text class="mono sm on-a" x="624" y="249" text-anchor="middle">food</text>
+  <text class="mono sm" x="694" y="249" text-anchor="middle" style="fill:var(--fg)">11-06</text>
+  <path class="ln-a" d="M520 201 H424 Q410 201 410 187 V111 Q410 97 416 97" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M520 245 H424 Q410 245 410 231 V201"/>
+  <text class="halo sm on-a" x="462" y="194" text-anchor="middle">外键 categoryId</text>
+</svg>
+<figcaption>图 2-4　冗余存储 vs 规范化存储</figcaption>
+</figure>
+
+<p>
+  这就是数据库课上讲的规范化，你在 Django 里会用 <code>ForeignKey</code> 解决它。前端完全照搬：分类单独存一份 <code>categories</code>，记录只存 <code>categoryId</code>。
+  而且顺带发现了第三处问题：<strong>收入还是支出，是由分类决定的</strong>（“工资”不可能是支出），记录上的 <code>type</code> 也是冗余，删掉。
+</p>
+
+<div class="dcard">
+  <div class="title">设计卡 v3 · 分类<small>推翻第二、三处</small></div>
+  <div class="st"><h5>状态</h5><pre><ins>categories [{ id, name, icon, color, type }]</ins>
+records    [{ id, amount, <del>type, category: '餐饮'</del>
+              <ins>categoryId: 'food'</ins>, date, note }]
+draft      { <ins>type（只用来过滤可选分类，不保存）</ins>, ... }</pre></div>
+  <div class="dv"><h5>派生</h5><pre><ins>categoryById = categories 按 id 建的索引</ins>
+totals / dayGroups 里判断收支：
+  <del>r.type</del> → <ins>categoryById[r.categoryId].type</ins>
+<ins>表单里可选的分类 = categories 中 type 与草稿一致的</ins></pre></div>
+  <div class="ev"><h5>事件</h5><pre>不变</pre></div>
+  <div class="fx"><h5>副作用</h5><pre><ins>categories 也要持久化</ins></pre></div>
+</div>
+
+<p>
+  注意草稿里还留着一个 <code>type</code>：表单上有“支出 / 收入”两个按钮，用来决定显示哪些分类可选。但它只是<strong>草稿的状态</strong>，提交时不会存进记录。
+  同一个概念，在表单里是状态，在记录里是派生，这很常见。
+</p>
+
+<p><code>categoryById</code> 相当于给外键建了一个索引，查一个分类不用每次遍历数组。用到收支类型的地方都改成通过它查：</p>
+
+<div class="code" data-lang="js"><pre>
+const categoryById = computed(() =&gt; Object.fromEntries(categories.value.map((c) =&gt; [c.id, c])))
+
+// totals 里
+if (categoryById.value[r.categoryId]?.type === 'income') income += r.amount
+</pre></div>
+
+<p>
+  支出构成 <code>categoryStats</code> 也是派生链上的一环，写法和 <code>totals</code> 类似，最终版见第 7 步的 <code>useMonthView</code>。
+  展示它的组件只管画：
+</p>
+
+<div class="code" data-lang="vue" data-file="src/components/CategoryChart.vue"><pre>
+&lt;script setup&gt;
+import { formatCents } from '../utils/money'
+
+defineProps({
+  stats: { type: Array, required: true }, // [{ category, amount, ratio }]
+  selectedId: { type: String, default: null },
+})
+const emit = defineEmits(['select'])
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;section class="panel"&gt;
+    &lt;h3&gt;支出构成 &lt;small&gt;点击分类可筛选&lt;/small&gt;&lt;/h3&gt;
+    &lt;p v-if="!stats.length" class="empty"&gt;本月还没有支出&lt;/p&gt;
+    &lt;button v-for="s in stats" :key="s.category.id" type="button" class="bar-row"
+            :class="{ on: s.category.id === selectedId }" @click="emit('select', s.category.id)"&gt;
+      &lt;span class="name"&gt;{{ s.category.icon }} {{ s.category.name }}&lt;/span&gt;
+      &lt;span class="bar"&gt;&lt;i :style="{ width: s.ratio * 100 + '%', background: s.category.color }" /&gt;&lt;/span&gt;
+      &lt;span class="num"&gt;{{ formatCents(s.amount) }}&lt;/span&gt;
+    &lt;/button&gt;
+  &lt;/section&gt;
+&lt;/template&gt;
+</pre></div>
+
+<h3 id="s4">5.4 编辑与删除：草稿和数据分开</h3>
+<div class="flow"><span>需求：每条记录可以编辑、删除</span><i>→</i><span class="on">细化设计卡</span><i>→</i><span>代码</span></div>
+
+<p>
+  编辑最省事的写法，是让表单直接 <code>v-model</code> 到那条记录的字段上，Markdown 笔记本就是这么做的。但记账本这样做会出问题：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 236" role="img" aria-label="左：表单直接绑定记录，每次按键都改真实数据；右：打开编辑时复制一份草稿，表单绑定草稿，保存时才写回，取消则丢弃">
+  <rect class="bx-d" x="20" y="14" width="340" height="212" rx="12" style="fill:none"/>
+  <text class="ttl on-r" x="190" y="38" text-anchor="middle">✗ 表单直接 v-model 到记录上</text>
+  <rect class="bx" x="40" y="58" width="120" height="40" rx="8"/>
+  <text class="ttl" x="100" y="83" text-anchor="middle">表单输入框</text>
+  <rect class="bx-a" x="220" y="58" width="120" height="40" rx="8"/>
+  <text class="ttl on-a" x="280" y="83" text-anchor="middle">那条记录</text>
+  <path class="ln-r" d="M164 78 H216" marker-end="url(#ar)" marker-start="url(#ar)"/>
+  <text class="halo sm on-r" x="190" y="70" text-anchor="middle">直接绑定</text>
+  <text class="sm on-r" x="190" y="130" text-anchor="middle">每敲一个键，就改一次真实数据</text>
+  <text class="sm on-r" x="190" y="154" text-anchor="middle">输入到一半的“12.”也被存了下来</text>
+  <text class="sm on-r" x="190" y="178" text-anchor="middle">合计、构成跟着每次按键跳动</text>
+  <text class="sm on-r" x="190" y="202" text-anchor="middle">点“取消”时，已经改不回去了</text>
+
+  <rect class="bx-a" x="400" y="14" width="340" height="212" rx="12" style="fill:none"/>
+  <text class="ttl on-a" x="570" y="38" text-anchor="middle">✓ 编辑草稿，保存时才写回</text>
+  <rect class="bx-a" x="414" y="58" width="116" height="40" rx="8"/>
+  <text class="ttl on-a" x="472" y="83" text-anchor="middle">那条记录</text>
+  <rect class="bx-g" x="610" y="58" width="116" height="40" rx="8"/>
+  <text class="ttl on-g" x="668" y="83" text-anchor="middle">草稿 draft</text>
+  <rect class="bx" x="610" y="150" width="116" height="40" rx="8"/>
+  <text class="ttl" x="668" y="175" text-anchor="middle">表单输入框</text>
+  <path class="ln-a" d="M530 70 H606" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="568" y="62" text-anchor="middle">打开时复制</text>
+  <path class="ln-a" d="M610 88 H534" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="572" y="106" text-anchor="middle">保存时写回</text>
+  <path class="ln-g" d="M668 102 V146" marker-end="url(#ar)" marker-start="url(#ar)"/>
+  <text class="halo sm on-g" x="676" y="128">v-model</text>
+  <path class="ln-d" d="M606 170 H540" marker-end="url(#ar)"/>
+  <text class="sm" x="472" y="166" text-anchor="middle">点“取消”：</text>
+  <text class="sm" x="472" y="182" text-anchor="middle">草稿直接丢弃</text>
+  <text class="sm on-a" x="570" y="214" text-anchor="middle">记录只在点“保存”那一刻、以合法的值改变一次</text>
+</svg>
+<figcaption>图 2-5　直接绑定 vs 草稿副本</figcaption>
+</figure>
+
+<p>
+  笔记本可以直接绑定，是因为“边打字边保存”正是它想要的行为，而且任何文本都合法。记账本的记录要经过<strong>校验</strong>，修改也需要能<strong>取消</strong>，所以要用草稿。
+  判断标准很简单：<strong>数据有没有“提交”这个动作？</strong>有，就需要草稿。
+</p>
+
+<div class="box dj">
+  <div class="t">Django 对照</div>
+  <p>
+    这正是 Django 里 Form 和 Model 的关系：<code>form = RecordForm(request.POST, instance=record)</code>，
+    用户提交的数据先进 Form，<code>is_valid()</code> 通过了才 <code>form.save()</code> 写回 Model。
+    你从来不会让 HTML 输入框直接改数据库，前端也一样。
+  </p>
+</div>
+
+<p>设计卡里还要定两件事：</p>
+<ul>
+  <li><strong>编辑状态存 id，不存副本</strong>：<code>editingId</code> 只是一个 id，“正在编辑的记录”由它派生：<code>records.find(r => r.id === editingId)</code>。
+    这又是规范化：如果把整条记录复制一份存成 <code>editingRecord</code>，就有了两份数据。而且派生的写法还有一个附带的好处：正在编辑的记录被删掉时，它自动变成 <code>null</code>，表单自动关闭，不用写任何同步代码。</li>
+  <li><strong>草稿属于表单组件</strong>：RecordForm 接收 <code>initial</code>（要编辑的记录，新增时为 <code>null</code>），自己复制出草稿，校验通过后 <code>emit('submit', 数据)</code>。</li>
+</ul>
+
+<div class="code" data-lang="vue" data-file="src/components/RecordForm.vue"><pre>
+&lt;script setup&gt;
+import { ref, computed } from 'vue'
+import { parseYuan, centsToText } from '../utils/money'
+import { today } from '../utils/date'
+
+const props = defineProps({
+  categories: { type: Array, required: true },
+  initial: { type: Object, default: null }, // 编辑时传入原记录；新增时为 null
+})
+const emit = defineEmits(['submit', 'cancel'])
+
+// ---- 草稿：表单自己的局部状态，提交之前和记录本身毫无关系 ----
+function toDraft(r) {
+  if (!r) {
+    const first = props.categories.find((c) =&gt; c.type === 'expense')
+    return { type: 'expense', amountText: '', categoryId: first?.id ?? '', date: today(), note: '' }
+  }
+  const type = props.categories.find((c) =&gt; c.id === r.categoryId)?.type ?? 'expense'
+  return { type, amountText: centsToText(r.amount), categoryId: r.categoryId, date: r.date, note: r.note }
+}
+const draft = ref(toDraft(props.initial))
+const submitted = ref(false) // 点过“保存”之后才显示错误，别一打开就满屏红字
+
+// ---- 派生：可选的分类、解析后的金额、校验错误 ----
+const options = computed(() =&gt; props.categories.filter((c) =&gt; c.type === draft.value.type))
+const amount = computed(() =&gt; parseYuan(draft.value.amountText))
+const errors = computed(() =&gt; {
+  const e = {}
+  if (amount.value === null) e.amount = '请输入金额，最多两位小数'
+  else if (amount.value === 0) e.amount = '金额不能为 0'
+  if (!options.value.some((c) =&gt; c.id === draft.value.categoryId)) e.category = '请选择分类'
+  if (!draft.value.date) e.date = '请选择日期'
+  return e
+})
+
+// ---- 事件 ----
+function setType(type) {
+  draft.value.type = type
+  // 切换收支后，原来选的分类不再可选，自动换成第一个
+  if (!options.value.some((c) =&gt; c.id === draft.value.categoryId)) draft.value.categoryId = options.value[0]?.id ?? ''
+}
+function onSubmit() {
+  submitted.value = true
+  if (Object.keys(errors.value).length) return
+  const { categoryId, date, note } = draft.value
+  // 交出去的是“记录”的形状：金额是分，没有 type（type 由分类决定）
+  emit('submit', { amount: amount.value, categoryId, date, note: note.trim() })
+  if (!props.initial) {
+    // 连续记账：保留收支、分类和日期，只清空金额和备注
+    draft.value = { ...draft.value, amountText: '', note: '' }
+    submitted.value = false
+  }
+}
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;form class="panel record-form" novalidate @submit.prevent="onSubmit"&gt;
+    &lt;h3&gt;{{ initial ? '编辑记录' : '记一笔' }}&lt;/h3&gt;
+    &lt;div class="seg"&gt;
+      &lt;button type="button" :class="{ on: draft.type === 'expense' }" @click="setType('expense')"&gt;支出&lt;/button&gt;
+      &lt;button type="button" :class="{ on: draft.type === 'income' }" @click="setType('income')"&gt;收入&lt;/button&gt;
+    &lt;/div&gt;
+    &lt;label&gt;金额（元）
+      &lt;input v-model="draft.amountText" inputmode="decimal" placeholder="0.00" autocomplete="off"&gt;
+      &lt;span v-if="submitted &amp;&amp; errors.amount" class="err"&gt;{{ errors.amount }}&lt;/span&gt;
+    &lt;/label&gt;
+    &lt;div class="chips" role="radiogroup" aria-label="分类"&gt;
+      &lt;button v-for="c in options" :key="c.id" type="button" role="radio"
+              :aria-checked="c.id === draft.categoryId" :class="{ on: c.id === draft.categoryId }"
+              :style="{ '--c': c.color }" @click="draft.categoryId = c.id"&gt;{{ c.icon }} {{ c.name }}&lt;/button&gt;
+    &lt;/div&gt;
+    &lt;span v-if="submitted &amp;&amp; errors.category" class="err"&gt;{{ errors.category }}&lt;/span&gt;
+    &lt;label&gt;日期 &lt;input v-model="draft.date" type="date"&gt;&lt;/label&gt;
+    &lt;label&gt;备注 &lt;input v-model="draft.note" maxlength="40" placeholder="可不填"&gt;&lt;/label&gt;
+    &lt;div class="actions"&gt;
+      &lt;button type="submit"&gt;保存&lt;/button&gt;
+      &lt;button v-if="initial" type="button" class="ghost" @click="emit('cancel')"&gt;取消&lt;/button&gt;
+    &lt;/div&gt;
+  &lt;/form&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>几个要点：</p>
+<ul>
+  <li><strong>校验错误是派生数据</strong>：<code>errors</code> 由草稿算出来，草稿一改就实时更新。另一个状态 <code>submitted</code> 决定“要不要显示”：用户还没点保存，就别一打开表单就满屏红字。</li>
+  <li><strong>表单交出去的是“记录的形状”</strong>：金额已经是分，没有 <code>type</code>，备注去掉了首尾空格。App 收到的数据不需要再加工。</li>
+  <li><strong>草稿只在创建组件时从 <code>initial</code> 复制一次。</strong>那么从编辑 A 直接点到编辑 B 时，草稿怎么更新？看 App 里的用法：</li>
+</ul>
+
+<div class="code" data-lang="vue" data-file="src/App.vue（编辑相关）"><pre>
+&lt;script setup&gt;
+const editingId = ref(null) // 只存 id
+const editingRecord = computed(() =&gt; records.value.find((r) =&gt; r.id === editingId.value) ?? null)
+
+function onSubmit(data) {
+  if (editingRecord.value) updateRecord(editingId.value, data)
+  else addRecord(data)
+  editingId.value = null
+  month.value = monthOf(data.date) // 记到别的月份时跳过去，否则用户会以为没保存
+}
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;!-- key 变了，Vue 会销毁旧表单、创建新表单，草稿随之重置 --&gt;
+  &lt;RecordForm :key="editingId ?? 'new'" :categories="categories" :initial="editingRecord"
+              @submit="onSubmit" @cancel="editingId = null" /&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>
+  <code>key</code> 不只能用在 <code>v-for</code> 里。给组件一个 <code>key</code>，当 key 的值变化时，Vue 会把它当成一个<strong>全新的组件</strong>：销毁旧的，创建新的。
+  从编辑 A 切到编辑 B，key 从 A 的 id 变成 B 的 id，新表单用 B 的数据初始化草稿。不需要在表单里写 <code>watch(initial)</code> 去手动同步。
+  这是“重置一个组件的局部状态”的标准做法。
+</p>
+
+<div class="box tip">
+  <div class="t">“记到别的月份时跳过去”是一个设计决定</div>
+  <p>
+    假设现在看的是 11 月，用户补记了一笔 9 月的账。保存后列表里没有它，用户会以为没保存成功。所以 <code>onSubmit</code> 里顺手把 <code>month</code> 切到记录所在的月份。
+    这类“事件发生后界面该停在哪里”的决定，也应该写进设计卡的事件格。
+  </p>
+</div>
+
+<h3 id="s5">5.5 持久化：只存领域数据</h3>
+<div class="flow"><span>需求：刷新后数据还在</span><i>→</i><span class="on">设计卡副作用格</span><i>→</i><span>代码</span></div>
+
+<p>
+  把领域数据和修改它们的操作收进一个组合式函数 <code>useLedger</code>。存进 localStorage 的只有 <code>records</code> 和 <code>categories</code>：
+  <code>month</code>、<code>filterId</code>、<code>editingId</code> 是界面状态，刷新后回到“本月、不筛选、不编辑”正合适。
+  这个区分本身就是一个设计决定：如果产品要求“刷新后停在上次看的月份”，那就把 <code>month</code> 也存起来，或者放进 URL（第 6 个项目会讲“URL 即状态”）。
+</p>
+
+<div class="code" data-lang="js" data-file="src/composables/useLedger.js"><pre>
+import { ref, computed, watch } from 'vue'
+
+const STORAGE_KEY = 'ledger-v1'
+
+const DEFAULT_CATEGORIES = [
+  { id: 'food', name: '餐饮', icon: '🍜', color: '#e8590c', type: 'expense' },
+  { id: 'transport', name: '交通', icon: '🚇', color: '#1c7ed6', type: 'expense' },
+  { id: 'shopping', name: '购物', icon: '🛍️', color: '#ae3ec9', type: 'expense' },
+  { id: 'home', name: '居家', icon: '🏠', color: '#2f9e44', type: 'expense' },
+  { id: 'fun', name: '娱乐', icon: '🎮', color: '#f08c00', type: 'expense' },
+  { id: 'salary', name: '工资', icon: '💼', color: '#0ca678', type: 'income' },
+  { id: 'side', name: '副业', icon: '💡', color: '#4263eb', type: 'income' },
+]
+
+function load() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY)) ?? {}
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * 记账本的“领域数据”：记录和分类，以及修改它们的全部操作。
+ * 只有这里能改 records / categories，组件拿到的是只读的派生数据和操作函数。
+ */
+export function useLedger() {
+  const saved = load()
+
+  // ---------------- 状态（会被持久化） ----------------
+  // 记录只存 categoryId，不存分类名、颜色、收支类型：这些都在分类里，只存一份
+  //   { id, amount(分), categoryId, date: 'YYYY-MM-DD', note }
+  const records = ref(saved.records ?? [])
+  const categories = ref(saved.categories ?? DEFAULT_CATEGORIES)
+
+  // ---------------- 派生 ----------------
+  // 按 id 查分类，相当于给外键建了一个索引
+  const categoryById = computed(() =&gt; Object.fromEntries(categories.value.map((c) =&gt; [c.id, c])))
+  // 每个分类被多少条记录用到（删除分类时要用）
+  const usage = computed(() =&gt; {
+    const n = {}
+    for (const r of records.value) n[r.categoryId] = (n[r.categoryId] ?? 0) + 1
+    return n
+  })
+
+  // ---------------- 事件 ----------------
+  function addRecord(data) {
+    records.value.push({ id: crypto.randomUUID(), ...data })
+  }
+  function updateRecord(id, data) {
+    const r = records.value.find((r) =&gt; r.id === id)
+    if (r) Object.assign(r, data)
+  }
+  function removeRecord(id) {
+    records.value = records.value.filter((r) =&gt; r.id !== id)
+  }
+  function updateCategory(id, patch) {
+    const c = categories.value.find((c) =&gt; c.id === id)
+    if (c) Object.assign(c, patch)
+  }
+  function removeCategory(id) {
+    // 相当于 Django 的 on_delete=PROTECT：还有记录在用，就不许删
+    if (usage.value[id]) return false
+    categories.value = categories.value.filter((c) =&gt; c.id !== id)
+    return true
+  }
+
+  // ---------------- 副作用：持久化 ----------------
+  watch([records, categories], () =&gt; {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      version: 1,
+      records: records.value,
+      categories: categories.value,
+    }))
+  }, { deep: true })
+
+  return {
+    records, categories, categoryById, usage,
+    addRecord, updateRecord, removeRecord, updateCategory, removeCategory,
+  }
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">为什么存一个 <code>version</code></div>
+  <p>
+    存在用户浏览器里的数据，你没法像服务器数据库那样统一迁移。将来数据结构变了（比如金额从元改成分），读取时可以根据 <code>version</code> 判断是旧格式，先转换再使用。
+    这就是前端版的 Django migrations。从第一天起就存上版本号，成本几乎为零。
+  </p>
+</div>
+
+<h3 id="s6">5.6 列表组件：事件逐层转交</h3>
+
+<div class="code" data-lang="vue" data-file="src/components/RecordItem.vue"><pre>
+&lt;script setup&gt;
+import { formatCents } from '../utils/money'
+
+defineProps({
+  record: { type: Object, required: true },
+  category: { type: Object, default: null }, // 父组件按 categoryId 查好再传进来
+  editing: Boolean,
+})
+const emit = defineEmits(['edit', 'remove'])
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;li class="record" :class="{ editing }"&gt;
+    &lt;span class="icon" :style="{ background: category?.color ?? '#999' }"&gt;{{ category?.icon ?? '?' }}&lt;/span&gt;
+    &lt;span class="text"&gt;
+      {{ category?.name ?? '未知分类' }}
+      &lt;small v-if="record.note"&gt;{{ record.note }}&lt;/small&gt;
+    &lt;/span&gt;
+    &lt;b :class="category?.type"&gt;{{ category?.type === 'income' ? '+' : '−' }}{{ formatCents(record.amount) }}&lt;/b&gt;
+    &lt;span class="ops"&gt;
+      &lt;button class="link" @click="emit('edit', record.id)"&gt;编辑&lt;/button&gt;
+      &lt;button class="link danger" @click="emit('remove', record.id)"&gt;删除&lt;/button&gt;
+    &lt;/span&gt;
+  &lt;/li&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="src/components/RecordList.vue"><pre>
+&lt;script setup&gt;
+import RecordItem from './RecordItem.vue'
+import { formatCents } from '../utils/money'
+import { formatDay } from '../utils/date'
+
+defineProps({
+  groups: { type: Array, required: true }, // [{ date, items, income, expense }]
+  categoryById: { type: Object, required: true },
+  editingId: { type: String, default: null },
+})
+// 列表自己不处理编辑和删除，只把事件原样转交给父组件
+const emit = defineEmits(['edit', 'remove'])
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;section class="panel"&gt;
+    &lt;p v-if="!groups.length" class="empty"&gt;这个月还没有记录，在左边记一笔吧&lt;/p&gt;
+    &lt;div v-for="g in groups" :key="g.date" class="day"&gt;
+      &lt;div class="day-head"&gt;
+        &lt;span&gt;{{ formatDay(g.date) }}&lt;/span&gt;
+        &lt;small&gt;
+          &lt;template v-if="g.income"&gt;收 {{ formatCents(g.income) }}　&lt;/template&gt;
+          &lt;template v-if="g.expense"&gt;支 {{ formatCents(g.expense) }}&lt;/template&gt;
+        &lt;/small&gt;
+      &lt;/div&gt;
+      &lt;ul&gt;
+        &lt;RecordItem v-for="r in g.items" :key="r.id" :record="r" :category="categoryById[r.categoryId]"
+                    :editing="r.id === editingId" @edit="emit('edit', $event)" @remove="emit('remove', $event)" /&gt;
+      &lt;/ul&gt;
+    &lt;/div&gt;
+  &lt;/section&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>
+  RecordItem 的 <code>category</code> 有可能是 <code>null</code>（比如分类数据损坏），所以模板里处处用 <code>?.</code> 和兜底文字。
+  <strong>展示组件要对“数据不完整”有准备</strong>，不能一个字段缺失就让整页白屏。
+</p>
+
+<h2 id="change">第 6 步：需求变更演练</h2>
+
+<h3 id="c1">变更一：分类可以改名、换颜色</h3>
+
+<div class="dcard">
+  <div class="title">设计卡 · 变更一<small>只加了一个事件</small></div>
+  <div class="st"><h5>状态</h5><pre>不变</pre></div>
+  <div class="dv"><h5>派生</h5><pre>不变</pre></div>
+  <div class="ev"><h5>事件</h5><pre><ins>修改分类 → 改 categories 里那一项</ins></pre></div>
+  <div class="fx"><h5>副作用</h5><pre>不变（categories 本来就持久化了）</pre></div>
+</div>
+
+<p>
+  因为记录只存 <code>categoryId</code>，改一个分类的名字或颜色，只改 <code>categories</code> 里的一个对象，所有记录、合计、构成图、列表全部自动更新。
+  如果停在 v1，这里就要遍历所有记录逐条改名，还要祈祷不漏。<strong>规范化的回报，在需求变更时兑现。</strong>
+</p>
+
+<div class="code" data-lang="vue" data-file="src/components/CategoryManager.vue"><pre>
+&lt;script setup&gt;
+defineProps({
+  categories: { type: Array, required: true },
+  usage: { type: Object, required: true }, // { categoryId: 使用次数 }
+})
+const emit = defineEmits(['update', 'remove'])
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;section class="panel"&gt;
+    &lt;h3&gt;分类管理 &lt;small&gt;改名、换颜色会立刻反映到所有记录&lt;/small&gt;&lt;/h3&gt;
+    &lt;ul class="cat-list"&gt;
+      &lt;li v-for="c in categories" :key="c.id"&gt;
+        &lt;input type="color" :value="c.color" aria-label="颜色" @change="emit('update', c.id, { color: $event.target.value })"&gt;
+        &lt;span&gt;{{ c.icon }}&lt;/span&gt;
+        &lt;input :value="c.name" maxlength="8" aria-label="名称"
+               @change="$event.target.value.trim() &amp;&amp; emit('update', c.id, { name: $event.target.value.trim() })"&gt;
+        &lt;small&gt;{{ c.type === 'income' ? '收入' : '支出' }} · {{ usage[c.id] ?? 0 }} 条&lt;/small&gt;
+        &lt;button class="link danger" :disabled="!!usage[c.id]" :title="usage[c.id] ? '还有记录在用，不能删除' : ''"
+                @click="emit('remove', c.id)"&gt;删除&lt;/button&gt;
+      &lt;/li&gt;
+    &lt;/ul&gt;
+  &lt;/section&gt;
+&lt;/template&gt;
+</pre></div>
+
+<h3 id="c2">变更二：删除分类，那它的记录怎么办？</h3>
+
+<p>
+  这是一个必须由人做出的业务决定，代码只是执行它。Django 的 <code>on_delete</code> 把选项列得很清楚，前端可以直接借用：
+</p>
+
+<div class="tw"><table>
+  <tr><th>Django</th><th>含义</th><th>记账本里的效果</th></tr>
+  <tr><td><code>CASCADE</code></td><td>连带删除</td><td>删掉“餐饮”，所有餐饮记录一起消失。危险，用户多半没想到</td></tr>
+  <tr><td><code>SET_NULL</code> / <code>SET_DEFAULT</code></td><td>改成空或默认值</td><td>记录归入“未分类”，需要额外设计一个默认分类</td></tr>
+  <tr><td><code>PROTECT</code></td><td>有引用就不许删</td><td>还有记录在用时，删除按钮不可点。<strong>本篇的选择</strong></td></tr>
+</table></div>
+
+<p>
+  选了 PROTECT，设计卡上加一项派生 <code>usage</code>（每个分类被多少条记录引用），删除按钮的 <code>disabled</code> 由它决定，
+  <code>removeCategory</code> 里再检查一遍（界面限制挡得住正常用户，数据层的检查才是最后一道防线）。代码见上面的 <code>useLedger</code> 和 CategoryManager。
+</p>
+
+<h3 id="c3">变更三：点击支出构成，按分类筛选</h3>
+
+<div class="dcard">
+  <div class="title">设计卡 · 变更三<small>一项界面状态 + 派生链上插入一环</small></div>
+  <div class="st"><h5>状态</h5><pre><ins>filterId  界面状态：筛选的分类 id，或 null</ins></pre></div>
+  <div class="dv"><h5>派生</h5><pre><ins>visibleRecords = filterId ? monthRecords 中该分类的 : monthRecords</ins>
+dayGroups 改为基于 <ins>visibleRecords</ins>
+totals / categoryStats <b>仍基于 monthRecords</b></pre></div>
+  <div class="ev"><h5>事件</h5><pre><ins>点构成图的分类 → filterId = 再点一次 ? null : 该 id</ins>
+<ins>删除分类时，若正在筛选它 → filterId = null</ins></pre></div>
+  <div class="fx"><h5>副作用</h5><pre>不变</pre></div>
+</div>
+
+<p>
+  关键在于新的一环<strong>插在哪里</strong>。回头看图 2-2：合计和构成从 <code>monthRecords</code> 分叉，筛选插在分叉之后，所以筛选只影响列表。
+  如果插在 <code>monthRecords</code> 之前，筛选“餐饮”后构成图就只剩一根 100% 的横条，用户再也点不到别的分类了。
+  派生链画在纸上，这种问题一眼就能看出来；写在代码里，往往要等测试的人点出 bug 才发现。
+</p>
+
+<h2 id="final">第 7 步：收尾</h2>
+
+<p>
+  派生链单独放进 <code>useMonthView</code>。它很特别：<strong>没有任何自己的状态</strong>，输入是几个 ref，输出全是 computed，是一个纯粹的“查询层”：
+</p>
+
+<div class="code" data-lang="js" data-file="src/composables/useMonthView.js"><pre>
+import { computed } from 'vue'
+import { monthOf } from '../utils/date'
+
+/**
+ * 从“全部记录”派生出“当前视图要显示的一切”。
+ * 输入是几个 ref（领域数据 + 界面状态），输出全是 computed，没有任何自己的状态。
+ */
+export function useMonthView({ records, categoryById, month, filterId }) {
+  // 1. 本月的记录
+  const monthRecords = computed(() =&gt; records.value.filter((r) =&gt; monthOf(r.date) === month.value))
+
+  // 2. 本月收支合计：收入还是支出由分类决定，记录上不重复存
+  const totals = computed(() =&gt; {
+    let income = 0
+    let expense = 0
+    for (const r of monthRecords.value) {
+      if (categoryById.value[r.categoryId]?.type === 'income') income += r.amount
+      else expense += r.amount
+    }
+    return { income, expense, balance: income - expense }
+  })
+
+  // 3. 本月各分类的支出，从多到少
+  const categoryStats = computed(() =&gt; {
+    const sum = {}
+    for (const r of monthRecords.value) {
+      if (categoryById.value[r.categoryId]?.type !== 'expense') continue
+      sum[r.categoryId] = (sum[r.categoryId] ?? 0) + r.amount
+    }
+    const total = totals.value.expense || 1
+    return Object.entries(sum)
+      .map(([id, amount]) =&gt; ({ category: categoryById.value[id], amount, ratio: amount / total }))
+      .sort((a, b) =&gt; b.amount - a.amount)
+  })
+
+  // 4. 按分类筛选后的记录
+  const visibleRecords = computed(() =&gt;
+    filterId.value ? monthRecords.value.filter((r) =&gt; r.categoryId === filterId.value) : monthRecords.value)
+
+  // 5. 按天分组，新的日期在前；每组带当天小计
+  const dayGroups = computed(() =&gt; {
+    const groups = new Map()
+    for (const r of visibleRecords.value) {
+      if (!groups.has(r.date)) groups.set(r.date, { date: r.date, items: [], income: 0, expense: 0 })
+      const g = groups.get(r.date)
+      g.items.unshift(r) // 同一天里后记的在前
+      if (categoryById.value[r.categoryId]?.type === 'income') g.income += r.amount
+      else g.expense += r.amount
+    }
+    return [...groups.values()].sort((a, b) =&gt; b.date.localeCompare(a.date))
+  })
+
+  return { monthRecords, totals, categoryStats, visibleRecords, dayGroups }
+}
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="src/App.vue"><pre>
+&lt;script setup&gt;
+import { ref, computed } from 'vue'
+import { useLedger } from './composables/useLedger'
+import { useMonthView } from './composables/useMonthView'
+import { today, monthOf } from './utils/date'
+import MonthSwitcher from './components/MonthSwitcher.vue'
+import SummaryCards from './components/SummaryCards.vue'
+import RecordForm from './components/RecordForm.vue'
+import CategoryChart from './components/CategoryChart.vue'
+import RecordList from './components/RecordList.vue'
+import CategoryManager from './components/CategoryManager.vue'
+
+// 领域数据：要持久化，和业务有关
+const {
+  records, categories, categoryById, usage,
+  addRecord, updateRecord, removeRecord, updateCategory, removeCategory,
+} = useLedger()
+
+// 界面状态：只关乎“现在怎么看”，刷新后回到默认值也无妨
+const month = ref(monthOf(today()))
+const filterId = ref(null)
+const editingId = ref(null) // 只存 id，不存记录的副本
+const showManager = ref(false)
+
+const { totals, categoryStats, dayGroups } = useMonthView({ records, categoryById, month, filterId })
+
+// 正在编辑的记录由 id 查出来；记录被删掉时它自动变成 null，表单也就自动关闭
+const editingRecord = computed(() =&gt; records.value.find((r) =&gt; r.id === editingId.value) ?? null)
+
+function onSubmit(data) {
+  if (editingRecord.value) updateRecord(editingId.value, data)
+  else addRecord(data)
+  editingId.value = null
+  month.value = monthOf(data.date) // 记到别的月份时跳过去，否则用户会以为没保存
+}
+function onRemove(id) {
+  if (confirm('确定删除这条记录吗？')) removeRecord(id)
+}
+function toggleFilter(id) {
+  filterId.value = filterId.value === id ? null : id
+}
+function onRemoveCategory(id) {
+  if (filterId.value === id) filterId.value = null
+  removeCategory(id)
+}
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="ledger"&gt;
+    &lt;header&gt;
+      &lt;h1&gt;记账本&lt;/h1&gt;
+      &lt;MonthSwitcher v-model="month" /&gt;
+      &lt;button class="ghost" @click="showManager = !showManager"&gt;{{ showManager ? '完成' : '管理分类' }}&lt;/button&gt;
+    &lt;/header&gt;
+
+    &lt;SummaryCards :totals="totals" /&gt;
+
+    &lt;div class="cols"&gt;
+      &lt;aside&gt;
+        &lt;!-- key 变了，Vue 会销毁旧表单、创建新表单，草稿随之重置 --&gt;
+        &lt;RecordForm :key="editingId ?? 'new'" :categories="categories" :initial="editingRecord"
+                    @submit="onSubmit" @cancel="editingId = null" /&gt;
+        &lt;CategoryChart :stats="categoryStats" :selected-id="filterId" @select="toggleFilter" /&gt;
+      &lt;/aside&gt;
+      &lt;main&gt;
+        &lt;CategoryManager v-if="showManager" :categories="categories" :usage="usage"
+                         @update="updateCategory" @remove="onRemoveCategory" /&gt;
+        &lt;div v-if="filterId" class="filter-tip"&gt;
+          只看「{{ categoryById[filterId]?.name }}」&lt;button class="link" @click="filterId = null"&gt;清除筛选&lt;/button&gt;
+        &lt;/div&gt;
+        &lt;RecordList :groups="dayGroups" :category-by-id="categoryById" :editing-id="editingId"
+                    @edit="editingId = $event" @remove="onRemove" /&gt;
+      &lt;/main&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="box dj">
+  <div class="t">Django 对照</div>
+  <p>
+    三层分工和 Django 项目如出一辙：<code>useLedger</code> 是 Model 加 Manager（数据和修改数据的方法），
+    <code>useMonthView</code> 是一组查询（有些团队叫 selectors），App.vue 是视图（接收界面状态、调用查询、把结果交给模板）。
+    哪天要做一个“年度报表”页面，<code>useLedger</code> 原样复用，再写一个 <code>useYearView</code> 就行。
+  </p>
+</div>
+
+<p>最终的设计卡：</p>
+
+<div class="dcard">
+  <div class="title">记账本 · 设计卡（最终版）<small>对照 v1 看看变了哪些</small></div>
+  <div class="st"><h5>状态</h5><pre><b>领域数据（持久化）</b>
+categories [{ id, name, icon, color, type }]
+records    [{ id, amount（分）, categoryId, date: 'YYYY-MM-DD', note }]
+<b>界面状态</b>
+month · filterId · editingId · showManager
+<b>表单草稿（RecordForm 自己持有）</b>
+draft { type, amountText, categoryId, date, note } · submitted</pre></div>
+  <div class="dv"><h5>派生</h5><pre>categoryById · usage
+monthRecords → totals、categoryStats
+             → visibleRecords → dayGroups
+editingRecord = records 中 id 为 editingId 的
+表单：options · amount · errors</pre></div>
+  <div class="ev"><h5>事件</h5><pre>提交表单 → 新增或更新；editingId = null；跳到记录所在月
+编辑 / 取消 → editingId = id / null
+删除记录 → 确认后移除
+切换月份 · 点构成图筛选 · 改分类 · 删分类（PROTECT）</pre></div>
+  <div class="fx"><h5>副作用</h5><pre>records、categories 变化 → 存 localStorage（带 version）</pre></div>
+</div>
+
+<h2 id="review">复盘</h2>
+
+<h3 id="quiz">判断题</h3>
+<div class="quiz">
+  <details><summary>记录上要不要存 <code>type</code>（收入 / 支出）？</summary>
+    <p>不要。收支由分类决定，存在记录上就是冗余，而且可能和分类不一致（“工资”被记成支出）。需要时通过 <code>categoryById[r.categoryId].type</code> 派生。</p></details>
+  <details><summary>表单的“支出 / 收入”切换按钮背后的 <code>draft.type</code>，为什么又是状态了？</summary>
+    <p>因为在表单里它是用户的选择，无法从别处算出来：用户可能先点“收入”，还没选分类。同一个概念，在草稿里是状态，在保存后的记录里是派生。判断时要看“在这个位置上，能不能算出来”。</p></details>
+  <details><summary>正在编辑时，为什么存 <code>editingId</code> 而不是 <code>editingRecord</code>（记录的副本）？</summary>
+    <p>存副本就有了两份数据，原记录被删除或被修改时，副本不会知道。存 id、再派生出记录，永远指向唯一的真相；记录被删时派生结果自动变成 <code>null</code>，表单自动关闭。</p></details>
+  <details><summary>用户想“刷新后停在上次看的月份”，<code>month</code> 要从界面状态改成领域数据吗？</summary>
+    <p>不用改分类，只是改变它的持久化策略：可以单独存进 localStorage，更好的做法是放进 URL（<code>?month=2026-09</code>），这样还能分享链接、能用浏览器后退。界面状态和领域数据的区别在于“和业务有没有关系”，而不在于“存不存”。</p></details>
+  <details><summary>本月合计应该基于 <code>visibleRecords</code> 还是 <code>monthRecords</code>？</summary>
+    <p>这是产品决定，不是技术问题。本篇选择基于 <code>monthRecords</code>：筛选只是“在列表里找东西”，不改变“这个月花了多少”。如果产品希望筛选后合计也变，就把 <code>totals</code> 接到 <code>visibleRecords</code> 后面。重要的是在派生链上明确地做出选择。</p></details>
+  <details><summary>列表的 <code>v-for</code> 用数组下标做 <code>key</code> 会怎样？</summary>
+    <p>删除中间一条时，后面每一行的下标都变了，Vue 会以为“第 3 行的数据变了”而不是“第 3 行被删了”，于是复用错 DOM。行里有输入框、动画或组件状态时就会错位。key 要用记录自己的 <code>id</code>。</p></details>
+</div>
+
+<h3 id="pitfalls">后端出身容易踩的坑</h3>
+<ul>
+  <li><strong>只设计领域数据，忘了界面状态</strong>：Django 里它们藏在 <code>request.GET</code> 和 session 里，前端必须明确放在某个组件上。</li>
+  <li><strong>以为前端可以不讲规范化</strong>：“反正是内存里的数组”。冗余一样会造成不一致，而且前端的数据要持久化到用户浏览器里，比服务器更难修复。</li>
+  <li><strong>用浮点数算钱，用 Date 对象存日期</strong>：分别换成整数分和日历字符串。</li>
+  <li><strong>表单直接绑定数据</strong>：有“提交”动作的数据，都需要草稿。</li>
+  <li><strong>把所有状态都放在顶层组件</strong>：草稿这种只有一个组件用的状态，放在那个组件里。顶层组件只放“多个组件都要用”的东西。</li>
+</ul>
+
+<div class="box key">
+  <div class="t">本篇新增的方法</div>
+  <ol>
+    <li>状态分三类：领域数据、界面状态、表单草稿，分别想清楚放在哪、存不存。</li>
+    <li>派生数据画成一条链，新需求先找“插在哪一环”。</li>
+    <li>前端也规范化：引用用 id，冗余字段删掉，能由关联对象决定的就派生。</li>
+    <li>钱用整数分，日期用日历字符串：选择“不会出错”的表示方式。</li>
+    <li>有提交动作就用草稿；用 <code>key</code> 重置组件的局部状态。</li>
+    <li>涉及删除的关联数据，先做 <code>on_delete</code> 式的业务决定，再写代码。</li>
+  </ol>
+</div>
+
+<div class="exercise">
+  <h3>练习</h3>
+  <ol>
+    <li><strong>新增分类</strong>：在分类管理里加“新增分类”。新分类的 id 怎么生成？名字重复要不要禁止？这条校验应该放在哪里？</li>
+    <li><strong>预算</strong>：每个分类可以设一个月预算，超出时构成图的横条变红。预算是领域数据还是界面状态？“是否超支”呢？</li>
+    <li><strong>搜索备注</strong>：加一个搜索框，按备注关键字过滤列表。它应该插在派生链的哪一环？合计要不要跟着变？</li>
+    <li><strong>撤销删除</strong>：删除后不弹确认框，而是显示“已删除 · 撤销”，5 秒内可恢复。需要什么新状态？定时器作为副作用，什么时候清理？</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+<script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+<script>
+  if (window.Vue) {
+    const { createApp, ref, computed } = Vue
+    const pad = (n) => String(n).padStart(2, '0')
+    const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    const fmt = new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' })
+    function parseYuan(text) {
+      const m = /^\s*(\d{1,9})(?:\.(\d{1,2}))?\s*$/.exec(text)
+      return m ? Number(m[1]) * 100 + Number((m[2] ?? '').padEnd(2, '0')) : null
+    }
+    function shift(month, delta) {
+      const [y, m] = month.split('-').map(Number)
+      const d = new Date(y, m - 1 + delta, 1)
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`
+    }
+    createApp({
+      setup() {
+        const now = new Date()
+        const day = (n) => ymd(new Date(now.getFullYear(), now.getMonth(), Math.max(1, now.getDate() - n)))
+        let seq = 0
+        const rec = (amount, categoryId, date, note = '') => ({ id: 'r' + (++seq), amount, categoryId, date, note })
+
+        // 领域数据
+        const categories = ref([
+          { id: 'food', name: '餐饮', color: '#e8590c', type: 'expense' },
+          { id: 'transport', name: '交通', color: '#1c7ed6', type: 'expense' },
+          { id: 'shopping', name: '购物', color: '#ae3ec9', type: 'expense' },
+          { id: 'salary', name: '工资', color: '#0ca678', type: 'income' },
+        ])
+        const records = ref([
+          rec(800000, 'salary', day(5)), rec(3250, 'food', day(1), '火锅'),
+          rec(600, 'transport', day(1), '地铁'), rec(12900, 'shopping', day(0), '耳机'), rec(1800, 'food', day(0), '午饭'),
+        ])
+        // 界面状态
+        const month = ref(ymd(now).slice(0, 7))
+        const filterId = ref(null)
+        const editingId = ref(null)
+        // 表单草稿（演示里为了显示在面板上，放在同一个组件中）
+        const blank = () => ({ type: 'expense', amountText: '', categoryId: 'food', date: ymd(now), note: '' })
+        const draft = ref(blank())
+        const error = ref('')
+
+        // 派生
+        const categoryById = computed(() => Object.fromEntries(categories.value.map((c) => [c.id, c])))
+        const isIncome = (r) => categoryById.value[r.categoryId]?.type === 'income'
+        const monthRecords = computed(() => records.value.filter((r) => r.date.slice(0, 7) === month.value))
+        const totals = computed(() => {
+          let income = 0, expense = 0
+          for (const r of monthRecords.value) isIncome(r) ? (income += r.amount) : (expense += r.amount)
+          return { income, expense, balance: income - expense }
+        })
+        const categoryStats = computed(() => {
+          const sum = {}
+          for (const r of monthRecords.value) if (!isIncome(r)) sum[r.categoryId] = (sum[r.categoryId] ?? 0) + r.amount
+          const total = totals.value.expense || 1
+          return Object.entries(sum).map(([id, amount]) => ({ category: categoryById.value[id], amount, ratio: amount / total }))
+            .sort((a, b) => b.amount - a.amount)
+        })
+        const visibleRecords = computed(() =>
+          filterId.value ? monthRecords.value.filter((r) => r.categoryId === filterId.value) : monthRecords.value)
+        const dayGroups = computed(() => {
+          const groups = new Map()
+          for (const r of visibleRecords.value) {
+            if (!groups.has(r.date)) groups.set(r.date, { date: r.date, items: [], income: 0, expense: 0 })
+            const g = groups.get(r.date)
+            g.items.unshift(r)
+            isIncome(r) ? (g.income += r.amount) : (g.expense += r.amount)
+          }
+          return [...groups.values()].sort((a, b) => b.date.localeCompare(a.date))
+        })
+        const options = computed(() => categories.value.filter((c) => c.type === draft.value.type))
+        const lastRecord = computed(() => {
+          const r = records.value.at(-1)
+          return r ? JSON.stringify(r) : '—'
+        })
+
+        // 事件
+        function setType(type) {
+          draft.value.type = type
+          if (!options.value.some((c) => c.id === draft.value.categoryId)) draft.value.categoryId = options.value[0].id
+        }
+        function submit() {
+          const amount = parseYuan(draft.value.amountText)
+          if (!amount) { error.value = '请输入大于 0 的金额，最多两位小数'; return }
+          if (!draft.value.date) { error.value = '请选择日期'; return }
+          error.value = ''
+          const { categoryId, date, note } = draft.value
+          const data = { amount, categoryId, date, note: note.trim() }
+          const target = records.value.find((r) => r.id === editingId.value)
+          if (target) Object.assign(target, data)
+          else records.value.push(rec(amount, categoryId, date, data.note))
+          editingId.value = null
+          month.value = date.slice(0, 7)
+          draft.value = { ...draft.value, amountText: '', note: '' }
+        }
+        function startEdit(id) {
+          const r = records.value.find((r) => r.id === id)
+          editingId.value = id
+          error.value = ''
+          draft.value = { type: categoryById.value[r.categoryId].type, amountText: `${Math.floor(r.amount / 100)}.${pad(r.amount % 100)}`,
+                          categoryId: r.categoryId, date: r.date, note: r.note }
+        }
+        function cancelEdit() {
+          editingId.value = null
+          draft.value = blank()
+        }
+        function remove(id) {
+          records.value = records.value.filter((r) => r.id !== id)
+          if (editingId.value === id) cancelEdit()
+        }
+        function toggleName() {
+          const c = categoryById.value.food
+          c.name = c.name === '餐饮' ? '吃饭' : '餐饮'
+        }
+        return { categories, records, month, filterId, editingId, draft, error, categoryById, monthRecords, totals,
+                 categoryStats, visibleRecords, dayGroups, options, lastRecord,
+                 setType, submit, startEdit, cancelEdit, remove, toggleName, shift, money: (c) => fmt.format(c / 100) }
+      }
+    }).mount('#demo-ledger')
+  }
+</script>
+</body>
+</html>
