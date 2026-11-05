@@ -1,0 +1,863 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 9 章 · 深入渲染原理 — React 项目实战教程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="assets/react.css">
+<style>
+  .rx-demo { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .rx-demo .panel { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--bg); min-width: 0; }
+  .rx-demo .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+  .rx-demo .big { font-size: 22px; font-weight: 700; font-family: var(--mono); }
+  .rx-log, .rx-hooks { font-family: var(--mono); font-size: 12px; max-height: 170px; overflow: auto; color: var(--fg-soft); }
+  .rx-log div, .rx-hooks div { padding: 2px 0; border-bottom: 1px dashed var(--line); overflow-wrap: anywhere; }
+  .rx-log .r { color: var(--accent-2); }
+  .rx-log .e { color: var(--green); }
+  .rx-log .c { color: var(--red); }
+  .rx-log .h { color: var(--fg); font-weight: 600; }
+  .slow-list { max-height: 180px; overflow: auto; margin: 8px 0 0; padding: 0; list-style: none; font-size: 13px; }
+  .slow-list li { padding: 2px 0; border-bottom: 1px dashed var(--line); }
+  @media (max-width: 640px) { .rx-demo { grid-template-columns: 1fr; } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "react": "https://esm.sh/react@19.2.0",
+  "react-dom/client": "https://esm.sh/react-dom@19.2.0/client?external=react",
+  "htm": "https://esm.sh/htm@3.1.1"
+} }
+</script>
+</head>
+<body data-chapter="9">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 9 章 · 进阶专题</span>
+<h1>深入渲染原理</h1>
+<p class="lede">
+  前面八章一直在用 <code>useState</code>、<code>useEffect</code>、<code>memo</code>。状态一变界面就更新，但很多规则看起来像“咒语”：
+  Hooks 不能写在 if 里、状态是快照、key 要稳定、effect 在渲染之后运行……
+  本章我们拆开这些咒语：先<strong>用 100 多行代码亲手写一个迷你 React</strong>，再对照真实的 React（Fiber、并发渲染、React Compiler），
+  你会发现每一条规则背后都有一个很朴素的原因。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>理解“渲染”的本质：调用组件函数，得到一棵描述界面的普通对象树</li>
+    <li>亲手实现 <code>createElement</code>、<code>useState</code>、<code>useEffect</code> 和一个简单的调和（diff）过程</li>
+    <li>从实现上理解 Hooks 的规则、状态快照、批处理和 key</li>
+    <li>理解 Fiber 架构：为什么渲染可以被打断，而提交不能</li>
+    <li>用 <code>useTransition</code>、<code>useDeferredValue</code> 区分紧急更新和非紧急更新</li>
+    <li>知道 React Compiler 做了什么，以及它依赖的“React 规则”</li>
+  </ul>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 本章适合谁</div>
+  <p>
+    学完前八章、能熟练写组件之后再来读。本章的迷你 React 不需要在项目里使用，它的目的是<strong>帮你建立正确的心智模型</strong>：
+    以后遇到“为什么这里没更新”“为什么 effect 跑了两次”“为什么输入框卡”之类的问题，你能自己推理出答案。
+  </p>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="elements">渲染 = 调用函数，得到一棵对象树</h2>
+
+<p>先回到最基本的问题：JSX 是什么？编译之后，每个标签都变成一次函数调用，返回一个<strong>普通的 JavaScript 对象</strong>，叫做<strong>元素</strong>（element）：</p>
+
+<div class="vs">
+  <div class="old"><div class="h">你写的 JSX</div>
+<div class="code" data-lang="jsx"><pre>
+function Counter() {
+  const [count, setCount] = useState(0)
+  return (
+    &lt;button onClick={() =&gt; setCount(count + 1)}&gt;
+      点了 {count} 次
+    &lt;/button&gt;
+  )
+}
+</pre></div></div>
+  <div class="new"><div class="h">渲染时实际得到的</div>
+<div class="code" data-lang="js"><pre>
+// &lt;Counter /&gt; 被“渲染”= Counter() 被调用，返回：
+{
+  type: 'button',
+  props: {
+    onClick: () =&gt; setCount(0 + 1),
+    children: ['点了 ', 0, ' 次'],
+  },
+}
+</pre></div></div>
+</div>
+
+<p>
+  元素只是一份<strong>描述</strong>：“这里应该有一个按钮，文字是这样”。它不是 DOM，创建它也很便宜。
+  React 的工作分成两步：先调用所有组件函数，得到一棵新的元素树（<strong>渲染</strong>）；再和上一次的树比较，只把差异应用到真实 DOM 上（<strong>提交</strong>）。第 4 章的“触发 → 渲染 → 提交”说的就是这个。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="渲染与提交：组件函数被调用返回元素树，新旧元素树比较得出差异，提交阶段只修改变化的 DOM">
+  <rect class="bx-b" x="20" y="70" width="150" height="100" rx="12"/>
+  <text class="ttl on-b" x="95" y="96" text-anchor="middle">组件函数</text>
+  <text class="mono sm" x="95" y="122" text-anchor="middle">Counter(props)</text>
+  <text class="sm" x="95" y="146" text-anchor="middle">纯函数：只计算</text>
+  <path class="ln" d="M172 120 H206" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="210" y="40" width="190" height="160" rx="12"/>
+  <text class="ttl on-a" x="305" y="64" text-anchor="middle">渲染阶段</text>
+  <text class="sm" x="305" y="90" text-anchor="middle">新元素树</text>
+  <text class="mono sm" x="305" y="112" text-anchor="middle">{ type: 'button', … }</text>
+  <text class="sm" x="305" y="140" text-anchor="middle">和旧树逐个比较</text>
+  <text class="sm" x="305" y="162" text-anchor="middle">→ 得出“要改什么”</text>
+  <text class="sm on-a" x="305" y="186" text-anchor="middle">没有碰 DOM</text>
+  <path class="ln" d="M402 120 H436" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="440" y="40" width="160" height="160" rx="12"/>
+  <text class="ttl on-g" x="520" y="64" text-anchor="middle">提交阶段</text>
+  <text class="sm" x="520" y="94" text-anchor="middle">只改变化的部分：</text>
+  <text class="mono sm" x="520" y="118" text-anchor="middle">text = '点了 1 次'</text>
+  <text class="sm" x="520" y="148" text-anchor="middle">更新 ref</text>
+  <text class="sm" x="520" y="170" text-anchor="middle">运行 effect</text>
+  <path class="ln" d="M602 120 H636" marker-end="url(#ar)"/>
+  <rect class="bx" x="640" y="80" width="100" height="80" rx="12"/>
+  <text class="ttl" x="690" y="116" text-anchor="middle">真实 DOM</text>
+  <text class="sm" x="690" y="138" text-anchor="middle">浏览器绘制</text>
+  <text class="lbl" x="380" y="232" text-anchor="middle">渲染可以多做几次、可以丢掉重来；提交必须一次完成——这是后面理解 Fiber 和并发的关键</text>
+</svg>
+<figcaption>图 9-1　渲染只是计算，提交才修改 DOM</figcaption>
+</figure>
+
+<h2 id="mini">动手写一个迷你 React</h2>
+
+<p>下面用不到 120 行代码，实现一个能跑起来的迷你 React：元素、函数组件、<code>useState</code>、<code>useEffect</code>、批处理和最简单的 diff。页面下方的演示就运行在它上面，没有使用真正的 React。</p>
+
+<h3>第 1 步：createElement</h3>
+
+<div class="code" data-lang="js" data-file="mini-react.js"><pre>
+// JSX 编译后调用的函数：把标签变成一个普通对象
+export function h(type, props, ...children) {
+  return {
+    type,
+    props: {
+      ...props,
+      // 把文字也包装成元素，方便统一处理；false / null 不渲染（这就是 {ok &amp;&amp; &lt;X /&gt;} 能用的原因）
+      children: children.flat()
+        .filter((c) =&gt; c != null &amp;&amp; c !== false)
+        .map((c) =&gt; typeof c === 'object' ? c : { type: 'TEXT', props: { nodeValue: String(c), children: [] } }),
+    },
+  }
+}
+</pre></div>
+
+<h3>第 2 步：Hooks 存在哪里</h3>
+
+<p>
+  函数组件每次渲染都会被<strong>重新调用</strong>，函数里的局部变量每次都是新的。那 <code>useState</code> 记住的值放在哪里？
+  答案是：React 为每个组件实例准备了一个<strong>列表</strong>，按 Hook 的<strong>调用顺序</strong>依次存放。第一次调用 <code>useState</code> 用第 0 格，第二次用第 1 格……
+</p>
+
+<div class="code" data-lang="js"><pre>
+let current = null          // 正在渲染的组件实例：{ hooks: [], index: 0 }
+
+export function useState(initial) {
+  const inst = current
+  const i = inst.index++                       // 第几个 Hook？完全靠调用顺序
+  if (!(i in inst.hooks)) {
+    inst.hooks[i] = { value: typeof initial === 'function' ? initial() : initial, queue: [] }
+  }
+  const hook = inst.hooks[i]
+  // 处理排队的更新：值或更新函数（第 2 章的 setX(prev =&gt; …)）
+  for (const update of hook.queue) {
+    hook.value = typeof update === 'function' ? update(hook.value) : update
+  }
+  hook.queue = []
+  const setState = (update) =&gt; {
+    hook.queue.push(update)     // 不立刻修改，只是排队
+    scheduleRender()            // 预约一次渲染
+  }
+  return [hook.value, setState]  // 返回的是这一刻的值：快照
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="Hooks 按调用顺序存放：第一次渲染和第二次渲染中三个 Hook 依次对应第 0、1、2 格；如果把一个 Hook 放进 if，第二次渲染跳过它，后面的 Hook 就会读错格子">
+  <rect class="bx" x="20" y="20" width="230" height="250" rx="12"/>
+  <text class="ttl" x="135" y="46" text-anchor="middle">组件代码</text>
+  <text class="mono sm" x="36" y="80">useState('张三')</text>
+  <text class="mono sm" x="36" y="110">if (show) {</text>
+  <text class="mono sm on-r" x="52" y="134">useState(0)</text>
+  <text class="mono sm" x="36" y="158">}</text>
+  <text class="mono sm" x="36" y="188">useEffect(…)</text>
+  <text class="sm on-r" x="36" y="236">✗ 有时调用、有时不调用</text>
+
+  <rect class="bx-g" x="290" y="20" width="210" height="250" rx="12"/>
+  <text class="ttl on-g" x="395" y="46" text-anchor="middle">第 1 次渲染（show）</text>
+  <rect class="bx" x="310" y="64" width="170" height="34" rx="6"/><text class="mono sm" x="395" y="86" text-anchor="middle">[0] '张三'</text>
+  <rect class="bx" x="310" y="110" width="170" height="34" rx="6"/><text class="mono sm" x="395" y="132" text-anchor="middle">[1] 0</text>
+  <rect class="bx" x="310" y="156" width="170" height="34" rx="6"/><text class="mono sm" x="395" y="178" text-anchor="middle">[2] effect</text>
+  <text class="sm on-g" x="395" y="236" text-anchor="middle">顺序和格子一一对应</text>
+
+  <rect class="bx-r" x="530" y="20" width="210" height="250" rx="12"/>
+  <text class="ttl on-r" x="635" y="46" text-anchor="middle">第 2 次渲染（!show）</text>
+  <rect class="bx" x="550" y="64" width="170" height="34" rx="6"/><text class="mono sm" x="635" y="86" text-anchor="middle">[0] '张三' ✓</text>
+  <rect class="bx-r" x="550" y="110" width="170" height="34" rx="6"/><text class="mono sm on-r" x="635" y="132" text-anchor="middle">[1] useEffect 读到 0 ✗</text>
+  <rect class="bx-d" x="550" y="156" width="170" height="34" rx="6"/><text class="mono sm" x="635" y="178" text-anchor="middle">[2] 没人用了</text>
+  <text class="sm on-r" x="635" y="226" text-anchor="middle">后面的 Hook 全部错位</text>
+  <text class="sm" x="635" y="246" text-anchor="middle">（React 会直接报错）</text>
+</svg>
+<figcaption>图 9-2　Hooks 靠调用顺序找到自己的格子</figcaption>
+</figure>
+
+<div class="box key">
+  <div class="t">&#9733; Hooks 的规则就是从这里来的</div>
+  <p>
+    “只在组件顶层调用 Hooks，不要放在条件、循环或嵌套函数里”—— 因为 React <strong>没有给 Hook 起名字</strong>，只认顺序。
+    每次渲染调用 Hook 的顺序必须完全一样，否则第 N 个 Hook 就会拿到别人的数据。<code>eslint-plugin-react-hooks</code> 的 <code>rules-of-hooks</code> 规则就是在静态检查这件事。
+    （React 19 的 <code>use()</code> 是例外：它不占格子，所以可以写在 if 里。）
+  </p>
+</div>
+
+<h3>第 3 步：批处理——为什么连续 set 只渲染一次</h3>
+
+<div class="code" data-lang="js"><pre>
+let scheduled = false
+
+function scheduleRender() {
+  if (scheduled) return            // 已经预约过了，这次不再重复预约
+  scheduled = true
+  queueMicrotask(() =&gt; {           // 等当前这段同步代码（比如整个点击处理函数）跑完
+    scheduled = false
+    renderRoot()                   // 统一渲染一次，期间处理所有排队的更新
+  })
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="批处理：一次点击里三次 setState 只是把更新放进队列并预约一次渲染；同步代码结束后在微任务里渲染一次，依次应用三个更新">
+  <rect class="bx-b" x="20" y="30" width="290" height="160" rx="12"/>
+  <text class="ttl on-b" x="165" y="56" text-anchor="middle">点击处理函数（同步执行）</text>
+  <text class="mono sm" x="40" y="88">setCount(c =&gt; c + 1)</text>
+  <text class="sm" x="230" y="88">入队，预约</text>
+  <text class="mono sm" x="40" y="114">setCount(c =&gt; c + 1)</text>
+  <text class="sm" x="230" y="114">入队</text>
+  <text class="mono sm" x="40" y="140">setName('李四')</text>
+  <text class="sm" x="230" y="140">入队</text>
+  <text class="sm" x="165" y="174" text-anchor="middle">此时界面一次都没有更新</text>
+  <rect class="bx-a" x="360" y="56" width="150" height="110" rx="12"/>
+  <text class="ttl on-a" x="435" y="82" text-anchor="middle">队列</text>
+  <text class="mono sm" x="435" y="106" text-anchor="middle">count: [+1, +1]</text>
+  <text class="mono sm" x="435" y="126" text-anchor="middle">name: ['李四']</text>
+  <text class="sm" x="435" y="150" text-anchor="middle">预约了 1 次渲染</text>
+  <rect class="bx-g" x="560" y="56" width="180" height="110" rx="12"/>
+  <text class="ttl on-g" x="650" y="82" text-anchor="middle">微任务：渲染 1 次</text>
+  <text class="mono sm" x="650" y="108" text-anchor="middle">count 0 → 1 → 2</text>
+  <text class="mono sm" x="650" y="128" text-anchor="middle">name → '李四'</text>
+  <text class="sm" x="650" y="150" text-anchor="middle">提交 1 次 DOM</text>
+  <path class="ln" d="M312 110 H356" marker-end="url(#ar)"/>
+  <path class="ln" d="M512 110 H556" marker-end="url(#ar)"/>
+  <text class="lbl" x="380" y="212" text-anchor="middle">真正的 React 从 18 开始，不论在事件、setTimeout 还是 Promise 里，都会自动批处理</text>
+</svg>
+<figcaption>图 9-3　setState 只是排队，渲染被合并成一次</figcaption>
+</figure>
+
+<p>
+  现在第 2 章那两条“咒语”都有了解释：<strong>状态是快照</strong>，因为 <code>useState</code> 返回的是渲染那一刻的 <code>hook.value</code>，<code>setState</code> 只是往队列里放东西；
+  <strong>更新函数能累加</strong>，因为队列里的函数会被依次调用，每一个都拿到上一个的结果。
+</p>
+
+<h3>第 4 步：调和——比较新旧两棵树</h3>
+
+<p>
+  渲染出新的元素树后，要和上一次的树比较，决定怎么改 DOM。完整的树比较算法复杂度是 O(n³)，React 用了两个<strong>假设</strong>把它降到 O(n)：
+</p>
+
+<ol class="steps">
+  <li><strong>同一位置、类型相同</strong>：保留 DOM 节点（和组件的状态），只更新变化的属性，再继续比较子节点。</li>
+  <li><strong>类型不同</strong>：整棵子树直接销毁重建，里面所有组件的状态都会丢失，不再往下比较。</li>
+  <li><strong>列表</strong>：只按位置比较会把“删掉第一项”误认为“每一项都变了”，所以需要 <code>key</code> 告诉 React 谁是谁。</li>
+</ol>
+
+<div class="code" data-lang="js"><pre>
+function patch(parent, oldNode, newNode, index = 0) {
+  if (!oldNode) {                                      // 新增
+    parent.appendChild(createDom(newNode))
+  } else if (!newNode) {                               // 删除
+    parent.removeChild(oldNode.dom)
+  } else if (oldNode.type !== newNode.type) {          // 类型变了：整棵替换
+    parent.replaceChild(createDom(newNode), oldNode.dom)
+  } else {                                             // 类型相同：复用 DOM，只改差异
+    newNode.dom = oldNode.dom
+    updateProps(newNode.dom, oldNode.props, newNode.props)
+    const a = oldNode.props.children, b = newNode.props.children
+    for (let i = a.length - 1; i &gt;= b.length; i--) {  // 多出来的旧子节点：从后往前删
+      newNode.dom.removeChild(a[i].dom)
+    }
+    for (let i = 0; i &lt; b.length; i++) {             // 其余按位置逐个比较（新增的追加在末尾）
+      patch(newNode.dom, a[i], b[i], i)
+    }
+  }
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="调和的三种情况：类型相同保留 DOM 只改属性；类型不同整棵替换、状态丢失；列表没有 key 时按位置比较，删除第一项会让每一项都被改写，有 key 时只删除一项">
+  <rect class="bx-g" x="20" y="20" width="230" height="230" rx="12"/>
+  <text class="ttl on-g" x="135" y="46" text-anchor="middle">类型相同</text>
+  <text class="mono sm" x="135" y="80" text-anchor="middle">&lt;div class="a"&gt;</text>
+  <text class="sm" x="135" y="102" text-anchor="middle">↓</text>
+  <text class="mono sm" x="135" y="124" text-anchor="middle">&lt;div class="b"&gt;</text>
+  <text class="sm" x="135" y="164" text-anchor="middle">保留节点和状态</text>
+  <text class="sm" x="135" y="184" text-anchor="middle">只改 className</text>
+
+  <rect class="bx-r" x="265" y="20" width="230" height="230" rx="12"/>
+  <text class="ttl on-r" x="380" y="46" text-anchor="middle">类型不同</text>
+  <text class="mono sm" x="380" y="80" text-anchor="middle">&lt;div&gt;&lt;Counter/&gt;&lt;/div&gt;</text>
+  <text class="sm" x="380" y="102" text-anchor="middle">↓</text>
+  <text class="mono sm" x="380" y="124" text-anchor="middle">&lt;section&gt;&lt;Counter/&gt;</text>
+  <text class="sm" x="380" y="164" text-anchor="middle">整棵子树销毁重建</text>
+  <text class="sm on-r" x="380" y="184" text-anchor="middle">Counter 的计数归零</text>
+  <text class="sm" x="380" y="216" text-anchor="middle">（改 key 也是同样效果）</text>
+
+  <rect class="bx-a" x="510" y="20" width="230" height="230" rx="12"/>
+  <text class="ttl on-a" x="625" y="46" text-anchor="middle">列表：删除第一项</text>
+  <text class="mono sm" x="530" y="78">[A, B, C] → [B, C]</text>
+  <text class="sm on-r" x="530" y="108">无 key：按位置比较</text>
+  <text class="sm" x="546" y="128">A→B、B→C 都被改写</text>
+  <text class="sm" x="546" y="148">再删掉最后一个</text>
+  <text class="sm on-g" x="530" y="182">有 key：认出 B、C 没变</text>
+  <text class="sm" x="546" y="202">只删除 A 一个节点</text>
+  <text class="sm" x="546" y="222">输入框等状态跟着对的项</text>
+</svg>
+<figcaption>图 9-4　调和的两个假设与 key 的作用</figcaption>
+</figure>
+
+<p>
+  我们的迷你版本只实现了按位置比较（没有 key），真实的 React 会先按 key 建立对应关系，再决定移动、新增还是删除。
+  这也解释了第 3 章、第 5 章反复用到的技巧：<strong>改变 key 就能“重置”一个组件</strong>，因为 key 不同在 React 眼里就是另一个元素。
+</p>
+
+<h3>第 5 步：useEffect——提交之后再运行</h3>
+
+<div class="code" data-lang="js"><pre>
+let pendingEffects = []
+
+export function useEffect(callback, deps) {
+  const inst = current
+  const i = inst.index++
+  const old = inst.hooks[i]
+  // 没有依赖数组：每次都运行；有：任何一项变了（Object.is 比较）才运行
+  const changed = !old || !deps || deps.some((d, k) =&gt; !Object.is(d, old.deps[k]))
+  inst.hooks[i] = { deps, cleanup: old?.cleanup }
+  if (changed) {
+    pendingEffects.push(() =&gt; {
+      old?.cleanup?.()                         // 先清理上一次的
+      inst.hooks[i].cleanup = callback()       // 再运行这一次的，保存新的清理函数
+    })
+  }
+}
+
+function renderRoot() {
+  const newTree = expand(rootElement)          // 调用所有组件函数（渲染阶段）
+  patch(container, oldTree, newTree)           // 修改 DOM（提交阶段）
+  oldTree = newTree
+  pendingEffects.forEach((run) =&gt; run())       // DOM 已经更新完，现在才运行 effect
+  pendingEffects = []
+}
+</pre></div>
+
+<p>
+  依赖数组的比较用的是 <code>Object.is</code>：每次渲染都新建的对象或函数放进依赖数组，effect 就会每次都运行 —— 这正是第 4 章 <code>useCallback</code>、<code>useMemo</code> 要解决的问题。
+  完整的迷你 React 还有 <code>expand</code>（递归调用组件函数，给每个组件实例分配 hooks 列表）和“组件消失时运行所有清理函数”，见页面底部演示的源代码。
+</p>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · 运行在迷你 React 上的组件（没有使用真正的 React）</div>
+  <div class="body">
+    <div class="rx-demo">
+      <div class="panel" id="mini-root"><span class="muted">加载中……</span></div>
+      <div class="panel">
+        <div class="muted" style="font-size:13px">渲染日志（最新的在上面）</div>
+        <div class="rx-log" id="mini-log"></div>
+        <div class="muted" style="font-size:13px;margin-top:8px">每个组件实例的 hooks 列表</div>
+        <div class="rx-hooks" id="mini-hooks"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p>
+  试试看：点“+3（更新函数）”，日志里只有<strong>一次</strong>渲染；点“+3（直接用 count）”，三次都是“设为同一个快照值加一”。
+  打开计时器，看 effect 何时运行；关闭计时器，看清理函数何时运行，以及 <code>Timer</code> 的 hooks 列表何时消失。
+  （为了简单，迷你版每次都从根组件开始重新渲染；真正的 React 只会从调用了 <code>setState</code> 的那个组件开始往下渲染。）
+</p>
+
+<h2 id="fiber">真实的 React：Fiber</h2>
+
+<p>
+  我们的迷你 React 有一个致命问题：<code>renderRoot</code> 是<strong>一口气递归到底</strong>的。如果组件树很大，一次渲染要 200 毫秒，这 200 毫秒里浏览器完全无法响应用户输入，页面就卡住了。
+  React 16 引入的 <strong>Fiber</strong> 架构解决的正是这个问题：把渲染工作拆成一个个小单元，可以暂停、可以让出主线程、可以丢弃重来。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="Fiber 树：每个组件或元素对应一个 fiber 节点，用 child、sibling、return 三个指针连成链表，可以用循环逐个处理并随时暂停；current 树对应屏幕上的内容，workInProgress 树在后台构建，完成后一次切换">
+  <rect class="bx-a" x="120" y="20" width="110" height="36" rx="8"/><text class="mono sm on-a" x="175" y="43" text-anchor="middle">App</text>
+  <rect class="bx" x="40" y="110" width="110" height="36" rx="8"/><text class="mono sm" x="95" y="133" text-anchor="middle">Header</text>
+  <rect class="bx" x="200" y="110" width="110" height="36" rx="8"/><text class="mono sm" x="255" y="133" text-anchor="middle">List</text>
+  <rect class="bx" x="160" y="200" width="70" height="36" rx="8"/><text class="mono sm" x="195" y="223" text-anchor="middle">Item</text>
+  <rect class="bx" x="250" y="200" width="70" height="36" rx="8"/><text class="mono sm" x="285" y="223" text-anchor="middle">Item</text>
+  <path class="ln-a" d="M150 58 L105 106" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="100" y="80">child</text>
+  <path class="ln-b" d="M152 128 H196" marker-end="url(#ar)"/>
+  <text class="halo sm on-b" x="174" y="120" text-anchor="middle">sibling</text>
+  <path class="ln-a" d="M240 148 L205 196" marker-end="url(#ar-a)"/>
+  <path class="ln-b" d="M232 218 H246" marker-end="url(#ar)"/>
+  <path class="ln-d" d="M290 108 C300 80 260 60 232 50" marker-end="url(#ar)"/>
+  <text class="halo sm" x="300" y="80">return</text>
+  <text class="sm" x="180" y="268" text-anchor="middle">用循环沿指针走一遍，随时可以停下、记住位置</text>
+
+  <rect class="bx-g" x="400" y="20" width="160" height="110" rx="12"/>
+  <text class="ttl on-g" x="480" y="46" text-anchor="middle">current 树</text>
+  <text class="sm" x="480" y="72" text-anchor="middle">对应屏幕上</text>
+  <text class="sm" x="480" y="92" text-anchor="middle">正在显示的内容</text>
+  <rect class="bx-p" x="580" y="20" width="160" height="110" rx="12"/>
+  <text class="ttl on-p" x="660" y="46" text-anchor="middle">workInProgress</text>
+  <text class="sm" x="660" y="72" text-anchor="middle">在后台构建的</text>
+  <text class="sm" x="660" y="92" text-anchor="middle">下一版界面</text>
+  <path class="ln-p" d="M660 132 C660 170 480 170 480 136" marker-end="url(#ar)"/>
+  <text class="halo sm on-p" x="570" y="176" text-anchor="middle">全部完成后，一次切换指针（提交）</text>
+  <text class="sm" x="570" y="214" text-anchor="middle">构建到一半被打断？丢掉 workInProgress，</text>
+  <text class="sm" x="570" y="234" text-anchor="middle">屏幕上的 current 完全不受影响</text>
+  <text class="sm" x="570" y="262" text-anchor="middle">（这叫“双缓冲”，游戏画面也是这样刷新的）</text>
+</svg>
+<figcaption>图 9-5　Fiber：可以暂停的渲染</figcaption>
+</figure>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#129513;</span><h4>fiber 节点</h4><p>每个组件 / 元素对应一个对象，保存类型、props、hooks 链表（就是我们的 <code>hooks</code> 数组）、对应的 DOM、要做的修改。</p></div>
+  <div class="card"><span class="ic">&#9203;</span><h4>渲染阶段可中断</h4><p>每处理一个 fiber 就检查一下“时间片用完没有”。用完了就把主线程还给浏览器，下一帧再接着做。</p></div>
+  <div class="card"><span class="ic">&#9889;</span><h4>提交阶段不可中断</h4><p>DOM 修改必须一次做完，否则用户会看到改了一半的界面。所以 effect、ref 都在提交之后统一处理。</p></div>
+</div>
+
+<div class="box warn">
+  <div class="t">&#9888; 所以组件必须是纯函数</div>
+  <p>
+    渲染阶段可能被打断后重来、可能被执行多次（Strict Mode 在开发时故意调用两次就是在模拟这一点）。
+    如果你在组件函数体里修改外部变量、发请求、操作 DOM，这些副作用就会发生多次或发生在不该发生的时候。
+    副作用只能放在事件处理函数和 effect 里 —— 它们只在提交之后运行一次。
+  </p>
+</div>
+
+<h2 id="concurrent">并发渲染：区分紧急和不紧急</h2>
+
+<p>
+  有了可以中断的渲染，React 18 起就能给更新分<strong>优先级</strong>（内部叫 lanes）。
+  打字、点击这类<strong>紧急更新</strong>要立刻反映到屏幕上；根据输入过滤一个大列表、切换标签页的内容这类<strong>过渡更新</strong>晚一点没关系，而且如果用户又输入了新字符，旧的渲染可以直接丢弃。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="时间线对比：没有并发时，一次 200 毫秒的列表渲染期间按键无法响应；使用 useDeferredValue 后，输入框的紧急更新立即完成，列表渲染在后台进行，被新的按键打断后丢弃重来">
+  <text class="ttl" x="20" y="34">普通更新</text>
+  <rect class="bx-r" x="120" y="16" width="400" height="30" rx="6"/>
+  <text class="sm on-r" x="320" y="36" text-anchor="middle">渲染整个列表 200ms（主线程被占满）</text>
+  <path class="ln-r" d="M200 60 V48" marker-end="url(#ar)"/>
+  <text class="sm on-r" x="200" y="76" text-anchor="middle">按键 2</text>
+  <path class="ln-r" d="M330 60 V48" marker-end="url(#ar)"/>
+  <text class="sm on-r" x="330" y="76" text-anchor="middle">按键 3</text>
+  <rect class="bx" x="530" y="16" width="60" height="30" rx="6"/><text class="sm" x="560" y="36" text-anchor="middle">2、3</text>
+  <text class="sm" x="600" y="36">按键积压，输入卡顿</text>
+
+  <text class="ttl" x="20" y="130">并发更新</text>
+  <rect class="bx-g" x="120" y="112" width="40" height="30" rx="6"/><text class="sm on-g" x="140" y="132" text-anchor="middle">输入</text>
+  <rect class="bx-d" x="164" y="112" width="110" height="30" rx="6"/><text class="sm" x="219" y="132" text-anchor="middle">后台渲染 ✗</text>
+  <rect class="bx-g" x="278" y="112" width="40" height="30" rx="6"/><text class="sm on-g" x="298" y="132" text-anchor="middle">输入</text>
+  <rect class="bx-d" x="322" y="112" width="90" height="30" rx="6"/><text class="sm" x="367" y="132" text-anchor="middle">后台渲染 ✗</text>
+  <rect class="bx-g" x="416" y="112" width="40" height="30" rx="6"/><text class="sm on-g" x="436" y="132" text-anchor="middle">输入</text>
+  <rect class="bx-a" x="460" y="112" width="200" height="30" rx="6"/><text class="sm on-a" x="560" y="132" text-anchor="middle">用最新的值渲染列表 → 提交</text>
+  <path class="ln-g" d="M278 156 V144" marker-end="url(#ar)"/>
+  <text class="sm on-g" x="278" y="172" text-anchor="middle">按键 2：打断并丢弃</text>
+  <path class="ln-g" d="M436 156 V144" marker-end="url(#ar)"/>
+  <text class="sm on-g" x="436" y="172" text-anchor="middle">按键 3</text>
+  <text class="lbl" x="380" y="222" text-anchor="middle">输入框始终立刻响应；列表“慢半拍”，但不会拖累打字</text>
+</svg>
+<figcaption>图 9-6　并发渲染让紧急更新插队</figcaption>
+</figure>
+
+<p>写法上有两个 Hook：</p>
+
+<div class="code" data-lang="jsx"><pre>
+import { useState, useDeferredValue, useTransition, memo } from 'react'
+
+// ① useDeferredValue：我控制不了更新从哪来，但可以让“用到它的部分”慢半拍
+function Search() {
+  const [text, setText] = useState('')
+  const deferredText = useDeferredValue(text)       // 紧急渲染时还是旧值，后台再用新值渲染一次
+  const stale = text !== deferredText
+  return (
+    &lt;&gt;
+      &lt;input value={text} onChange={(e) =&gt; setText(e.target.value)} /&gt;
+      &lt;div style={{ opacity: stale ? 0.5 : 1 }}&gt;
+        &lt;SlowList text={deferredText} /&gt;              {/* 必须 memo，否则紧急渲染时也会重新渲染它 */}
+      &lt;/div&gt;
+    &lt;/&gt;
+  )
+}
+const SlowList = memo(function SlowList({ text }) { /* 渲染很多行…… */ })
+
+// ② useTransition：更新是我发起的，可以直接把它标记为“过渡”
+function Tabs() {
+  const [tab, setTab] = useState('home')
+  const [isPending, startTransition] = useTransition()
+  return &lt;button onClick={() =&gt; startTransition(() =&gt; setTab('reports'))}&gt;
+    报表 {isPending &amp;&amp; '…'}
+  &lt;/button&gt;
+}
+</pre></div>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · useDeferredValue（真正的 React 19）</div>
+  <div class="body"><div id="demo-deferred"><span class="muted">加载中……</span></div></div>
+</div>
+
+<p>
+  每一行都被故意放慢了。关掉“使用 useDeferredValue”后快速打字，输入框会明显卡顿；打开后，输入框始终流畅，列表在你停下时追上来（变淡表示正在后台更新）。
+  第 5 章的 <code>useActionState</code>、<code>useOptimistic</code> 内部同样基于 transition。
+</p>
+
+<div class="box note">
+  <div class="t">&#9432; 并发不是多线程</div>
+  <p>
+    JavaScript 还是单线程的。“并发”指的是 React 可以<strong>同时准备多个版本的界面</strong>，并在它们之间切换、丢弃。
+    真正耗时的计算（比如解析一个 10MB 的文件）不会因此变快，那应该交给 Web Worker。
+  </p>
+</div>
+
+<h2 id="compiler">React Compiler 做了什么</h2>
+
+<p>
+  第 4 章说过，父组件渲染时子组件默认都会渲染，手动优化要用 <code>memo</code>、<code>useMemo</code>、<code>useCallback</code>，写起来繁琐还容易漏掉依赖。
+  React Compiler 在<strong>构建时</strong>分析每个组件，自动插入缓存。它编译后的代码大致是这样的：
+</p>
+
+<div class="vs">
+  <div class="old"><div class="h">你写的</div>
+<div class="code" data-lang="jsx"><pre>
+function TodoList({ todos, filter }) {
+  const visible = todos.filter(
+    (t) =&gt; t.status === filter
+  )
+  return &lt;List items={visible} /&gt;
+}
+</pre></div></div>
+  <div class="new"><div class="h">编译后（示意）</div>
+<div class="code" data-lang="js"><pre>
+function TodoList({ todos, filter }) {
+  const $ = _c(3)              // 这个组件的缓存格子
+  let el
+  if ($[0] !== todos || $[1] !== filter) {
+    const visible = todos.filter(…)
+    el = &lt;List items={visible} /&gt;
+    $[0] = todos; $[1] = filter; $[2] = el
+  } else {
+    el = $[2]                  // 输入没变：直接复用上次的元素
+  }
+  return el
+}
+</pre></div></div>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="React Compiler：输入没变时返回上一次的同一个元素对象，React 调和时发现元素引用相同，整棵子树直接跳过">
+  <rect class="bx-b" x="20" y="60" width="170" height="100" rx="12"/>
+  <text class="ttl on-b" x="105" y="86" text-anchor="middle">父组件重新渲染</text>
+  <text class="sm" x="105" y="112" text-anchor="middle">todos、filter</text>
+  <text class="sm" x="105" y="132" text-anchor="middle">都没有变</text>
+  <path class="ln" d="M192 110 H246" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="250" y="40" width="220" height="140" rx="12"/>
+  <text class="ttl on-a" x="360" y="66" text-anchor="middle">编译后的 TodoList</text>
+  <text class="mono sm" x="360" y="94" text-anchor="middle">$[0] === todos ✓</text>
+  <text class="mono sm" x="360" y="114" text-anchor="middle">$[1] === filter ✓</text>
+  <text class="sm" x="360" y="140" text-anchor="middle">跳过 filter 计算</text>
+  <text class="sm" x="360" y="160" text-anchor="middle">返回同一个元素对象</text>
+  <path class="ln" d="M472 110 H526" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="530" y="60" width="210" height="100" rx="12"/>
+  <text class="ttl on-g" x="635" y="86" text-anchor="middle">调和</text>
+  <text class="sm" x="635" y="112" text-anchor="middle">元素引用和上次相同</text>
+  <text class="sm" x="635" y="132" text-anchor="middle">→ List 整棵子树跳过</text>
+  <text class="lbl" x="380" y="208" text-anchor="middle">效果相当于自动加上了 useMemo + memo，而且粒度比手写的更细</text>
+</svg>
+<figcaption>图 9-7　编译器缓存的是“计算结果”和“元素”</figcaption>
+</figure>
+
+<p>
+  编译器能这样做，前提是你的代码遵守 <strong>React 的规则</strong>：组件和 Hook 是纯的（相同输入得到相同输出）、props 和 state 不可变、Hooks 只在顶层调用。
+  一旦你直接修改了 props 里的对象，编译器以为“引用没变就是没变”的假设就被打破了。所以前面强调的“不可变更新”在编译器时代更加重要。
+  编译器发现某个组件违反规则时，会<strong>跳过</strong>这个组件而不是编译出错误的代码；<code>eslint-plugin-react-hooks</code> 的新版本里也包含了这些检查。
+</p>
+
+<h2 id="escape">逃生舱与底层 API</h2>
+
+<div class="tw"><table>
+<thead><tr><th>API</th><th>它绕过了什么</th><th>什么时候用</th></tr></thead>
+<tbody>
+<tr><td><code>useRef</code></td><td>状态 → 渲染的循环：改了不渲染</td><td>DOM 元素、计时器 id、需要读最新值但不显示的数据</td></tr>
+<tr><td><code>useLayoutEffect</code></td><td>effect 在浏览器绘制之后运行</td><td>要在绘制前测量 DOM 并调整位置（如提示框），避免闪烁</td></tr>
+<tr><td><code>flushSync</code></td><td>批处理和异步渲染</td><td>必须立刻拿到更新后的 DOM，如更新后马上滚动到新元素</td></tr>
+<tr><td><code>useSyncExternalStore</code></td><td>React 只认自己的状态</td><td>订阅外部数据源（浏览器 API、Zustand、Meteor），并发渲染下也不会“撕裂”</td></tr>
+<tr><td><code>useEffectEvent</code></td><td>effect 依赖数组</td><td>effect 里要读最新的 props/state，但不想因为它们变化而重新运行</td></tr>
+<tr><td><code>&lt;Activity&gt;</code></td><td>卸载即销毁</td><td>隐藏但保留状态，或在后台预渲染（第 5 章（下））</td></tr>
+</tbody>
+</table></div>
+
+<div class="box tip">
+  <div class="t">&#10003; “撕裂”是什么</div>
+  <p>
+    并发渲染可以暂停。如果渲染到一半时，一个外部 store 的值变了，前半部分组件读到旧值、后半部分读到新值，同一屏上就会显示不一致的数据 —— 这叫撕裂（tearing）。
+    <code>useSyncExternalStore</code> 会在提交前检查快照有没有变，有变化就同步地重新渲染，保证一致。这就是第 6 章 Zustand、第 8 章 Meteor 都要基于它的原因。
+  </p>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<div class="tw"><table>
+<thead><tr><th>概念</th><th>一句话</th></tr></thead>
+<tbody>
+<tr><td>元素</td><td>JSX 编译成描述界面的普通对象，创建很便宜</td></tr>
+<tr><td>渲染 / 提交</td><td>渲染是调用组件函数、比较新旧树（纯计算）；提交才修改 DOM、运行 effect</td></tr>
+<tr><td>Hooks 的存储</td><td>每个组件实例一个列表，按调用顺序取用 → 只能在顶层调用</td></tr>
+<tr><td>状态快照</td><td><code>useState</code> 返回渲染时的值；<code>setState</code> 只是入队并预约渲染</td></tr>
+<tr><td>批处理</td><td>多次 set 合并成一次渲染；更新函数在队列里依次执行</td></tr>
+<tr><td>调和</td><td>同类型复用、不同类型重建、列表靠 key；改 key 可以重置组件</td></tr>
+<tr><td>Fiber</td><td>渲染拆成可暂停的小单元，双缓冲；提交一次完成</td></tr>
+<tr><td>并发</td><td><code>useTransition</code> / <code>useDeferredValue</code>：非紧急更新可被打断、丢弃</td></tr>
+<tr><td>React Compiler</td><td>构建时自动缓存计算和元素；依赖纯函数和不可变数据</td></tr>
+</tbody>
+</table></div>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>给迷你 React 加上 <code>useRef</code>：它就是一个永远返回同一个 <code>{ current }</code> 对象的 Hook（提示：只在第一次创建时放进 hooks 列表）。</li>
+    <li>实现 <code>useMemo(fn, deps)</code>：和 <code>useEffect</code> 一样比较依赖，但在渲染时同步计算并缓存结果。</li>
+    <li>给迷你 React 的列表比较加上 key：先用 <code>Map</code> 按 key 找到旧节点，复用它的 DOM，再用 <code>insertBefore</code> 调整顺序。</li>
+    <li>把 <code>scheduleRender</code> 里的 <code>queueMicrotask</code> 换成同步调用 <code>renderRoot()</code>，在演示里点“+3（更新函数）”，观察日志里渲染了几次。</li>
+    <li>在第 6 章的博客里，用 <code>useDeferredValue</code> 给“按标题搜索帖子”做优化，用 Profiler 对比前后输入时的耗时。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+<script>
+  // ============ 演示 1：迷你 React（正文代码的完整版本 + 日志），没有使用真正的 React ============
+  (function () {
+    const container = document.getElementById('mini-root')
+    if (!container) return
+    const logEl = document.getElementById('mini-log')
+    const hooksEl = document.getElementById('mini-hooks')
+    const log = (cls, text) => {
+      const d = document.createElement('div')
+      d.innerHTML = `<span class="${cls}">${text}</span>`
+      logEl.prepend(d)
+      while (logEl.children.length > 60) logEl.lastChild.remove()
+    }
+
+    // ---------- 元素 ----------
+    function h(type, props, ...children) {
+      return {
+        type,
+        props: {
+          ...props,
+          children: children.flat()
+            .filter((c) => c != null && c !== false)
+            .map((c) => typeof c === 'object' ? c : { type: 'TEXT', props: { nodeValue: String(c), children: [] } }),
+        },
+      }
+    }
+
+    // ---------- Hooks ----------
+    const instances = new Map()   // 组件路径 → { name, hooks }
+    let current = null
+    let pendingEffects = []
+    let visited = new Set()
+
+    function useState(initial) {
+      const inst = current
+      const i = inst.index++
+      if (!(i in inst.hooks)) inst.hooks[i] = { kind: 'state', value: typeof initial === 'function' ? initial() : initial, queue: [] }
+      const hook = inst.hooks[i]
+      for (const u of hook.queue) hook.value = typeof u === 'function' ? u(hook.value) : u
+      hook.queue = []
+      const setState = (u) => { hook.queue.push(u); log('', `  setState → 入队（${inst.name}[${i}]）`); scheduleRender() }
+      return [hook.value, setState]
+    }
+
+    function useEffect(callback, deps) {
+      const inst = current
+      const i = inst.index++
+      const old = inst.hooks[i]
+      const changed = !old || !deps || deps.some((d, k) => !Object.is(d, old.deps[k]))
+      inst.hooks[i] = { kind: 'effect', deps, cleanup: old && old.cleanup }
+      if (changed) {
+        pendingEffects.push(() => {
+          if (old && old.cleanup) { log('c', `cleanup ${inst.name}[${i}]`); old.cleanup() }
+          log('e', `effect ${inst.name}[${i}] 运行`)
+          inst.hooks[i].cleanup = callback()
+        })
+      }
+    }
+
+    // ---------- 渲染：递归调用组件函数，得到只含 DOM 标签的树 ----------
+    function expand(el, path) {
+      if (typeof el.type === 'function') {
+        const key = path + '/' + el.type.name
+        let inst = instances.get(key)
+        if (!inst) { inst = { name: el.type.name, hooks: [] }; instances.set(key, inst); log('r', `挂载 ${el.type.name}`) }
+        visited.add(key)
+        inst.index = 0
+        current = inst
+        log('r', `渲染 ${el.type.name}()`)
+        const out = el.type(el.props)
+        current = null
+        return out ? expand(out, key) : null
+      }
+      return { type: el.type, props: { ...el.props, children: el.props.children.map((c, i) => expand(c, path + '.' + i)).filter(Boolean) } }
+    }
+
+    // ---------- 提交：比较新旧树，修改 DOM ----------
+    const isEvent = (k) => k.startsWith('on')
+    function updateProps(dom, oldP, newP) {
+      for (const k in oldP) if (k !== 'children' && !(k in newP)) {
+        if (isEvent(k)) dom.removeEventListener(k.slice(2).toLowerCase(), oldP[k]); else dom[k] = ''
+      }
+      for (const k in newP) if (k !== 'children' && oldP[k] !== newP[k]) {
+        if (isEvent(k)) { if (oldP[k]) dom.removeEventListener(k.slice(2).toLowerCase(), oldP[k]); dom.addEventListener(k.slice(2).toLowerCase(), newP[k]) }
+        else if (k === 'style') dom.style.cssText = newP[k]
+        else dom[k] = newP[k]
+      }
+    }
+    function createDom(node) {
+      const dom = node.type === 'TEXT' ? document.createTextNode('') : document.createElement(node.type)
+      updateProps(dom, { children: [] }, node.props)
+      node.dom = dom
+      node.props.children.forEach((c) => dom.appendChild(createDom(c)))
+      return dom
+    }
+    function patch(parent, oldNode, newNode) {
+      if (!oldNode) parent.appendChild(createDom(newNode))
+      else if (!newNode) parent.removeChild(oldNode.dom)
+      else if (oldNode.type !== newNode.type) parent.replaceChild(createDom(newNode), oldNode.dom)
+      else {
+        newNode.dom = oldNode.dom
+        updateProps(newNode.dom, oldNode.props, newNode.props)
+        const a = oldNode.props.children, b = newNode.props.children
+        for (let i = a.length - 1; i >= b.length; i--) newNode.dom.removeChild(a[i].dom)
+        for (let i = 0; i < b.length; i++) patch(newNode.dom, a[i], b[i])
+      }
+    }
+
+    // ---------- 调度 ----------
+    let scheduled = false, oldTree = null, rootElement = null, renders = 0
+    function scheduleRender() {
+      if (scheduled) return
+      scheduled = true
+      queueMicrotask(() => { scheduled = false; renderRoot() })
+    }
+    function renderRoot() {
+      log('h', `—— 第 ${++renders} 次渲染 ——`)
+      visited = new Set()
+      const newTree = expand(rootElement, 'root')
+      patch(container, oldTree, newTree)
+      oldTree = newTree
+      // 这次没有渲染到的组件 = 已卸载：运行它们的清理函数
+      for (const [key, inst] of instances) if (!visited.has(key)) {
+        inst.hooks.forEach((hk, i) => { if (hk.kind === 'effect' && hk.cleanup) { log('c', `cleanup ${inst.name}[${i}]（卸载）`); hk.cleanup() } })
+        instances.delete(key)
+        log('r', `卸载 ${inst.name}`)
+      }
+      const effects = pendingEffects; pendingEffects = []
+      effects.forEach((run) => run())
+      showHooks()
+    }
+    function showHooks() {
+      hooksEl.innerHTML = ''
+      for (const [, inst] of instances) {
+        const cells = inst.hooks.map((hk, i) => hk.kind === 'state' ? `[${i}] state=${JSON.stringify(hk.value)}` : `[${i}] effect deps=${JSON.stringify(hk.deps)}`)
+        const d = document.createElement('div')
+        d.textContent = `${inst.name}: ${cells.join('  ') || '（无）'}`
+        hooksEl.appendChild(d)
+      }
+    }
+
+    // ---------- 用迷你 React 写的组件 ----------
+    function Counter() {
+      const [count, setCount] = useState(0)
+      return h('div', null,
+        h('div', { className: 'big' }, count),
+        h('div', { className: 'row' },
+          h('button', { onClick: () => setCount(count + 1) }, '+1'),
+          h('button', { onClick: () => { setCount((c) => c + 1); setCount((c) => c + 1); setCount((c) => c + 1) } }, '+3（更新函数）'),
+          h('button', { className: 'ghost', onClick: () => { setCount(count + 1); setCount(count + 1); setCount(count + 1) } }, '+3（直接用 count）')))
+    }
+    function Timer() {
+      const [sec, setSec] = useState(0)
+      useEffect(() => {
+        const id = setInterval(() => setSec((s) => s + 1), 1000)
+        return () => clearInterval(id)
+      }, [])
+      return h('div', { className: 'muted' }, '计时器：', sec, ' 秒')
+    }
+    function App() {
+      const [show, setShow] = useState(false)
+      return h('div', null,
+        h(Counter, null),
+        h('div', { className: 'row' },
+          h('button', { className: 'ghost', onClick: () => setShow((s) => !s) }, show ? '关闭计时器' : '打开计时器')),
+        show && h(Timer, null))
+    }
+
+    container.textContent = ''
+    rootElement = h(App, null)
+    renderRoot()
+  })()
+</script>
+<script type="module">
+  // ============ 演示 2：useDeferredValue（真正的 React 19） ============
+  import { createElement, useState, useDeferredValue, memo } from 'react'
+  import { createRoot } from 'react-dom/client'
+  import htm from 'htm'
+  const html = htm.bind(createElement)
+
+  const WORDS = '响应 渲染 组件 状态 副作用 调和 提交 并发 过渡 缓存 编译 钩子 元素 节点 列表 路由 表单 动画 测试 构建'.split(' ')
+  const ITEMS = Array.from({ length: 250 }, (_, i) => `${i + 1}. ${WORDS[i % WORDS.length]}${WORDS[(i * 7) % WORDS.length]}`)
+
+  function SlowItem({ text, q }) {
+    const end = performance.now() + 0.6       // 每一行故意耗时 0.6ms
+    while (performance.now() < end) {}
+    return html`<li>${q && text.includes(q) ? html`<mark>${text}</mark>` : text}</li>`
+  }
+  const SlowList = memo(function SlowList({ q }) {
+    return html`<ul className="slow-list">${ITEMS.map((t) => html`<${SlowItem} key=${t} text=${t} q=${q} />`)}</ul>`
+  })
+
+  function Demo() {
+    const [text, setText] = useState('')
+    const [useDeferred, setUseDeferred] = useState(true)
+    const deferred = useDeferredValue(text)
+    const q = useDeferred ? deferred : text
+    return html`<div>
+      <div style=${{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+        <input value=${text} onChange=${(e) => setText(e.target.value)} placeholder="快速输入，比如：并发过渡" style=${{ flex: '1 1 200px', minWidth: 0 }} />
+        <label style=${{ fontSize: '14px' }}><input type="checkbox" checked=${useDeferred} onChange=${(e) => setUseDeferred(e.target.checked)} /> 使用 useDeferredValue</label>
+      </div>
+      <div style=${{ opacity: useDeferred && text !== deferred ? 0.45 : 1, transition: 'opacity .15s' }}>
+        <${SlowList} q=${q} />
+      </div>
+    </div>`
+  }
+  createRoot(document.getElementById('demo-deferred')).render(html`<${Demo} />`)
+</script>
+</body>
+</html>

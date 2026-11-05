@@ -1,0 +1,645 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 11 章 · 大型项目架构 — React 项目实战教程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="assets/react.css">
+</head>
+<body data-chapter="11">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 11 章 · 进阶专题</span>
+<h1>大型项目架构</h1>
+<p class="lede">
+  书里的六个项目都不大，一个 <code>components/</code> 文件夹就能装下。可是当项目有了几十个页面、上百个组件、好几个人同时开发，甚至几个应用要共享代码时，
+  “文件放哪儿”“谁能引用谁”就成了真正的问题。本章介绍让项目在长大后依然好维护的组织方式：<strong>按功能分模块</strong>、<strong>清晰的依赖方向</strong>、
+  <strong>统一的数据层</strong>，以及用 <strong>pnpm workspace</strong> 管理多个应用和一个共享组件库。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>理解“按类型组织”和“按功能组织”的区别，学会划分功能模块</li>
+    <li>给模块定下依赖规则，并用 ESLint 自动检查</li>
+    <li>让每个功能模块自己注册路由，用 <code>import.meta.glob</code> 自动收集</li>
+    <li>区分“服务端状态”和“客户端状态”，用 <code>queryOptions</code> 把 TanStack Query 组织成可复用的数据层</li>
+    <li>用 pnpm workspace + Turborepo 搭建 monorepo</li>
+    <li>用 Vite 库模式构建一个组件库，生成类型声明，并用 Changesets 发布版本</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="problem">项目长大以后</h2>
+
+<p>先回忆第 5 章客服中心的目录。它是按<strong>文件类型</strong>组织的：所有组件放一起，所有 Hook 放一起。项目小的时候很直观，但功能一多：</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#128193;</span><h4>文件夹越来越长</h4><p><code>components/</code> 里躺着 120 个文件，找一个组件要靠搜索。</p></div>
+  <div class="card"><span class="ic">&#128376;</span><h4>改一处牵动全身</h4><p>工单功能的组件被用户中心直接引用了，改工单时不知道会不会影响别处。</p></div>
+  <div class="card"><span class="ic">&#128465;</span><h4>不敢删代码</h4><p>想下线一个功能，却要在五六个文件夹里分别找它的文件，还怕漏掉。</p></div>
+</div>
+
+<h2 id="features">按功能组织</h2>
+
+<p>解决办法是把<strong>同一个功能相关的所有文件放在一起</strong>，形成一个功能模块（feature module）：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 330" role="img" aria-label="左边按类型组织：components、hooks、stores 等文件夹，工单相关文件散落各处；右边按功能组织：features/tickets 文件夹包含工单的组件、Hook、接口、store 和路由">
+  <rect class="bx-r" x="20" y="20" width="330" height="290" rx="12"/>
+  <text class="ttl on-r" x="185" y="46" text-anchor="middle">按类型组织</text>
+  <text class="mono sm" x="40" y="76">src/</text>
+  <text class="mono sm" x="56" y="98">components/</text>
+  <text class="mono sm on-a" x="76" y="118">TicketList.jsx</text>
+  <text class="mono sm" x="76" y="138">UserMenu.jsx</text>
+  <text class="mono sm on-a" x="76" y="158">TicketCard.jsx …（120 个）</text>
+  <text class="mono sm" x="56" y="182">hooks/</text>
+  <text class="mono sm on-a" x="76" y="202">useTickets.js</text>
+  <text class="mono sm" x="56" y="226">stores/</text>
+  <text class="mono sm on-a" x="76" y="246">tickets.js</text>
+  <text class="mono sm" x="56" y="270">api/</text>
+  <text class="mono sm on-a" x="76" y="290">tickets.js</text>
+
+  <rect class="bx-g" x="410" y="20" width="330" height="290" rx="12"/>
+  <text class="ttl on-g" x="575" y="46" text-anchor="middle">按功能组织</text>
+  <text class="mono sm" x="430" y="76">src/</text>
+  <text class="mono sm" x="446" y="98">features/</text>
+  <text class="mono sm on-a" x="466" y="118">tickets/</text>
+  <text class="mono sm" x="486" y="138">components/  TicketList.jsx …</text>
+  <text class="mono sm" x="486" y="158">hooks/  api.js  store.js</text>
+  <text class="mono sm" x="486" y="178">routes.js</text>
+  <text class="mono sm" x="486" y="198">index.js     ← 对外出口</text>
+  <text class="mono sm" x="466" y="222">auth/   blog/   faq/</text>
+  <text class="mono sm" x="446" y="246">shared/   ← 通用组件和工具</text>
+  <text class="mono sm" x="446" y="270">app/      ← 入口、路由、布局</text>
+  <text class="sm" x="430" y="296">工单相关的文件都在一个文件夹里</text>
+
+  <text class="sm on-r" x="185" y="324" text-anchor="middle">高亮的工单相关文件分散在 4 个地方</text>
+</svg>
+<figcaption>图 11-1　按类型组织 vs 按功能组织</figcaption>
+</figure>
+
+<div class="tree"><b>src/</b>
+├── <b>app/</b>                    # 应用外壳：只做“组装”
+│   ├── main.jsx
+│   ├── router.jsx              # 收集各功能的路由
+│   └── layouts/
+├── <b>features/</b>
+│   ├── <b>tickets/</b>
+│   │   ├── components/
+│   │   ├── hooks/
+│   │   ├── api.js              # 这个功能的接口和 queryOptions
+│   │   ├── store.js            # 这个功能的 Zustand store（如果需要）
+│   │   ├── routes.js           # 这个功能的路由
+│   │   └── index.js            # 公开出口：别的模块只能从这里引用
+│   ├── auth/
+│   └── blog/
+└── <b>shared/</b>                 # 与业务无关、谁都能用
+    ├── ui/                     # 基础组件（第 10 章）
+    ├── hooks/                  # useDebounce、useMediaQuery…
+    ├── api/http.js             # 统一的请求客户端
+    └── utils/
+</div>
+
+<h3>依赖方向：只能“向下”引用</h3>
+
+<p>光分文件夹还不够，关键是定下<strong>谁可以引用谁</strong>。规则很简单：上层可以引用下层，下层不能引用上层，同层的功能模块之间尽量不直接引用。</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 302" role="img" aria-label="依赖方向：app 可以引用 features 和 shared；features 只能引用 shared 和其他功能的公开出口；shared 不能引用任何业务代码">
+  <rect class="bx-b" x="230" y="20" width="300" height="56" rx="12"/>
+  <text class="ttl on-b" x="380" y="44" text-anchor="middle">app/</text>
+  <text class="sm" x="380" y="64" text-anchor="middle">入口、路由表、布局：把功能拼起来</text>
+
+  <rect class="bx-a" x="40" y="120" width="200" height="60" rx="12"/>
+  <text class="ttl on-a" x="140" y="146" text-anchor="middle">features/tickets</text>
+  <text class="sm" x="140" y="166" text-anchor="middle">index.js 是唯一出口</text>
+  <rect class="bx-a" x="280" y="120" width="200" height="60" rx="12"/>
+  <text class="ttl on-a" x="380" y="146" text-anchor="middle">features/auth</text>
+  <text class="sm" x="380" y="166" text-anchor="middle">index.js 是唯一出口</text>
+  <rect class="bx-a" x="520" y="120" width="200" height="60" rx="12"/>
+  <text class="ttl on-a" x="620" y="146" text-anchor="middle">features/blog</text>
+  <text class="sm" x="620" y="166" text-anchor="middle">index.js 是唯一出口</text>
+
+  <rect class="bx-g" x="130" y="220" width="500" height="52" rx="12"/>
+  <text class="ttl on-g" x="380" y="243" text-anchor="middle">shared/</text>
+  <text class="sm" x="380" y="262" text-anchor="middle">不认识任何业务：不能 import features 或 app</text>
+
+  <path class="ln" d="M330 78 L170 116" marker-end="url(#ar)"/>
+  <path class="ln" d="M380 78 V116" marker-end="url(#ar)"/>
+  <path class="ln" d="M430 78 L590 116" marker-end="url(#ar)"/>
+  <path class="ln" d="M140 182 L240 216" marker-end="url(#ar)"/>
+  <path class="ln" d="M380 182 V216" marker-end="url(#ar)"/>
+  <path class="ln" d="M620 182 L520 216" marker-end="url(#ar)"/>
+  <path class="ln-d" d="M240 150 H276" marker-end="url(#ar)"/>
+    <path class="ln-r" d="M600 218 C 700 200, 720 120, 680 82 L534 52" marker-end="url(#ar)"/>
+  <text class="lbl on-r halo" x="700" y="66" text-anchor="middle">✗ 禁止</text>
+  <text class="lbl" x="380" y="294" text-anchor="middle">实线箭头：允许的引用方向；虚线：功能之间只能经对方的 index.js 引用</text>
+</svg>
+<figcaption>图 11-2　模块之间的依赖方向</figcaption>
+</figure>
+
+<p>功能模块的 <code>index.js</code> 只导出别人需要的东西，内部文件可以随便重构：</p>
+
+<div class="code" data-lang="js" data-file="src/features/auth/index.js"><pre>
+export { useAuth } from './hooks/useAuth'
+export { default as UserMenu } from './components/UserMenu'
+export { routes } from './routes'
+// LoginForm.jsx、api.js 等内部细节不导出
+</pre></div>
+
+<p>规则写在文档里迟早会被打破，最好交给 ESLint 自动检查。用内置的 <code>no-restricted-imports</code> 就能做到大部分：</p>
+
+<div class="code" data-lang="js" data-file="eslint.config.js"><pre>
+import reactHooks from 'eslint-plugin-react-hooks'
+
+export default [
+  reactHooks.configs.flat.recommended,
+  {
+    // 禁止深入别的功能模块内部，只能用它的 index.js
+    files: ['src/**/*.{js,jsx,ts,tsx}'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{ group: ['@/features/*/*'], message: '请从功能模块的 index.js 导入' }],
+      }],
+    },
+  },
+  {
+    // shared 不能依赖任何业务代码
+    files: ['src/shared/**'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{ group: ['@/features/*', '@/app/*'], message: 'shared 不能依赖业务代码' }],
+      }],
+    },
+  },
+]
+</pre></div>
+
+<div class="box deep">
+  <div class="t">&#128270; 想要更完整的规范？</div>
+  <p>
+    社区有一套叫 <strong>Feature-Sliced Design</strong> 的方法论，把层次进一步细分为 app / pages / widgets / features / entities / shared，
+    并配有 <code>eslint-plugin-boundaries</code> 等工具强制执行。大团队可以参考，小团队用上面三层就够了，重要的是<strong>规则一致</strong>。
+  </p>
+</div>
+
+<h3>每个功能自己注册路由</h3>
+
+<p>
+  路由表是最容易变成“大杂烩”的文件。让每个功能模块导出自己的路由（全部懒加载），<code>app/router.jsx</code> 用 Vite 的 <code>import.meta.glob</code> 自动收集，
+  新增一个功能就不用再改中心文件了：
+</p>
+
+<div class="code" data-lang="js" data-file="src/features/tickets/routes.js"><pre>
+export const routes = [
+  {
+    path: 'tickets',
+    lazy: () =&gt; import('./components/TicketsLayout').then((m) =&gt; ({ Component: m.default })),
+    children: [
+      { index: true, lazy: () =&gt; import('./components/Tickets').then((m) =&gt; ({ Component: m.default })) },
+      { path: ':id', lazy: () =&gt; import('./components/TicketPage').then((m) =&gt; ({ Component: m.default })) },
+    ],
+  },
+]
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="src/app/router.jsx"><pre>
+import { createBrowserRouter } from 'react-router'
+import AppLayout from './layouts/AppLayout'
+import Home from './pages/Home'
+import NotFound from './pages/NotFound'
+
+// eager: true —— 立即导入这些 routes.js（它们很小，组件本身仍是懒加载的）
+const modules = import.meta.glob('../features/*/routes.js', { eager: true })
+const featureRoutes = Object.values(modules).flatMap((m) =&gt; m.routes)
+
+export const router = createBrowserRouter([
+  {
+    path: '/',
+    Component: AppLayout,
+    children: [
+      { index: true, Component: Home },
+      ...featureRoutes,
+      { path: '*', Component: NotFound },
+    ],
+  },
+])
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 或者干脆用文件路由</div>
+  <p>
+    Next.js、React Router 框架模式、TanStack Router 都支持<strong>文件即路由</strong>：在 <code>app/</code> 或 <code>routes/</code> 下新建文件就多一个页面。
+    这时路由文件只做“薄薄一层”，从 <code>features/*</code> 导入真正的页面组件，按功能组织的原则不变。TanStack Router 还能根据路由生成完整的类型，参数写错了编译就会报错。
+  </p>
+</div>
+
+<h2 id="data">数据层：服务端状态和客户端状态</h2>
+
+<p>
+  第 5 章已经用 TanStack Query 管理过工单数据，而第 6 章的帖子还放在 Zustand 里，自己处理竞态、刷新和“复用未变对象”。
+  项目大了以后应该统一规则：从服务器拿来的数据（工单、帖子、用户资料）有缓存、去重、过期刷新、分页这些共性问题，
+  它们和“侧边栏是否展开”这种纯前端状态是两种完全不同的东西：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="服务端状态由 TanStack Query 管理：缓存、去重、过期刷新；客户端状态由 Zustand 或 useState 管理：主题、侧边栏、表单草稿">
+  <rect class="bx-b" x="20" y="20" width="350" height="210" rx="14"/>
+  <text class="ttl on-b" x="195" y="46" text-anchor="middle">服务端状态</text>
+  <text class="sm" x="195" y="68" text-anchor="middle">真正的数据在服务器上，前端只是“缓存的副本”</text>
+  <text class="sm" x="40" y="98">· 工单列表、帖子、用户资料</text>
+  <text class="sm" x="40" y="120">· 会过期，别人可能已经改了它</text>
+  <text class="sm" x="40" y="142">· 需要：缓存、去重、后台刷新、重试</text>
+  <rect class="bx-a" x="40" y="164" width="310" height="48" rx="10"/>
+  <text class="ttl on-a" x="195" y="186" text-anchor="middle">TanStack Query</text>
+  <text class="sm" x="195" y="204" text-anchor="middle">或 SWR、框架的 loader / 服务端组件</text>
+
+  <rect class="bx-p" x="390" y="20" width="350" height="210" rx="14"/>
+  <text class="ttl on-p" x="565" y="46" text-anchor="middle">客户端状态</text>
+  <text class="sm" x="565" y="68" text-anchor="middle">只存在于浏览器里，前端就是唯一来源</text>
+  <text class="sm" x="410" y="98">· 当前用户、主题、侧边栏是否展开</text>
+  <text class="sm" x="410" y="120">· 购物车、表单草稿、地图视野</text>
+  <text class="sm" x="410" y="142">· 需要：共享、持久化</text>
+  <rect class="bx-a" x="410" y="164" width="310" height="48" rx="10"/>
+  <text class="ttl on-a" x="565" y="186" text-anchor="middle">Zustand / useState / Context</text>
+  <text class="sm" x="565" y="204" text-anchor="middle">第 6 章的内容</text>
+</svg>
+<figcaption>图 11-3　两种状态，两种工具</figcaption>
+</figure>
+
+<p>先写一个统一的请求客户端，所有功能的接口都通过它发请求，这样认证头、错误处理、基础地址只需要写一次：</p>
+
+<div class="code" data-lang="js" data-file="src/shared/api/http.js"><pre>
+export class HttpError extends Error {
+  constructor(status, body) { super(body?.message || `HTTP ${status}`); this.status = status; this.body = body }
+}
+
+export async function http(path, { body, ...options } = {}) {
+  const res = await fetch(import.meta.env.VITE_API_BASE + path, {
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...options.headers },
+    body: body ? JSON.stringify(body) : undefined,
+    ...options,
+  })
+  const data = res.status === 204 ? null : await res.json().catch(() =&gt; null)
+  if (!res.ok) throw new HttpError(res.status, data)
+  return data
+}
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/features/tickets/api.js"><pre>
+import { http } from '@/shared/api/http'
+
+export const ticketsApi = {
+  list: (page) =&gt; http(`/tickets?page=${page}`),
+  get: (id) =&gt; http(`/tickets/${id}`),
+  create: (data) =&gt; http('/tickets', { method: 'POST', body: data }),
+}
+</pre></div>
+
+<p>
+  然后用 <code>queryOptions</code> 把“查询键 + 请求函数 + 缓存策略”定义在一处。组件、路由 loader、预取都用同一份定义，
+  查询键不会因为某处手写拼错而对不上：
+</p>
+
+<div class="code" data-lang="js" data-file="src/features/tickets/queries.js"><pre>
+import { queryOptions, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
+import { ticketsApi } from './api'
+
+// 查询键工厂：所有和工单有关的键都以 ['tickets'] 开头，方便一次失效
+export const ticketQueries = {
+  all: () =&gt; ['tickets'],
+  list: (page) =&gt; queryOptions({
+    queryKey: ['tickets', 'list', page],
+    queryFn: () =&gt; ticketsApi.list(page),
+    staleTime: 30_000,                    // 30 秒内认为数据是新鲜的，不重复请求
+    placeholderData: keepPreviousData,    // 翻页时先保留上一页，避免闪烁
+  }),
+  detail: (id) =&gt; queryOptions({
+    queryKey: ['tickets', 'detail', id],
+    queryFn: () =&gt; ticketsApi.get(id),
+  }),
+}
+
+export function useCreateTicket() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ticketsApi.create,
+    // 成功后让所有工单相关缓存失效（列表、详情），自动重新获取
+    onSuccess: () =&gt; queryClient.invalidateQueries({ queryKey: ticketQueries.all() }),
+  })
+}
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="src/features/tickets/components/Tickets.jsx"><pre>
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { ticketQueries } from '../queries'
+
+export default function Tickets() {
+  const [page, setPage] = useState(1)
+  const { data, isPending, isError, error, isFetching } = useQuery(ticketQueries.list(page))
+
+  if (isPending) return &lt;p&gt;加载中…&lt;/p&gt;
+  if (isError) return &lt;p&gt;出错了：{error.message}&lt;/p&gt;
+  return (
+    &lt;&gt;
+      {data.items.map((t) =&gt; &lt;TicketCard key={t.id} ticket={t} /&gt;)}
+      &lt;button disabled={page === 1} onClick={() =&gt; setPage((p) =&gt; p - 1)}&gt;上一页&lt;/button&gt;
+      &lt;button onClick={() =&gt; setPage((p) =&gt; p + 1)}&gt;下一页&lt;/button&gt;
+      {isFetching &amp;&amp; &lt;small&gt;更新中…&lt;/small&gt;}
+    &lt;/&gt;
+  )
+}
+</pre></div>
+
+<p>同一份定义还能在路由 loader 里<strong>预取</strong>：用户点击链接时，数据请求和页面代码的下载同时开始，而不是等组件渲染出来才发请求（这种“瀑布”是大型 SPA 变慢的常见原因）：</p>
+
+<div class="code" data-lang="js"><pre>
+{ path: ':id', loader: ({ params }) =&gt; queryClient.ensureQueryData(ticketQueries.detail(params.id)), lazy: … }
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 用了服务端组件呢？</div>
+  <p>
+    在 Next.js App Router 里，很多“读数据”直接在服务端组件里 <code>await</code> 就完成了，不需要客户端缓存。
+    TanStack Query 仍然适合需要在浏览器里频繁交互、轮询、无限滚动的数据；两者可以配合：服务端预取后用 <code>HydrationBoundary</code> 把缓存交给客户端。
+  </p>
+</div>
+
+<h2 id="monorepo">Monorepo：多个应用共享代码</h2>
+
+<p>
+  当公司有了“用户端网站”和“管理后台”两个应用，它们想共用同一套按钮、同一套请求工具、同一份 ESLint 配置时，
+  把它们放在<strong>一个仓库</strong>里统一管理会方便得多。这就是 monorepo。用 <strong>pnpm workspace</strong> 就能轻松实现：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="monorepo 结构：apps 下的 web 和 admin 两个应用都依赖 packages 下的 ui 组件库和 utils 工具包，ui 又依赖 utils，所有包共享 config 包里的配置">
+  <rect class="bx" x="20" y="16" width="720" height="258" rx="14"/>
+  <text class="ttl" x="40" y="40">my-company/（一个 git 仓库）</text>
+
+  <rect class="bx-b" x="120" y="60" width="200" height="64" rx="12"/>
+  <text class="ttl on-b" x="220" y="86" text-anchor="middle">apps/web</text>
+  <text class="sm" x="220" y="106" text-anchor="middle">用户端网站</text>
+  <rect class="bx-b" x="440" y="60" width="200" height="64" rx="12"/>
+  <text class="ttl on-b" x="540" y="86" text-anchor="middle">apps/admin</text>
+  <text class="sm" x="540" y="106" text-anchor="middle">管理后台</text>
+
+  <rect class="bx-p" x="120" y="170" width="200" height="64" rx="12"/>
+  <text class="ttl on-p" x="220" y="196" text-anchor="middle">packages/ui</text>
+  <text class="sm" x="220" y="216" text-anchor="middle">@acme/ui 组件库</text>
+  <rect class="bx-p" x="440" y="170" width="200" height="64" rx="12"/>
+  <text class="ttl on-p" x="540" y="196" text-anchor="middle">packages/utils</text>
+  <text class="sm" x="540" y="216" text-anchor="middle">@acme/utils 工具函数</text>
+
+  <rect class="bx-d" x="660" y="110" width="68" height="80" rx="10"/>
+  <text class="sm" x="694" y="140" text-anchor="middle">config</text>
+  <text class="sm" x="694" y="158" text-anchor="middle">eslint</text>
+  <text class="sm" x="694" y="176" text-anchor="middle">tsconfig</text>
+
+  <path class="ln-a" d="M220 126 V166" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M500 126 L270 166" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M560 126 V166" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M240 126 L470 166" marker-end="url(#ar-a)"/>
+  <path class="ln-p" d="M320 210 H436" marker-end="url(#ar)"/>
+  <text class="lbl halo" x="380" y="256" text-anchor="middle">箭头 = 依赖："@acme/ui": "workspace:*"，改了 ui，两个应用立刻看到</text>
+</svg>
+<figcaption>图 11-4　一个仓库，两个应用，共享的包</figcaption>
+</figure>
+
+<div class="tree"><b>my-company/</b>
+├── pnpm-workspace.yaml
+├── package.json             # 根：只放 turbo、changesets 等工具
+├── turbo.json
+├── <b>apps/</b>
+│   ├── web/                 # Vite + React 应用
+│   └── admin/
+└── <b>packages/</b>
+    ├── ui/                  # @acme/ui
+    ├── utils/               # @acme/utils
+    └── config/              # 共享的 eslint、tsconfig
+</div>
+
+<div class="code" data-lang="yaml" data-file="pnpm-workspace.yaml"><pre>
+packages:
+  - 'apps/*'
+  - 'packages/*'
+</pre></div>
+
+<div class="code" data-lang="json" data-file="apps/web/package.json"><pre>
+{
+  "name": "web",
+  "private": true,
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "@acme/ui": "workspace:*",
+    "@acme/utils": "workspace:*"
+  }
+}
+</pre></div>
+
+<p><code>workspace:*</code> 告诉 pnpm：“用仓库里的这个包”，pnpm 会创建一个软链接，所以修改 <code>packages/ui</code> 的源码，应用里马上生效。常用命令：</p>
+
+<div class="code" data-lang="bash"><pre>
+pnpm install                         # 在根目录安装所有包的依赖
+pnpm --filter web dev                # 只在 web 应用里运行 dev
+pnpm --filter @acme/ui add dayjs     # 给某个包加依赖
+pnpm -r build                        # 在所有包里运行 build（按依赖顺序）
+</pre></div>
+
+<h3>Turborepo：只构建变化了的部分</h3>
+
+<p>
+  包多了以后，每次都全部构建很慢。<strong>Turborepo</strong> 知道包之间的依赖关系，会按正确顺序并行执行任务，并<strong>缓存</strong>结果：
+  某个包和它的依赖没有变化，就直接复用上次的输出。
+</p>
+
+<div class="code" data-lang="json" data-file="turbo.json"><pre>
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "dev": { "cache": false, "persistent": true },
+    "test": { "dependsOn": ["^build"] },
+    "lint": {}
+  }
+}
+</pre></div>
+
+<p><code>"^build"</code> 的意思是“先构建我依赖的包”。运行 <code>pnpm turbo build</code>，第二次没有改动时几乎瞬间完成。</p>
+
+<h2 id="library">构建并发布组件库</h2>
+
+<p>
+  在 monorepo 内部，应用可以直接引用 <code>packages/ui</code> 的源码。但如果要把组件库发布到 npm 给其他仓库使用，就需要把它构建成标准的 JS 包，并附上类型声明。
+  Vite 的<strong>库模式</strong>专门做这件事：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="组件库构建流程：src 里的 React 组件经 Vite 库模式输出 ES 模块 JS 和 CSS，vite-plugin-dts 输出类型声明，Changesets 管理版本并发布到 npm">
+  <rect class="bx-b" x="20" y="50" width="170" height="120" rx="12"/>
+  <text class="ttl on-b" x="105" y="76" text-anchor="middle">src/</text>
+  <text class="mono sm" x="105" y="102" text-anchor="middle">Button.tsx</text>
+  <text class="mono sm" x="105" y="122" text-anchor="middle">Dialog.tsx</text>
+  <text class="mono sm" x="105" y="142" text-anchor="middle">index.ts</text>
+
+  <rect class="bx-a" x="250" y="50" width="170" height="120" rx="12"/>
+  <text class="ttl on-a" x="335" y="76" text-anchor="middle">vite build</text>
+  <text class="sm" x="335" y="102" text-anchor="middle">库模式（build.lib）</text>
+  <text class="sm" x="335" y="122" text-anchor="middle">react 设为 external</text>
+  <text class="sm" x="335" y="142" text-anchor="middle">+ vite-plugin-dts</text>
+
+  <rect class="bx-g" x="480" y="50" width="120" height="120" rx="12"/>
+  <text class="ttl on-g" x="540" y="76" text-anchor="middle">dist/</text>
+  <text class="mono sm" x="540" y="102" text-anchor="middle">index.js</text>
+  <text class="mono sm" x="540" y="122" text-anchor="middle">style.css</text>
+  <text class="mono sm" x="540" y="142" text-anchor="middle">index.d.ts</text>
+
+  <rect class="bx-p" x="640" y="50" width="100" height="120" rx="12"/>
+  <text class="ttl on-p" x="690" y="76" text-anchor="middle">npm</text>
+  <text class="sm" x="690" y="102" text-anchor="middle">Changesets</text>
+  <text class="sm" x="690" y="122" text-anchor="middle">定版本号</text>
+  <text class="sm" x="690" y="142" text-anchor="middle">写更新日志</text>
+
+  <path class="ln" d="M190 110 H246" marker-end="url(#ar)"/>
+  <path class="ln" d="M420 110 H476" marker-end="url(#ar)"/>
+  <path class="ln" d="M600 110 H636" marker-end="url(#ar)"/>
+  <text class="lbl" x="380" y="204" text-anchor="middle">使用者：import { AcmeButton } from '@acme/ui' + import '@acme/ui/style.css'</text>
+</svg>
+<figcaption>图 11-5　从组件源码到 npm 包</figcaption>
+</figure>
+
+<div class="code" data-lang="ts" data-file="packages/ui/src/index.ts"><pre>
+export { Button as AcmeButton } from './Button'
+export { Dialog as AcmeDialog } from './Dialog'
+export * from './hooks/useMenu'
+</pre></div>
+
+<div class="code" data-lang="js" data-file="packages/ui/vite.config.ts"><pre>
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import dts from 'vite-plugin-dts'
+import { fileURLToPath } from 'node:url'
+
+export default defineConfig({
+  plugins: [react(), dts({ rollupTypes: true })],  // 生成合并后的 index.d.ts
+  build: {
+    lib: {
+      entry: fileURLToPath(new URL('./src/index.ts', import.meta.url)),
+      formats: ['es'],
+      fileName: 'index',
+      cssFileName: 'style',
+    },
+    rollupOptions: {
+      // 不把 React 打包进来，使用者自己的 React 会被复用（jsx-runtime 也要算上）
+      external: ['react', 'react-dom', 'react/jsx-runtime'],
+    },
+  },
+})
+</pre></div>
+
+<div class="code" data-lang="json" data-file="packages/ui/package.json"><pre>
+{
+  "name": "@acme/ui",
+  "version": "0.1.0",
+  "type": "module",
+  "files": ["dist"],
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./style.css": "./dist/style.css"
+  },
+  "sideEffects": ["**/*.css"],
+  "peerDependencies": { "react": "^19.0.0", "react-dom": "^19.0.0" },
+  "scripts": { "build": "vite build" }
+}
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; react 必须是 peerDependency</div>
+  <p>
+    如果把 <code>react</code> 放进 <code>dependencies</code> 并打包进组件库，使用者的应用里就会出现<strong>两份 React</strong>。
+    Hooks 的“当前组件”是存在 React 模块内部的，组件库里的 <code>useState</code> 找不到应用那份 React 正在渲染的组件，
+    就会报出著名的 “Invalid hook call” 错误，Context 也无法跨越两份 React 传递。所以要设为 <code>external</code> + <code>peerDependencies</code>，让使用者提供 React。
+  </p>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 给服务端组件用户留好 'use client'</div>
+  <p>
+    组件库里用了状态、effect 或事件的组件，在 Next.js 的服务端组件里使用时需要 <code>'use client'</code> 标记。
+    打包工具默认会把文件顶部的指令丢掉，可以按组件拆分入口（<code>preserveModules</code>）并用插件保留指令，或者在每个交互组件的入口文件里手动加上。
+  </p>
+</div>
+
+<h3>用 Changesets 管理版本</h3>
+
+<p>每次改动组件库时，记录一个“变更集”说明改了什么、属于哪种版本升级（遵循语义化版本：修复 patch、新功能 minor、不兼容 major）：</p>
+
+<ol class="steps">
+  <li><code>pnpm changeset</code>：交互式选择改动的包和升级类型，写一句说明，生成 <code>.changeset/xxx.md</code>，随代码一起提交；</li>
+  <li><code>pnpm changeset version</code>：汇总所有变更集，更新各包的版本号和 <code>CHANGELOG.md</code>；</li>
+  <li><code>pnpm changeset publish</code>：把版本号变了的包发布到 npm。这一步通常交给第 7 章的 CI 流水线（官方有现成的 GitHub Action）。</li>
+</ol>
+
+<h2 id="quality">代码规范：让多人协作不打架</h2>
+
+<div class="tw"><table>
+<thead><tr><th>工具</th><th>作用</th><th>在 monorepo 里</th></tr></thead>
+<tbody>
+<tr><td>ESLint（flat config）+ <code>eslint-plugin-react-hooks</code></td><td>发现错误写法、强制模块边界</td><td>放在 <code>packages/config</code>，各包 <code>import</code> 后再扩展</td></tr>
+<tr><td>Prettier</td><td>统一格式，不再争论分号和缩进</td><td>根目录一份配置</td></tr>
+<tr><td><code>tsc</code></td><td>类型检查（第 4 章）</td><td>每个包 <code>"typecheck": "tsc --noEmit"</code>，交给 Turborepo 并行跑</td></tr>
+<tr><td>lint-staged + simple-git-hooks</td><td>提交前只检查改动的文件</td><td>根目录配置</td></tr>
+<tr><td>Vitest workspace</td><td>一条命令跑所有包的测试</td><td>根目录 <code>vitest.config</code> 的 <code>projects</code></td></tr>
+</tbody>
+</table></div>
+
+<div class="box key">
+  <div class="t">&#9733; 不要过早设计</div>
+  <p>
+    本章的东西都是为“大”准备的。一个人做的小项目，用第 4 章的结构就很好；有了三五个功能模块再改成按功能组织；真的出现第二个应用时再上 monorepo。
+    <strong>结构应该跟着痛点走，而不是跟着想象走。</strong>
+  </p>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<div class="tw"><table>
+<thead><tr><th>主题</th><th>要点</th></tr></thead>
+<tbody>
+<tr><td>目录</td><td>按功能组织：<code>app/</code>、<code>features/*</code>、<code>shared/</code></td></tr>
+<tr><td>依赖规则</td><td>只向下引用；跨功能只经 <code>index.js</code>；用 <code>no-restricted-imports</code> 检查</td></tr>
+<tr><td>路由</td><td>每个功能导出 <code>routes</code>，<code>import.meta.glob</code> 自动收集，组件懒加载</td></tr>
+<tr><td>数据层</td><td>统一 <code>http</code> 客户端；<code>queryOptions</code> + 查询键工厂；loader 预取避免瀑布；客户端状态用 Zustand</td></tr>
+<tr><td>Monorepo</td><td>pnpm workspace + <code>workspace:*</code>；Turborepo 按依赖顺序执行并缓存</td></tr>
+<tr><td>组件库</td><td>Vite 库模式、react 设为 external 和 peerDependency、<code>exports</code> 字段、vite-plugin-dts、<code>'use client'</code>、Changesets</td></tr>
+</tbody>
+</table></div>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>把第 5 章客服中心改成按功能组织：<code>features/auth</code>、<code>features/tickets</code>、<code>features/faq</code>，并加上 ESLint 边界规则，故意写一个违规引用看看报错。</li>
+    <li>用 <code>import.meta.glob</code> 自动收集各功能的路由，删掉 <code>router.jsx</code> 里手写的路由。</li>
+    <li>用本章的 <code>ticketQueries</code> 改写工单列表和详情，加上分页，并在路由 loader 里预取详情数据。</li>
+    <li>建一个 pnpm monorepo：<code>apps/helpdesk</code>（第 5 章项目）+ <code>packages/ui</code>（第 10 章的 Button、Dialog），让应用通过 <code>workspace:*</code> 使用组件库。</li>
+    <li>给 <code>packages/ui</code> 配置库模式构建，用 <code>npm pack</code> 打包后在另一个全新的 Vite 项目里安装这个 tgz 文件试用。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

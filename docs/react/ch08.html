@@ -51,6 +51,8 @@
     <li>用集合存数据，用方法修改数据并获得乐观更新</li>
     <li>用 <code>useSubscribe</code> 和 <code>useFind</code> 把实时数据接入 React 组件</li>
     <li>自己用 SVG 画一个半圆进度仪表</li>
+    <li>数据很多时：限制数量、<code>memo</code> 跳过没变的行、用虚拟滚动只渲染看得见的部分<span class="sup">补充</span></li>
+    <li>不用 Meteor：用 Express + SSE + 自定义 Hook 实现同样的实时仪表盘<span class="sup">补充</span></li>
   </ul>
 </div>
 
@@ -513,6 +515,145 @@ export default function ProductionIndicator({ value, title, info, className = ''
   <div class="body"><div id="demo-dashboard"><span class="muted">加载中……</span></div></div>
 </div>
 
+<h2 id="big-list">数据很多时：大列表的性能<span class="sup">补充</span></h2>
+
+<p>
+  打开“每秒自动生成”跑上几个小时，测量记录会涨到上万条。这时你会发现仪表盘越来越卡：每来一条新数据，React 都要重新渲染、比较一万个列表项；浏览器要维护一万组 DOM 节点。
+  解决思路有三层，从简单到复杂：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="大列表优化的三层：少要数据、少比较、少渲染">
+  <rect class="bx-g" x="20" y="30" width="230" height="200" rx="12"/>
+  <text class="ttl on-g" x="135" y="56" text-anchor="middle">① 少要数据</text>
+  <text class="sm" x="135" y="84" text-anchor="middle">发布 / 查询时就限制数量</text>
+  <text class="mono sm" x="135" y="110" text-anchor="middle">find({}, { limit: 200 })</text>
+  <text class="sm" x="135" y="140" text-anchor="middle">统计值交给服务器算</text>
+  <text class="sm" x="135" y="160" text-anchor="middle">（平均值不需要一万条原始数据）</text>
+  <text class="sm on-g" x="135" y="200" text-anchor="middle">最有效，永远先考虑</text>
+  <rect class="bx-a" x="265" y="30" width="230" height="200" rx="12"/>
+  <text class="ttl on-a" x="380" y="56" text-anchor="middle">② 少比较</text>
+  <text class="sm" x="380" y="84" text-anchor="middle">没变的行跳过渲染</text>
+  <text class="mono sm" x="380" y="110" text-anchor="middle">memo(MeasureRow)</text>
+  <text class="sm" x="380" y="140" text-anchor="middle">或交给 React Compiler；</text>
+  <text class="sm" x="380" y="160" text-anchor="middle">前提是对象引用稳定</text>
+  <text class="sm on-a" x="380" y="200" text-anchor="middle">改动小，收益中等</text>
+  <rect class="bx-b" x="510" y="30" width="230" height="200" rx="12"/>
+  <text class="ttl on-b" x="625" y="56" text-anchor="middle">③ 少渲染</text>
+  <text class="sm" x="625" y="84" text-anchor="middle">只渲染看得见的几十行</text>
+  <text class="sm" x="625" y="110" text-anchor="middle">虚拟滚动</text>
+  <text class="mono sm" x="625" y="140" text-anchor="middle">@tanstack/react-virtual</text>
+  <text class="mono sm" x="625" y="160" text-anchor="middle">react-window</text>
+  <text class="sm on-b" x="625" y="200" text-anchor="middle">列表必须很长时才用</text>
+  <text class="lbl" x="380" y="258" text-anchor="middle">先用 DevTools Performance 面板确认瓶颈在哪里，再选择对应的手段</text>
+</svg>
+<figcaption>图 8-7　大列表优化的三个层次</figcaption>
+</figure>
+
+<h3>① 少要数据</h3>
+
+<p>仪表盘上的列表，用户其实只会看最近的几十条。在发布函数里就限制数量，客户端的数据量直接降两个数量级：</p>
+
+<div class="code" data-lang="js" data-file="imports/api/publications.js"><pre>
+Meteor.publish('measures.recent', function (limit = 200) {
+  check(limit, Number)
+  return Measures.find({}, { sort: { date: -1 }, limit: Math.min(limit, 1000) })
+})
+</pre></div>
+
+<p>至于“平均值”“错误率”这类统计，应该由服务器基于全部数据计算后发布一个汇总结果（或者定时写进一个 <code>stats</code> 集合），而不是把一万条原始数据都发给浏览器去算。</p>
+
+<h3>② memo：跳过没变的行</h3>
+
+<p>
+  把每一行抽成组件并用 <code>memo</code> 包起来：父组件重新渲染时，props 没变的行直接跳过，连 JSX 都不会重新生成。
+  测量记录一旦写入就不会再修改，正好适合：
+</p>
+
+<div class="code" data-lang="jsx"><pre>
+import { memo } from 'react'
+
+const MeasureRow = memo(function MeasureRow({ item }) {
+  return (
+    &lt;div className="row"&gt;
+      &lt;div className="date"&gt;{item.date.toLocaleString()}&lt;/div&gt;
+      &lt;div className="error"&gt;{item.error ? '错误' : ''}&lt;/div&gt;
+      &lt;div className="value"&gt;{item.value}&lt;/div&gt;
+    &lt;/div&gt;
+  )
+})
+
+// 列表里：
+{measures.map((item) =&gt; &lt;MeasureRow key={item._id} item={item} /&gt;)}
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; memo 只做浅比较</div>
+  <p>
+    <code>memo</code> 用 <code>Object.is</code> 逐个比较 props。如果每次拿到的 <code>item</code> 都是新对象（内容一样也不行），或者传了一个每次渲染都新建的回调，<code>memo</code> 就白做了。
+    好消息是 <code>useFind</code> 对没变的文档会保留原来的对象引用；自己从接口拉数据时，第 6 章的“复用未变对象”技巧和 TanStack Query 的结构共享都能做到这一点。
+    开启 React Compiler 后，这层 <code>memo</code> 可以由编译器自动加上。
+  </p>
+</div>
+
+<h3>③ 虚拟滚动：只渲染看得见的部分</h3>
+
+<p>如果确实需要展示上万行（比如可以无限往下翻的日志），就用<strong>虚拟滚动</strong>：容器高度按全部数据计算（滚动条正常），但只真正渲染可视区域内的几十行：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="虚拟滚动：只渲染视口内的行，用占位高度撑出滚动条">
+  <rect class="bx-d" x="60" y="20" width="220" height="230" rx="8"/>
+  <text class="sm" x="170" y="40" text-anchor="middle">10000 行的总高度</text>
+  <text class="sm" x="170" y="56" text-anchor="middle">（只是一个撑高度的空 div）</text>
+  <rect class="bx-a" x="40" y="90" width="260" height="96" rx="8" style="stroke-width:2.2"/>
+  <text class="sm on-a" x="310" y="104">← 视口</text>
+  <rect class="bx" x="70" y="100" width="200" height="18" rx="3"/><text class="mono sm" x="80" y="113">第 3201 行</text>
+  <rect class="bx" x="70" y="122" width="200" height="18" rx="3"/><text class="mono sm" x="80" y="135">第 3202 行</text>
+  <rect class="bx" x="70" y="144" width="200" height="18" rx="3"/><text class="mono sm" x="80" y="157">第 3203 行</text>
+  <rect class="bx" x="70" y="166" width="200" height="14" rx="3" style="opacity:.6"/>
+  <text class="sm" x="170" y="226" text-anchor="middle">视口外：不渲染</text>
+  <rect class="bx-g" x="400" y="40" width="340" height="180" rx="12"/>
+  <text class="ttl on-g" x="570" y="66" text-anchor="middle">滚动时发生什么</text>
+  <text class="sm" x="420" y="96">① 监听容器的 scroll 事件</text>
+  <text class="sm" x="420" y="120">② 根据 scrollTop 和行高算出可见范围</text>
+  <text class="sm" x="420" y="144">③ 只渲染这一段（再多渲染几行作缓冲）</text>
+  <text class="sm" x="420" y="168">④ 用 transform 把它们放到正确的位置</text>
+  <text class="sm on-g" x="420" y="200">DOM 节点始终只有几十个</text>
+</svg>
+<figcaption>图 8-8　虚拟滚动的原理</figcaption>
+</figure>
+
+<div class="code" data-lang="jsx" data-file="使用 @tanstack/react-virtual"><pre>
+import { useRef } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
+
+function MeasureList({ measures }) {
+  const scrollRef = useRef(null)
+  const virtualizer = useVirtualizer({
+    count: measures.length,
+    getScrollElement: () =&gt; scrollRef.current,
+    estimateSize: () =&gt; 32,       // 每行的（估计）高度
+    overscan: 10,                 // 可视区域外多渲染几行，滚动更顺滑
+  })
+
+  return (
+    &lt;div ref={scrollRef} className="list" style={{ height: 400, overflow: 'auto' }}&gt;
+      &lt;div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}&gt;   {/* 撑出总高度 */}
+        {virtualizer.getVirtualItems().map((row) =&gt; (
+          &lt;div key={measures[row.index]._id} className="row"
+               style={{ position: 'absolute', top: 0, width: '100%', height: row.size,
+                        transform: `translateY(${row.start}px)` }}&gt;
+            &lt;MeasureRow item={measures[row.index]} /&gt;
+          &lt;/div&gt;
+        ))}
+      &lt;/div&gt;
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<p>它是“无头”的：只负责算出该渲染哪几行、放在哪里，结构和样式完全由你决定；行高不固定时，给每行加上 <code>ref={virtualizer.measureElement}</code> 让它实际测量。想要更省事的现成组件，可以用 <code>react-window</code>。</p>
+
 <h2 id="alternatives">不用 Meteor，怎么做实时？</h2>
 
 <figure>
@@ -546,24 +687,134 @@ export default function ProductionIndicator({ value, title, info, className = ''
   <text class="mono sm" x="657" y="170" text-anchor="middle">Supabase Realtime</text>
   <text class="mono sm" x="657" y="190" text-anchor="middle">Firebase / Convex</text>
 </svg>
-<figcaption>图 8-7　常见的实时数据方案</figcaption>
+<figcaption>图 8-9　常见的实时数据方案</figcaption>
 </figure>
 
-<p>以 SSE 为例，写一个自定义 Hook：</p>
+<h3>完整示例：Express + SSE 实时仪表盘<span class="sup">补充</span></h3>
 
-<div class="code" data-lang="js" data-file="useMeasuresStream.js（示意）"><pre>
+<p>
+  下面用最少的代码实现和 Meteor 版本相同的效果。<strong>SSE（Server-Sent Events）</strong>是浏览器原生支持的“服务器推送”：
+  客户端发起一个普通的 HTTP 请求，服务器不结束响应，而是一条一条地往里写 <code>data: ...</code>，浏览器每收到一条就触发一次事件，断线还会自动重连。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="SSE：浏览器保持一个长连接，服务器在有新数据时推送，其他客户端通过 POST 写入">
+  <rect class="bx-g" x="20" y="30" width="200" height="80" rx="12"/>
+  <text class="ttl on-g" x="120" y="56" text-anchor="middle">仪表盘页</text>
+  <text class="mono sm" x="120" y="80" text-anchor="middle">new EventSource(</text>
+  <text class="mono sm" x="120" y="98" text-anchor="middle">'/api/stream')</text>
+  <rect class="bx-p" x="20" y="160" width="200" height="70" rx="12"/>
+  <text class="ttl on-p" x="120" y="186" text-anchor="middle">生成页</text>
+  <text class="mono sm" x="120" y="210" text-anchor="middle">POST /api/measures</text>
+  <rect class="bx-b" x="300" y="70" width="200" height="120" rx="12"/>
+  <text class="ttl on-b" x="400" y="96" text-anchor="middle">Express 服务器</text>
+  <text class="sm" x="400" y="120" text-anchor="middle">保存数据</text>
+  <text class="sm" x="400" y="140" text-anchor="middle">记住所有打开的 SSE 连接</text>
+  <text class="sm" x="400" y="160" text-anchor="middle">新数据 → 写给每个连接</text>
+  <path class="ln-g" d="M222 60 C260 60 270 90 296 100" marker-end="url(#ar)"/>
+  <text class="halo sm on-g" x="258" y="50">① 建立长连接</text>
+  <path class="ln-p" d="M222 195 C260 195 270 170 296 160" marker-end="url(#ar)"/>
+  <text class="halo sm on-p" x="258" y="222">② 写入新数据</text>
+  <path class="ln-a" d="M296 120 C260 120 250 100 224 92" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="244" y="132">③ data: {...}</text>
+  <rect class="bx" x="560" y="60" width="180" height="140" rx="12"/>
+  <text class="ttl" x="650" y="86" text-anchor="middle">SSE 的特点</text>
+  <text class="sm" x="650" y="112" text-anchor="middle">普通 HTTP，代理友好</text>
+  <text class="sm" x="650" y="134" text-anchor="middle">浏览器自动重连</text>
+  <text class="sm" x="650" y="156" text-anchor="middle">单向：服务器 → 浏览器</text>
+  <text class="sm" x="650" y="178" text-anchor="middle">客户端写入用普通 POST</text>
+</svg>
+<figcaption>图 8-10　用 SSE 实现实时推送</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="server.js（npm i express）"><pre>
+import express from 'express'
+
+const app = express()
+app.use(express.json())
+
+const measures = []            // 演示用：存在内存里
+const clients = new Set()      // 所有打开的 SSE 连接
+
+// 客户端订阅：保持连接不断开
+app.get('/api/stream', (req, res) =&gt; {
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  })
+  res.flushHeaders()
+  // 先把最近 50 条发过去，作为初始数据
+  res.write(`event: init\ndata: ${JSON.stringify(measures.slice(-50))}\n\n`)
+  clients.add(res)
+  req.on('close', () =&gt; clients.delete(res))     // 断开时移除
+})
+
+// 写入新数据，并推送给所有订阅者
+app.post('/api/measures', (req, res) =&gt; {
+  const { value, error } = req.body
+  if (typeof value !== 'number' || typeof error !== 'boolean') return res.sendStatus(400)
+  const measure = { id: crypto.randomUUID(), value, error, date: new Date() }
+  measures.push(measure)
+  for (const client of clients) client.write(`data: ${JSON.stringify(measure)}\n\n`)
+  res.status(201).json(measure)
+})
+
+app.listen(3000)
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/hooks/useMeasuresStream.js"><pre>
 import { useState, useEffect } from 'react'
 
-export function useMeasuresStream() {
+export function useMeasuresStream(url = '/api/stream') {
   const [measures, setMeasures] = useState([])
+  const [connected, setConnected] = useState(false)
+
   useEffect(() =&gt; {
-    const source = new EventSource('/api/measures/stream')   // 服务器每产生一条就推送一条
-    source.onmessage = (e) =&gt; setMeasures((list) =&gt; [JSON.parse(e.data), ...list])
-    return () =&gt; source.close()                              // 卸载时断开
-  }, [])
-  return measures
+    const source = new EventSource(url)
+    source.onopen = () =&gt; setConnected(true)
+    source.onerror = () =&gt; setConnected(false)               // 浏览器会自动重连
+    source.addEventListener('init', (e) =&gt; {                  // 自定义事件：初始数据
+      setMeasures(JSON.parse(e.data).reverse())
+    })
+    source.onmessage = (e) =&gt; {                                // 默认事件：每条新数据
+      // 更新函数：基于最新的列表，只保留最近 500 条（第 2 章的“状态是快照”）
+      setMeasures((list) =&gt; [JSON.parse(e.data), ...list].slice(0, 500))
+    }
+    return () =&gt; source.close()                                // 卸载时断开
+  }, [url])
+
+  return { measures, connected }
 }
 </pre></div>
+
+<div class="code" data-lang="jsx" data-file="src/Dashboard.jsx"><pre>
+import { useMeasuresStream } from './hooks/useMeasuresStream.js'
+
+export default function Dashboard() {
+  const { measures, connected } = useMeasuresStream()
+  const average = measures.length ? measures.reduce((s, m) =&gt; s + m.value, 0) / measures.length : 0
+
+  return (
+    &lt;div className="production-dashboard"&gt;
+      {!connected &amp;&amp; &lt;p className="warn"&gt;连接已断开，正在重连……&lt;/p&gt;}
+      &lt;ProductionIndicator value={average / 100} title="平均值" info={Math.round(average)} /&gt;
+      {/* 列表同上；注意 JSON 里的日期是字符串：new Date(item.date).toLocaleString() */}
+    &lt;/div&gt;
+  )
+}
+// 生成页：fetch('/api/measures', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+//                                  body: JSON.stringify({ value, error }) })
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 和 Meteor 版本比一比</div>
+  <p>
+    SSE 版本需要自己处理：数据存储、连接管理、初始数据、断线重连后的数据补齐（这里简单地用 <code>init</code> 事件重发最近 50 条）、多台服务器之间的消息同步（需要 Redis 等）。
+    Meteor 把这些全部包办了，但代价是绑定它的整套技术栈。两种方式没有绝对的好坏，取决于项目规模和团队熟悉的技术。
+    第 13 章（AI 聊天）会再次用到 SSE，那里还会讲怎么用 <code>fetch</code> 读取 POST 请求返回的流。
+  </p>
+</div>
 
 <h2 id="summary">小结</h2>
 
@@ -578,6 +829,8 @@ export function useMeasuresStream() {
 <tr><td>订阅</td><td><code>useSubscribe('measures')</code></td></tr>
 <tr><td>查询</td><td><code>useFind(() =&gt; Measures.find(), [])</code> / <code>useTracker</code></td></tr>
 <tr><td>半圆进度条</td><td>SVG + <code>pathLength</code> + <code>strokeDashoffset</code></td></tr>
+<tr><td>大列表 <span class="sup">补充</span></td><td>限制数量 → <code>memo</code> 行组件 → <code>@tanstack/react-virtual</code></td></tr>
+<tr><td>不用 Meteor 的实时 <span class="sup">补充</span></td><td>Express + SSE；<code>EventSource</code> + 自定义 Hook</td></tr>
 </tbody>
 </table></div>
 
@@ -588,7 +841,8 @@ export function useMeasuresStream() {
     <li>加一个 <code>measure.clear</code> 方法清空数据（想一想：这个方法应该允许任何人调用吗？）。</li>
     <li>给仪表组件加一个 <code>max</code> prop，并画出刻度。</li>
     <li>让发布接收参数 <code>onlyErrors</code>，仪表盘加一个复选框：<code>useSubscribe('measures', onlyErrors)</code>，参数变化时会自动重新订阅。</li>
-    <li>（进阶）不用 Meteor，用 Express + SSE 或 Supabase 实现同样的实时仪表盘。</li>
+    <li>用脚本插入 2 万条测量，在 Performance 面板里对比：普通列表、<code>memo</code> 行组件、虚拟滚动三种写法下，新数据到来时每帧的耗时。</li>
+    <li>（进阶）把本章的 Express + SSE 示例跑起来，再把生成页改成同时打开两个浏览器窗口，确认数据实时同步；对比它和 Meteor 版本的代码量。</li>
   </ol>
 </div>
 
@@ -634,7 +888,7 @@ export function useMeasuresStream() {
   <path class="ln-a" d="M20 186 H736" marker-end="url(#ar-a)"/>
   <text class="sm" x="380" y="204" text-anchor="middle">同样的六个项目，也可以对照阅读本站的 Vue 版，体会两个框架思路上的异同</text>
 </svg>
-<figcaption>图 8-8　六个项目，一条渐进的学习路线</figcaption>
+<figcaption>图 8-11　六个项目，一条渐进的学习路线</figcaption>
 </figure>
 
 <ul>
@@ -643,7 +897,11 @@ export function useMeasuresStream() {
   <li>选一个书中的项目继续完善，或者用 Next.js 做一个自己的全栈小项目。</li>
 </ul>
 
-<p>附录有一份 <a href="ch09.html">Vue ↔ React 对照表</a>，适合已经学过其中一个框架的读者快速切换。</p>
+<p>
+  想继续深入？第四部分的五个进阶专题从这里接着讲：<a href="adv01.html">深入渲染原理</a>、<a href="adv02.html">组件库与设计系统</a>、
+  <a href="adv03.html">大型项目架构</a>、<a href="adv04.html">跨端</a>和 <a href="adv05.html">AI 应用前端</a>。
+  教程最后还附了一份 <a href="ch09.html">Vue ↔ React 对照表</a>，适合已经学过其中一个框架的读者快速切换。
+</p>
 
 <div id="pager"></div>
 </main>

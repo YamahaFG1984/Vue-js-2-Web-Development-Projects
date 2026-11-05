@@ -27,6 +27,9 @@
     <li>用 react-i18next 做多语言，用动态 <code>import()</code>、<code>React.lazy</code> 和 <code>Suspense</code> 做代码分割</li>
     <li>理解 SSR 与水合，理解服务端组件和客户端组件的分工</li>
     <li>用 Next.js App Router 渲染商品页面</li>
+    <li>用 Playwright 写端到端测试，用 MSW 在网络层模拟接口<span class="sup">补充</span></li>
+    <li>Next.js 深入：Route Handlers、Server Actions、混合渲染与缓存<span class="sup">补充</span></li>
+    <li>用 GitHub Actions 搭建 CI/CD，用 Docker 部署，上线后接入错误监控<span class="sup">补充</span></li>
   </ul>
 </div>
 
@@ -400,6 +403,161 @@ test('重复添加同一件商品时数量累加', () =&gt; {
 </p>
 </details>
 
+<h2 id="e2e">端到端测试：Playwright 与 MSW<span class="sup">补充</span></h2>
+
+<p>
+  单元测试验证的是“零件”：一个组件、一个 store。但零件都没问题，组装起来也可能出错 —— 路由配错了、两个组件之间的事件没接上、真实浏览器里样式把按钮挡住了。
+  <strong>端到端（E2E）测试</strong>启动真实的浏览器，像用户一样打开页面、点击、输入，验证一整条流程。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="测试金字塔：大量单元测试、适量组件测试、少量端到端测试">
+  <path d="M380 20 L560 220 L200 220 Z" style="fill:none;stroke:var(--line-2);stroke-width:1.5"/>
+  <path d="M327 80 H433" class="ln"/>
+  <path d="M272 150 H488" class="ln"/>
+  <text class="ttl on-r" x="380" y="66" text-anchor="middle">E2E</text>
+  <text class="ttl on-a" x="380" y="122" text-anchor="middle">组件测试</text>
+  <text class="ttl on-g" x="380" y="194" text-anchor="middle">单元测试</text>
+  <text class="sm" x="600" y="60">Playwright：真实浏览器</text>
+  <text class="sm" x="600" y="78">跑完整流程；少量、慢</text>
+  <text class="sm" x="600" y="118">Testing Library：渲染组件</text>
+  <text class="sm" x="600" y="136">适量</text>
+  <text class="sm" x="600" y="186">Vitest：store、工具函数</text>
+  <text class="sm" x="600" y="204">大量、快、定位准确</text>
+  <text class="sm" x="160" y="60" text-anchor="end">越往上</text>
+  <text class="sm" x="160" y="78" text-anchor="end">越慢、越贵、越接近真实</text>
+  <text class="lbl" x="380" y="248" text-anchor="middle">E2E 只覆盖最关键的流程：注册登录、下单结算 —— 坏了会直接影响用户和收入的地方</text>
+</svg>
+<figcaption>图 7-6　测试金字塔</figcaption>
+</figure>
+
+<h3>Playwright</h3>
+
+<p>
+  在项目根目录运行 <code>npm init playwright@latest</code>，再在 <code>package.json</code> 里加上 <code>"test:e2e": "playwright test"</code>。
+  它会下载 Chromium、Firefox、WebKit 三种浏览器内核，并生成 <code>playwright.config.js</code> 和 <code>e2e/</code> 目录。
+</p>
+
+<div class="code" data-lang="js" data-file="e2e/checkout.spec.js"><pre>
+import { test, expect } from '@playwright/test'
+
+test('把商品加入购物车并去结算', async ({ page }) =&gt; {
+  await page.goto('/')
+
+  // 找到“蓝色袜子”所在的卡片，点击它的“加入购物车”按钮
+  const card = page.locator('.store-item', { hasText: 'Blue Socks' })
+  await card.getByRole('button', { name: /加入购物车|Add/ }).click()
+
+  // 购物车角标变成 1
+  await expect(page.locator('.cart .button-badge')).toHaveText('1')
+
+  // 去结算页，能看到这件商品
+  await page.getByRole('link', { name: /结算|Checkout/ }).click()
+  await expect(page).toHaveURL(/checkout/)
+  await expect(page.getByText('Blue Socks')).toBeVisible()
+})
+</pre></div>
+
+<div class="code" data-lang="bash"><pre>
+npx playwright test            # 无界面运行所有 E2E 测试
+npx playwright test --ui       # 打开可视化界面：逐步回放、查看每一步的截图和 DOM
+npx playwright codegen localhost:5173   # 在浏览器里点一遍，自动生成测试代码
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 写出稳定的 E2E 测试</div>
+  <ul>
+    <li>用 <code>getByRole</code>、<code>getByText</code>、<code>getByLabel</code> 按“用户看到的东西”查找元素，而不是脆弱的 CSS 层级选择器。</li>
+    <li><code>expect(...).toHaveText()</code> 等断言会<strong>自动等待</strong>直到条件满足或超时，不要手写 <code>waitForTimeout(1000)</code>。</li>
+    <li>每个测试互相独立：不依赖上一个测试留下的数据。</li>
+  </ul>
+</div>
+
+<h3>MSW：在网络层模拟接口</h3>
+
+<p>
+  单元测试和 E2E 测试都会遇到同一个问题：组件要请求后端，测试时后端可能没启动、数据会变、错误情况很难复现。
+  <a href="https://mswjs.io/">MSW</a>（Mock Service Worker）在<strong>网络层</strong>拦截请求并返回你定义的假数据 —— 应用代码完全不用改，它以为自己在和真实服务器说话：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="MSW 在网络层拦截请求，应用代码不需要任何修改">
+  <rect class="bx-g" x="20" y="70" width="180" height="80" rx="12"/>
+  <text class="ttl on-g" x="110" y="98" text-anchor="middle">应用代码</text>
+  <text class="mono sm" x="110" y="122" text-anchor="middle">fetch('/api/items')</text>
+  <text class="sm" x="110" y="140" text-anchor="middle">完全不知道被模拟</text>
+  <path class="ln" d="M202 110 H276" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="280" y="50" width="200" height="120" rx="12"/>
+  <text class="ttl on-a" x="380" y="76" text-anchor="middle">MSW</text>
+  <text class="sm" x="380" y="100" text-anchor="middle">浏览器：Service Worker</text>
+  <text class="sm" x="380" y="120" text-anchor="middle">Node（Vitest）：拦截 fetch</text>
+  <text class="mono sm" x="380" y="148" text-anchor="middle">http.get('/api/items', …)</text>
+  <path class="ln-a" d="M482 90 L546 60" marker-end="url(#ar-a)"/>
+  <path class="ln-d" d="M482 130 L546 160"/>
+  <rect class="bx-g" x="550" y="30" width="190" height="60" rx="10"/>
+  <text class="sm on-g" x="645" y="56" text-anchor="middle">匹配：返回假数据</text>
+  <text class="sm" x="645" y="74" text-anchor="middle">（也可以模拟 500、超时）</text>
+  <rect class="bx-d" x="550" y="130" width="190" height="60" rx="10"/>
+  <text class="sm" x="645" y="156" text-anchor="middle">没匹配：放行到真实网络</text>
+  <text class="sm" x="645" y="174" text-anchor="middle">或者报错提醒</text>
+  <text class="lbl" x="380" y="208" text-anchor="middle">同一套 handlers 可以同时用于单元测试、E2E 测试，以及“后端还没写好时”的本地开发</text>
+</svg>
+<figcaption>图 7-7　MSW 的工作位置</figcaption>
+</figure>
+
+<div class="code" data-lang="bash"><pre>
+npm install -D msw
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/mocks/handlers.js"><pre>
+import { http, HttpResponse } from 'msw'
+
+export const handlers = [
+  http.get('/api/items', () =&gt;
+    HttpResponse.json([
+      { id: 1, title: 'Blue Socks', price: 2.99 },
+      { id: 2, title: 'Green Socks', price: 3.99 },
+    ])
+  ),
+]
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/test/setup.js（Vitest 的 setupFiles）"><pre>
+import '@testing-library/jest-dom/vitest'
+import { setupServer } from 'msw/node'
+import { beforeAll, afterEach, afterAll } from 'vitest'
+import { handlers } from '../mocks/handlers'
+
+const server = setupServer(...handlers)
+beforeAll(() =&gt; server.listen({ onUnhandledRequest: 'error' }))   // 没有模拟的请求直接报错
+afterEach(() =&gt; server.resetHandlers())
+afterAll(() =&gt; server.close())
+
+export { server }
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="测试错误情况"><pre>
+import { render, screen } from '@testing-library/react'
+import { http, HttpResponse } from 'msw'
+import { server } from '../test/setup'
+
+test('加载失败时显示错误信息', async () =&gt; {
+  // 只在这个测试里，让接口返回 500
+  server.use(http.get('/api/items', () =&gt; new HttpResponse(null, { status: 500 })))
+  render(&lt;PageHome /&gt;)
+  // findBy* 会等待元素出现（默认最多 1 秒），适合异步加载的内容
+  expect(await screen.findByText(/加载失败/)).toBeInTheDocument()
+})
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 开发时也能用</div>
+  <p>
+    后端接口还没写好时，可以在浏览器里启动 MSW：<code>npx msw init public/</code> 生成 Service Worker 文件，
+    在 <code>main.jsx</code> 里 <code>if (import.meta.env.DEV) await (await import('./mocks/browser.js')).worker.start()</code>，前端就能先跑起来。
+  </p>
+</div>
+
 <h2 id="i18n">国际化与代码分割</h2>
 
 <p>React 生态里最常用的国际化方案是 <a href="https://react.i18next.com/">react-i18next</a>（基于通用的 i18next 库）：</p>
@@ -452,7 +610,7 @@ npm install i18next react-i18next i18next-browser-languagedetector i18next-resou
   <text class="sm" x="640" y="170" text-anchor="middle">用的是同一个机制</text>
   <text class="lbl" x="380" y="262" text-anchor="middle">虚线框：构建时生成，只有真正需要时浏览器才下载</text>
 </svg>
-<figcaption>图 7-6　代码分割</figcaption>
+<figcaption>图 7-8　代码分割</figcaption>
 </figure>
 
 <div class="code" data-lang="js" data-file="src/i18n.js"><pre>
@@ -540,7 +698,7 @@ export default function PageLocale() {
   <text class="sm" x="486" y="152">还找不到？显示键名本身</text>
   <text class="lbl" x="380" y="194" text-anchor="middle">切换语言后，所有用到 useTranslation 的组件自动重新渲染</text>
 </svg>
-<figcaption>图 7-7　翻译的查找过程</figcaption>
+<figcaption>图 7-9　翻译的查找过程</figcaption>
 </figure>
 
 <div class="box tip">
@@ -590,7 +748,7 @@ function App() {
   <text class="sm" x="560" y="120">TanStack Query 的 suspense 模式</text>
   <text class="sm" x="560" y="140">都用它来声明“加载中显示什么”</text>
 </svg>
-<figcaption>图 7-8　Suspense：声明式的“加载中”</figcaption>
+<figcaption>图 7-10　Suspense：声明式的“加载中”</figcaption>
 </figure>
 
 <h2 id="ssr">服务端渲染与 Next.js</h2>
@@ -624,7 +782,7 @@ function App() {
   <text class="sm" x="380" y="258" text-anchor="middle">好处：首屏更快、搜索引擎和社交平台能直接拿到内容</text>
   <text class="sm" x="380" y="274" text-anchor="middle">代价：需要运行 Node 服务器、代码要能在服务器上运行、部署更复杂</text>
 </svg>
-<figcaption>图 7-9　CSR 与 SSR 的时间线</figcaption>
+<figcaption>图 7-11　CSR 与 SSR 的时间线</figcaption>
 </figure>
 
 <p>
@@ -673,7 +831,7 @@ function App() {
   <text class="halo sm" x="380" y="110" text-anchor="middle">'use client'</text>
   <text class="halo sm" x="380" y="128" text-anchor="middle">是边界</text>
 </svg>
-<figcaption>图 7-10　服务端组件负责取数据和静态内容，客户端组件负责交互</figcaption>
+<figcaption>图 7-12　服务端组件负责取数据和静态内容，客户端组件负责交互</figcaption>
 </figure>
 
 <div class="box key">
@@ -780,7 +938,7 @@ export default function Loading() {
   <text class="sm" x="580" y="200" text-anchor="middle">首屏 JS 更小、内容更早出现</text>
   <text class="sm" x="580" y="220" text-anchor="middle">没有“先渲染再请求一次”的重复请求</text>
 </svg>
-<figcaption>图 7-11　Next.js 处理一次页面请求</figcaption>
+<figcaption>图 7-13　Next.js 处理一次页面请求</figcaption>
 </figure>
 
 <div class="box warn">
@@ -797,6 +955,173 @@ export default function Loading() {
   <p>
     <strong>React Router 框架模式</strong>（原 Remix）同样基于 Vite，提供 SSR、文件路由和 <code>loader</code>/<code>action</code> 数据模型，从第 5 章的数据模式迁移过去很自然。
     Next.js 里做国际化通常用 <code>next-intl</code>。
+  </p>
+</div>
+
+<h3>Next.js 深入：Server Actions、缓存与混合渲染<span class="sup">补充</span></h3>
+
+<p>
+  Next.js 不只是“能做 SSR 的 React”，它是一个<strong>全栈框架</strong>：同一个项目里可以写后端接口，表单可以直接调用服务器上的函数。
+</p>
+
+<h4>Route Handlers：写 HTTP 接口</h4>
+
+<div class="code" data-lang="js" data-file="app/api/items/route.js"><pre>
+// 文件路径就是路由：GET /api/items
+import items from '@/data/items.json'
+
+export async function GET() {
+  return Response.json(items)          // 标准的 Web Response
+}
+</pre></div>
+
+<div class="code" data-lang="js" data-file="app/api/items/[id]/route.js"><pre>
+export async function GET(request, { params }) {
+  const { id } = await params
+  const item = items.find((i) =&gt; i.id === Number(id))
+  if (!item) return Response.json({ message: '商品不存在' }, { status: 404 })
+  return Response.json(item)
+}
+</pre></div>
+
+<p>
+  不过在 App Router 里，<strong>服务端组件可以直接读数据库或文件</strong>，并不需要先绕一圈 HTTP 接口。Route Handler 主要留给“外部要调用的接口”：移动端 App、Webhook、第三方回调。
+</p>
+
+<h4>Server Actions：表单直接调用服务器函数</h4>
+
+<p>
+  第 5 章用过 React 19 的 <code>&lt;form action={fn}&gt;</code>。在 Next.js 里，这个 <code>fn</code> 可以是一个<strong>只在服务器上运行</strong>的函数 ——
+  用 <code>'use server'</code> 标记后，框架会自动为它生成一个接口，浏览器提交表单时调用它，你不用写 fetch，也不用写路由：
+</p>
+
+<div class="code" data-lang="js" data-file="app/item/[id]/actions.js"><pre>
+'use server'
+
+import { revalidatePath } from 'next/cache'
+import { db } from '@/lib/db'
+import { getCurrentUser } from '@/lib/auth'
+
+export async function addReview(itemId, prevState, formData) {
+  const user = await getCurrentUser()                 // 每个 Server Action 都要自己检查权限！
+  if (!user) return { error: '请先登录' }
+
+  const text = String(formData.get('text') ?? '').trim()
+  if (text.length &lt; 5) return { error: '评价至少 5 个字' }
+
+  await db.review.create({ data: { itemId, userId: user.id, text } })
+  revalidatePath(`/item/${itemId}`)                   // 让这个页面的缓存失效，重新渲染出新评价
+  return { error: null }
+}
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="app/item/[id]/ReviewForm.jsx"><pre>
+'use client'
+
+import { useActionState } from 'react'
+import { addReview } from './actions.js'
+
+export default function ReviewForm({ itemId }) {
+  // bind 预先填入第一个参数；useActionState 和第 5 章的用法完全一样
+  const [state, action, isPending] = useActionState(addReview.bind(null, itemId), { error: null })
+  return (
+    &lt;form action={action}&gt;
+      &lt;textarea name="text" required /&gt;
+      {state.error &amp;&amp; &lt;p className="error"&gt;{state.error}&lt;/p&gt;}
+      &lt;button disabled={isPending}&gt;{isPending ? '提交中…' : '发表评价'}&lt;/button&gt;
+    &lt;/form&gt;
+  )
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="Server Action：浏览器提交表单，Next.js 把请求转给 'use server' 函数，函数写数据库并 revalidatePath，返回值和新的服务端组件结果一起发回浏览器">
+  <rect class="bx-b" x="20" y="60" width="180" height="110" rx="12"/>
+  <text class="ttl on-b" x="110" y="86" text-anchor="middle">浏览器</text>
+  <text class="mono sm" x="110" y="112" text-anchor="middle">&lt;form action={…}&gt;</text>
+  <text class="sm" x="110" y="136" text-anchor="middle">提交 → POST</text>
+  <text class="sm" x="110" y="156" text-anchor="middle">（JS 没加载完也能提交）</text>
+  <rect class="bx-a" x="290" y="40" width="200" height="150" rx="12"/>
+  <text class="ttl on-a" x="390" y="66" text-anchor="middle">'use server' 函数</text>
+  <text class="sm" x="390" y="94" text-anchor="middle">① 检查登录与权限</text>
+  <text class="sm" x="390" y="116" text-anchor="middle">② 校验 formData</text>
+  <text class="sm" x="390" y="138" text-anchor="middle">③ 写数据库</text>
+  <text class="sm" x="390" y="160" text-anchor="middle">④ revalidatePath</text>
+  <rect class="bx-g" x="580" y="60" width="160" height="110" rx="12"/>
+  <text class="ttl on-g" x="660" y="86" text-anchor="middle">数据库</text>
+  <text class="sm" x="660" y="112" text-anchor="middle">密钥、连接串</text>
+  <text class="sm" x="660" y="132" text-anchor="middle">只在服务器上</text>
+  <path class="ln-b" d="M202 100 H286" marker-end="url(#ar)"/>
+  <path class="ln-a" d="M492 115 H576" marker-end="url(#ar-a)"/>
+  <path class="ln-g" d="M286 150 H202" marker-end="url(#ar)"/>
+  <text class="halo sm on-g" x="244" y="140" text-anchor="middle">返回值</text>
+  <text class="halo sm on-g" x="244" y="170" text-anchor="middle">+ 更新后的页面</text>
+  <text class="lbl" x="380" y="226" text-anchor="middle">看起来像调用函数，本质上是一个公开的 HTTP 接口 —— 任何人都能直接调用它</text>
+</svg>
+<figcaption>图 7-14　Server Action 的一次调用</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; Server Action 就是一个公开接口</div>
+  <p>
+    虽然写起来像普通函数，但框架会把它暴露为一个 HTTP 端点，攻击者可以绕过你的表单直接调用它、传任意参数。
+    所以每个 Server Action 都要像写后端接口一样：<strong>检查登录和权限、校验输入</strong>（第 5 章的 Zod 模式可以直接复用），不要信任 <code>bind</code> 进来的参数。
+  </p>
+</div>
+
+<h4>混合渲染：每个路由选最合适的方式</h4>
+
+<p>
+  同一个网站里，不同页面的需求不同：首页几乎不变，适合构建时生成静态 HTML；商品页要 SEO、价格偶尔变，适合定期重新生成；
+  结算页完全依赖当前用户，每次请求都要现做。Next.js 根据页面<strong>用到了什么</strong>自动判断，也可以显式声明：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="Next.js 的渲染方式：首页静态生成，商品页按时间重新验证（ISR），结算页读取 cookies 变成动态渲染，慢的部分用 Suspense 流式发送">
+  <rect class="bx" x="20" y="20" width="270" height="220" rx="12"/>
+  <text class="ttl" x="155" y="46" text-anchor="middle">页面里写了什么</text>
+  <text class="mono sm on-g" x="36" y="80">// app/page.jsx</text>
+  <text class="mono sm" x="36" y="98">没有请求级数据</text>
+  <text class="mono sm on-b" x="36" y="132">// app/item/[id]/page.jsx</text>
+  <text class="mono sm" x="36" y="150">export const revalidate = 3600</text>
+  <text class="mono sm on-p" x="36" y="184">// app/checkout/page.jsx</text>
+  <text class="mono sm" x="36" y="202">await cookies()</text>
+  <rect class="bx-g" x="340" y="20" width="400" height="60" rx="10"/>
+  <text class="sm on-g" x="356" y="44">首页：构建时生成静态 HTML（SSG）</text>
+  <text class="sm" x="356" y="64">最快，可以放在 CDN 上</text>
+  <rect class="bx-b" x="340" y="98" width="400" height="60" rx="10"/>
+  <text class="sm on-b" x="356" y="122">商品页：静态生成 + 每小时重新验证（ISR）</text>
+  <text class="sm" x="356" y="142">SEO 友好；过期后先返回旧页面，后台再重新生成</text>
+  <rect class="bx-p" x="340" y="176" width="400" height="64" rx="10"/>
+  <text class="sm on-p" x="356" y="200">结算页：每次请求动态渲染</text>
+  <text class="sm" x="356" y="220">读了 cookies / headers，结果因人而异，不能缓存</text>
+  <path class="ln-g" d="M292 90 L336 54" marker-end="url(#ar)"/>
+  <path class="ln-b" d="M292 140 L336 128" marker-end="url(#ar)"/>
+  <path class="ln-p" d="M292 195 L336 205" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 7-15　混合渲染：根据页面需求选择静态、定期重新生成或动态</figcaption>
+</figure>
+
+<ul>
+  <li><strong>预先生成动态路由</strong>：在 <code>app/item/[id]/page.jsx</code> 里导出 <code>generateStaticParams()</code>，返回所有商品 id，构建时就为每个商品生成 HTML。</li>
+  <li><strong>流式渲染</strong>：页面里慢的部分（比如“猜你喜欢”）包进 <code>&lt;Suspense&gt;</code>，页面其余部分先发送，慢的部分准备好后再流过来，不会拖慢整页。</li>
+  <li><strong>按需失效</strong>：数据变化时用 <code>revalidatePath()</code> 或 <code>revalidateTag()</code> 让缓存失效（上面的 Server Action 就是这样做的）。</li>
+</ul>
+
+<div class="box note">
+  <div class="t">&#9432; 缓存模型还在演进</div>
+  <p>
+    Next.js 15 起，<code>fetch</code> 默认不再缓存；Next.js 16 推出了 Cache Components（在 <code>next.config.js</code> 里开启 <code>cacheComponents</code>），
+    用 <code>'use cache'</code> 指令显式标记可以缓存的函数或组件，并把静态外壳和动态内容组合在同一个页面里（部分预渲染）。
+    这一块变化较快，动手前请以 Next.js 官方文档的当前版本为准。
+  </p>
+</div>
+
+<div class="box tip">
+  <div class="t">&#10003; 部署</div>
+  <p>
+    <code>next build</code> 之后用 <code>next start</code> 运行；部署到 Vercel 最省事。自己用 Docker 部署时，在配置里设置 <code>output: 'standalone'</code>，
+    构建产物会包含一个最小化的 Node 服务，镜像可以小很多。全部页面都是静态的话，<code>output: 'export'</code> 能输出纯静态站点。
   </p>
 </div>
 
@@ -836,6 +1161,151 @@ hydrateRoot(document, &lt;App url={location.pathname} /&gt;)
 
 <p>Vite 构建默认就会压缩代码、抽取 CSS、按动态 <code>import()</code> 拆分 chunk、给文件名加内容哈希，不需要额外配置。</p>
 
+<h2 id="ci">持续集成与部署<span class="sup">补充</span></h2>
+
+<p>
+  到这里，项目已经有了 lint、类型检查、单元测试、E2E 测试和构建五道工序。靠人记得每次都跑一遍是不现实的。
+  <strong>持续集成（CI）</strong>让这些检查在每次推送代码、每次发起 Pull Request 时自动运行；全部通过后再<strong>自动部署（CD）</strong>。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="CI/CD 流水线：推送代码后依次执行安装、检查、测试、构建、部署">
+  <rect class="bx-b" x="20" y="80" width="100" height="60" rx="10"/>
+  <text class="on-b ttl" x="70" y="106" text-anchor="middle">git push</text>
+  <text class="sm" x="70" y="126" text-anchor="middle">或 PR</text>
+  <path class="ln" d="M122 110 H146" marker-end="url(#ar)"/>
+  <rect class="bx" x="150" y="80" width="90" height="60" rx="10"/>
+  <text class="sm" x="195" y="106" text-anchor="middle">npm ci</text>
+  <text class="sm" x="195" y="124" text-anchor="middle">安装依赖</text>
+  <path class="ln" d="M242 110 H266" marker-end="url(#ar)"/>
+  <rect class="bx-p" x="270" y="80" width="110" height="60" rx="10"/>
+  <text class="sm on-p" x="325" y="106" text-anchor="middle">lint</text>
+  <text class="sm on-p" x="325" y="124" text-anchor="middle">type-check</text>
+  <path class="ln" d="M382 110 H406" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="410" y="80" width="110" height="60" rx="10"/>
+  <text class="sm on-a" x="465" y="106" text-anchor="middle">单元测试</text>
+  <text class="sm on-a" x="465" y="124" text-anchor="middle">E2E 测试</text>
+  <path class="ln" d="M522 110 H546" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="550" y="80" width="80" height="60" rx="10"/>
+  <text class="sm on-g" x="590" y="114" text-anchor="middle">build</text>
+  <path class="ln" d="M632 110 H656" marker-end="url(#ar)"/>
+  <rect class="bx-r" x="660" y="80" width="80" height="60" rx="10"/>
+  <text class="sm on-r" x="700" y="106" text-anchor="middle">部署</text>
+  <text class="sm" x="700" y="124" text-anchor="middle">仅 master</text>
+  <text class="sm on-r" x="380" y="178" text-anchor="middle">任何一步失败，后面的步骤都不会执行，PR 上会显示红叉，不能合并</text>
+  <text class="lbl" x="380" y="206" text-anchor="middle">问题在合并前被发现，而不是被用户发现</text>
+</svg>
+<figcaption>图 7-16　一条典型的流水线</figcaption>
+</figure>
+
+<p>以 GitHub Actions 为例，在仓库里新建一个工作流文件，就能把 Vite 应用自动部署到 GitHub Pages：</p>
+
+<div class="code" data-lang="text" data-file=".github/workflows/ci.yml"><pre>
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test -- --run                   # --run：执行一次就退出，不进入 watch 模式
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: test                                   # 测试通过才部署
+    if: github.ref == 'refs/heads/master'         # 只有 master 分支才部署
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/deploy-pages@v4
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 别忘了这两个设置</div>
+  <p>
+    在仓库 Settings → Pages 里把 Source 改为 “GitHub Actions”；部署在子路径（<code>用户名.github.io/仓库名/</code>）时，在 <code>vite.config.js</code> 里设置 <code>base: '/仓库名/'</code>。
+    Netlify、Vercel、Cloudflare Pages 则更简单：连接仓库后，它们会自动在每次推送时构建部署，并为每个 PR 生成一个预览地址。
+  </p>
+</div>
+
+<h3>用 Docker 部署到自己的服务器</h3>
+
+<p>需要部署到公司服务器时，常见做法是把构建产物和一个 Nginx 打包成 Docker 镜像。注意 SPA 需要配置“找不到文件就返回 index.html”：</p>
+
+<div class="code" data-lang="text" data-file="Dockerfile（多阶段构建）"><pre>
+# 第一阶段：用 Node 构建
+FROM node:lts-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# 第二阶段：只把 dist 放进一个很小的 Nginx 镜像
+FROM nginx:alpine
+COPY --from=build /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+</pre></div>
+
+<div class="code" data-lang="text" data-file="nginx.conf"><pre>
+server {
+  listen 80;
+  root /usr/share/nginx/html;
+
+  location / {
+    try_files $uri $uri/ /index.html;          # 前端路由的回退
+  }
+
+  location /assets/ {
+    expires 1y;                                # 带哈希的文件可以永久缓存
+    add_header Cache-Control "public, immutable";
+  }
+}
+</pre></div>
+
+<h3>上线之后：错误监控</h3>
+
+<p>
+  第 5 章（下）讲过 <code>createRoot</code> 的错误回调。生产环境里，用户遇到的错误需要被收集起来。以 Sentry 为例：
+</p>
+
+<div class="code" data-lang="jsx" data-file="src/main.jsx"><pre>
+import * as Sentry from '@sentry/react'
+
+Sentry.init({
+  dsn: import.meta.env.VITE_SENTRY_DSN,       // 从环境变量读取
+  integrations: [Sentry.browserTracingIntegration()],
+  tracesSampleRate: 0.1,                       // 采样 10% 的性能数据
+})
+
+createRoot(document.getElementById('root'), {
+  onUncaughtError: Sentry.reactErrorHandler(),   // 把 React 捕获到的错误交给 Sentry
+  onCaughtError: Sentry.reactErrorHandler(),
+}).render(&lt;App /&gt;)
+</pre></div>
+
+<p>构建时开启 source map 并上传给 Sentry（它提供 Vite 插件），错误堆栈就能直接显示成源码的文件名和行号，而不是压缩后的一行乱码。</p>
+
 <h2 id="summary">小结</h2>
 
 <div class="tw"><table>
@@ -851,6 +1321,11 @@ hydrateRoot(document, &lt;App url={location.pathname} /&gt;)
 <tr><td>SSR / SSG</td><td>Next.js App Router（或 React Router 框架模式）</td></tr>
 <tr><td>服务端组件</td><td>默认；<code>async</code> 组件直接 await 数据</td></tr>
 <tr><td>客户端组件</td><td>文件顶部 <code>'use client'</code></td></tr>
+<tr><td>端到端测试 <span class="sup">补充</span></td><td>Playwright：<code>getByRole</code> + 自动等待的断言</td></tr>
+<tr><td>模拟接口 <span class="sup">补充</span></td><td>MSW：<code>http.get(...)</code>，测试与开发共用</td></tr>
+<tr><td>服务器函数 <span class="sup">补充</span></td><td><code>'use server'</code> + <code>&lt;form action&gt;</code>；必须检查权限</td></tr>
+<tr><td>渲染策略 <span class="sup">补充</span></td><td>静态 / <code>revalidate</code>（ISR）/ 动态；<code>revalidatePath</code></td></tr>
+<tr><td>CI/CD <span class="sup">补充</span></td><td>GitHub Actions：lint → test → e2e → build → deploy</td></tr>
 </tbody>
 </table></div>
 
@@ -861,6 +1336,8 @@ hydrateRoot(document, &lt;App url={location.pathname} /&gt;)
     <li>给 <code>StoreCartItem</code> 写组件测试：点击“删除”按钮后，商品从页面上消失。</li>
     <li>把整个应用的文字都翻译成中文，价格用 <code>Intl.NumberFormat</code> 按语言显示货币。</li>
     <li>运行 <code>npm run build</code>，在 <code>dist/assets</code> 里找出每个语言包和懒加载页面对应的 chunk。</li>
+    <li>用 <code>npx playwright codegen</code> 录制“加入购物车 → 结算”的流程，整理成一个稳定的 E2E 测试，再用 MSW 模拟商品接口返回空列表的情况。</li>
+    <li>给仓库加上本章的 GitHub Actions 工作流，故意提交一个 lint 错误，观察 PR 上的检查结果。</li>
     <li>（进阶）用 Next.js 完成商品详情页，查看网页源代码，确认商品信息已经在 HTML 里；再在浏览器 Network 面板确认 <code>ItemPage</code> 的代码没有被下载。</li>
   </ol>
 </div>

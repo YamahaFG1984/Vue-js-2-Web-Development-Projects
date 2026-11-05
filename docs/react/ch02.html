@@ -38,6 +38,8 @@
     <li>用 <code>map</code> + <code>key</code> 渲染列表，用 <code>&amp;&amp;</code> 和三元运算做条件渲染</li>
     <li>掌握数组和对象的<strong>不可变更新</strong></li>
     <li>知道 <code>dangerouslySetInnerHTML</code> 的风险以及如何安全地显示 HTML</li>
+    <li>理解“状态是快照”，避开连续更新、过期闭包、Strict Mode 双重执行这些常见陷阱<span class="sup">补充</span></li>
+    <li>用 <code>useRef</code> 和 ref 回调操作 DOM，实现编辑器自动聚焦<span class="sup">补充</span></li>
   </ul>
 </div>
 
@@ -715,6 +717,127 @@ useEffect(() =&gt; {
   </p>
 </div>
 
+<h2 id="pitfalls">状态更新的几个常见陷阱<span class="sup">补充</span></h2>
+
+<p>
+  我们已经用了好几次 <code>setNotes</code>、<code>setSelectedId</code>。初学者遇到的“值明明改了却不对”“点了三次只加了一”，几乎都来自同一个误解：
+  以为调用 <code>setX</code> 会<strong>立刻修改</strong>变量 <code>x</code>。实际上，<strong>每一次渲染拿到的状态都是一张快照</strong>，
+  <code>setX</code> 只是“预约”下一次渲染时使用的新值。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="状态是快照：第 1 次渲染中 count 固定为 0，三次 setCount(count + 1) 都是 setCount(1)；改用更新函数 c => c + 1 后，React 依次执行队列得到 3">
+  <rect class="bx" x="20" y="20" width="340" height="260" rx="12"/>
+  <text class="ttl" x="190" y="46" text-anchor="middle">第 1 次渲染：count 是 0 的快照</text>
+  <text class="mono sm" x="40" y="80">setCount(count + 1)</text>
+  <text class="mono sm" x="210" y="80">→ setCount(1)</text>
+  <text class="mono sm" x="40" y="104">setCount(count + 1)</text>
+  <text class="mono sm" x="210" y="104">→ setCount(1)</text>
+  <text class="mono sm" x="40" y="128">setCount(count + 1)</text>
+  <text class="mono sm" x="210" y="128">→ setCount(1)</text>
+  <text class="mono sm" x="40" y="152">console.log(count)</text>
+  <text class="mono sm" x="210" y="152">→ 0（还是快照）</text>
+  <rect class="bx-r" x="40" y="180" width="300" height="76" rx="10"/>
+  <text class="ttl on-r" x="190" y="208" text-anchor="middle">第 2 次渲染：count = 1</text>
+  <text class="sm" x="190" y="234" text-anchor="middle">三次都是“设为 1”，结果只加了一</text>
+
+  <rect class="bx-a" x="400" y="20" width="340" height="260" rx="12"/>
+  <text class="ttl on-a" x="570" y="46" text-anchor="middle">改用更新函数：排队依次计算</text>
+  <text class="mono sm" x="420" y="80">setCount(c =&gt; c + 1)</text>
+  <text class="mono sm" x="600" y="80">0 → 1</text>
+  <text class="mono sm" x="420" y="104">setCount(c =&gt; c + 1)</text>
+  <text class="mono sm" x="600" y="104">1 → 2</text>
+  <text class="mono sm" x="420" y="128">setCount(c =&gt; c + 1)</text>
+  <text class="mono sm" x="600" y="128">2 → 3</text>
+  <text class="sm" x="420" y="152">React 把上一步的结果交给下一步</text>
+  <rect class="bx-g" x="420" y="180" width="300" height="76" rx="10"/>
+  <text class="ttl on-g" x="570" y="208" text-anchor="middle">第 2 次渲染：count = 3</text>
+  <text class="sm" x="570" y="234" text-anchor="middle">同一事件里的多次更新只渲染一次（批处理）</text>
+</svg>
+<figcaption>图 2-10　状态是快照，更新函数会排队执行</figcaption>
+</figure>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · 快照与更新函数</div>
+  <div class="body"><div id="demo-snapshot"><span class="muted">加载中……</span></div></div>
+</div>
+
+<h3>陷阱 1：基于旧值连续更新</h3>
+
+<p>新值依赖旧值时，传一个<strong>更新函数</strong>，React 会把最新的值作为参数传进来。我们的笔记本里也是一样：</p>
+
+<div class="code" data-lang="jsx"><pre>
+// 能用，但依赖的是本次渲染的 notes 快照
+setNotes([...notes, note])
+
+// 更稳妥：不管之前排了多少次更新，都基于最新的数组
+setNotes((prev) =&gt; [...prev, note])
+</pre></div>
+
+<p>在普通的点击事件里两种写法结果相同；但当更新发生在 <code>setTimeout</code>、<code>await</code> 之后，或同一个事件里要更新好几次时，更新函数才不会出错。养成习惯：<strong>新值由旧值算出来，就写更新函数</strong>。</p>
+
+<h3>陷阱 2：过期的闭包</h3>
+
+<p>函数会“记住”它被创建那次渲染里的变量。下面这个计时器永远停在 1：</p>
+
+<div class="vs">
+  <div class="old"><div class="h">✗ 闭包里的 seconds 永远是 0</div>
+<div class="code" data-lang="jsx"><pre>
+useEffect(() =&gt; {
+  const id = setInterval(() =&gt; {
+    setSeconds(seconds + 1)   // 0 + 1，一直是 1
+  }, 1000)
+  return () =&gt; clearInterval(id)
+}, [])   // 只在挂载时运行一次
+</pre></div></div>
+  <div class="new"><div class="h">✓ 用更新函数，不读外面的变量</div>
+<div class="code" data-lang="jsx"><pre>
+useEffect(() =&gt; {
+  const id = setInterval(() =&gt; {
+    setSeconds((s) =&gt; s + 1)
+  }, 1000)
+  return () =&gt; clearInterval(id)
+}, [])
+</pre></div></div>
+</div>
+
+<p>
+  另一种修法是把 <code>seconds</code> 写进依赖数组，但那样每秒都会清除并重建计时器。
+  第 4 章会配置 <code>eslint-plugin-react-hooks</code>，它会检查依赖数组，提醒你漏掉的变量。
+</p>
+
+<h3>陷阱 3：直接修改对象或数组</h3>
+
+<p>
+  前面“不可变更新”一节说过：<code>note.title = 'x'; setNotes(notes)</code> 不会触发更新，因为数组的引用没变。
+  对象嵌套很深时，展开语法会写得很长，可以借助 <a href="https://immerjs.github.io/immer/">Immer</a>：在“草稿”上直接修改，它替你生成新对象。
+</p>
+
+<div class="code" data-lang="jsx"><pre>
+import { produce } from 'immer'
+
+setNotes(produce((draft) =&gt; {
+  const note = draft.find((n) =&gt; n.id === selectedId)
+  note.title = '新标题'          // 看起来是修改，实际得到的是新数组和新对象
+}))
+</pre></div>
+
+<h3>陷阱 4：开发模式下 effect 跑了两次</h3>
+
+<p>
+  用 Vite 创建的项目（第 4 章）会把应用包在 <code>&lt;StrictMode&gt;</code> 里。开发模式下，React 会故意<strong>挂载 → 卸载 → 再挂载</strong>一次组件，
+  所以你会看到 effect 执行了两次、请求发了两遍。这不是 bug，而是在检查你的 effect 有没有写好清理函数：
+  如果“执行、清理、再执行”之后行为和只执行一次一样，说明 effect 是正确的。生产构建不会重复执行。
+</p>
+
+<div class="box tip">
+  <div class="t">&#10003; 一句话记住</div>
+  <p>
+    读状态读到的是<strong>这次渲染的快照</strong>；想基于最新值更新，就给 <code>setX</code> 传函数；想改对象，就换一个新的。
+    如果你需要一个“改了不触发渲染、但随时能读到最新值”的变量，那是下一节的 <code>useRef</code>。
+  </p>
+</div>
+
 <h2 id="toolbar">笔记工具栏</h2>
 
 <div class="code" data-lang="jsx"><pre>
@@ -778,7 +901,7 @@ const sortedNotes = notes
   <rect class="bx" x="510" y="138" width="160" height="28" rx="6"/><text class="sm" x="524" y="157">C · 3</text>
   <text class="lbl" x="380" y="192" text-anchor="middle">sort 是稳定排序：同为收藏或同为未收藏的笔记，保持按时间的顺序</text>
 </svg>
-<figcaption>图 2-10　两次排序得到“收藏优先、组内按时间”</figcaption>
+<figcaption>图 2-11　两次排序得到“收藏优先、组内按时间”</figcaption>
 </figure>
 
 <div class="box warn">
@@ -841,6 +964,106 @@ function StatusBar({ note }) {
   </p>
 </div>
 
+<h2 id="focus">自动聚焦：useRef 与 ref 回调<span class="sup">补充</span></h2>
+
+<p>
+  一个体验上的小改进：新建笔记后，光标应该直接落在编辑器里，用户可以立刻开始打字。
+  这需要拿到 <code>&lt;textarea&gt;</code> 的真实 DOM 元素，调用它的 <code>focus()</code> 方法。React 用 <strong>ref</strong> 把 DOM 元素交给你。
+</p>
+
+<h3>useRef：一个跨渲染保存的盒子</h3>
+
+<p>
+  <code>useRef(初始值)</code> 返回一个对象 <code>{ current: 初始值 }</code>。它和状态有两点不同：
+  <strong>修改 <code>current</code> 不会触发重新渲染</strong>，而且你读到的永远是最新值（不是快照）。
+  把它传给元素的 <code>ref</code> 属性，React 会在提交 DOM 后把元素放进 <code>current</code>，卸载时再设回 <code>null</code>。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="state 与 ref 的区别：state 改变会触发重新渲染且每次渲染是快照；ref 是同一个对象，修改 current 不触发渲染，常用来保存 DOM 元素、计时器 id 等">
+  <rect class="bx-a" x="20" y="20" width="340" height="210" rx="12"/>
+  <text class="ttl on-a" x="190" y="48" text-anchor="middle">useState</text>
+  <text class="mono sm" x="190" y="80" text-anchor="middle">const [x, setX] = useState(0)</text>
+  <text class="sm" x="40" y="116">• setX(1) → 安排重新渲染</text>
+  <text class="sm" x="40" y="142">• 每次渲染读到的是快照</text>
+  <text class="sm" x="40" y="168">• 用于：界面上要显示的数据</text>
+  <text class="lbl" x="190" y="210" text-anchor="middle">变化 → 界面跟着变</text>
+
+  <rect class="bx-p" x="400" y="20" width="340" height="210" rx="12"/>
+  <text class="ttl on-p" x="570" y="48" text-anchor="middle">useRef</text>
+  <text class="mono sm" x="570" y="80" text-anchor="middle">const box = useRef(null)</text>
+  <text class="sm" x="420" y="116">• box.current = 1 → 什么都不发生</text>
+  <text class="sm" x="420" y="142">• 每次渲染都是同一个对象</text>
+  <text class="sm" x="420" y="168">• 用于：DOM 元素、计时器 id、上一次的值</text>
+  <text class="lbl" x="570" y="210" text-anchor="middle">不要在渲染过程中读写 current</text>
+</svg>
+<figcaption>图 2-12　state 驱动界面，ref 只是一个可变的盒子</figcaption>
+</figure>
+
+<p>在 effect 或事件处理函数里使用 ref（渲染过程中 DOM 还没更新，不要在那里读 <code>current</code>）：</p>
+
+<div class="code" data-lang="jsx"><pre>
+import { useRef, useEffect } from 'react'
+
+const editorRef = useRef(null)
+
+// 选中的笔记变了 → DOM 更新完之后聚焦编辑器
+useEffect(() =&gt; {
+  editorRef.current?.focus()
+}, [selectedId])
+
+&lt;textarea ref={editorRef} value={selectedNote.content} onChange={...} /&gt;
+</pre></div>
+
+<p>
+  为什么放在 effect 里，而不是直接写在 <code>addNote</code> 的 <code>setSelectedId</code> 后面？
+  因为如果之前没有选中任何笔记，编辑器还不存在，<code>editorRef.current</code> 是 <code>null</code>；
+  调用 <code>setSelectedId</code> 只是预约了下一次渲染，DOM 要等渲染提交后才出现。effect 正好在那之后运行。
+</p>
+
+<h3>ref 回调：把 DOM 行为做成可复用的小工具</h3>
+
+<p>
+  <code>ref</code> 属性也可以接收一个<strong>函数</strong>：元素挂到页面上时，React 以元素为参数调用它。
+  React 19 起，这个函数还可以返回一个清理函数，在元素卸载时调用 —— 很适合封装“给元素加一点 DOM 行为”：
+</p>
+
+<div class="code" data-lang="jsx"><pre>
+// 定义在组件外面：函数引用保持不变，React 只会在挂载时调用它
+const autoFocus = (el) =&gt; el?.focus()
+
+// 带清理的例子：元素存在期间监听一个事件
+function logScroll(el) {
+  const onScroll = () =&gt; console.log(el.scrollTop)
+  el.addEventListener('scroll', onScroll)
+  return () =&gt; el.removeEventListener('scroll', onScroll)   // React 19：卸载时调用
+}
+
+&lt;textarea key={selectedNote.id} ref={autoFocus} ... /&gt;
+</pre></div>
+
+<p>
+  注意那个 <code>key</code>：切换笔记时，<code>&lt;textarea&gt;</code> 默认会被复用（只是内容变了），ref 回调不会再次调用。
+  给它一个随笔记变化的 key，每次切换都会创建一个新元素，于是每次都会自动聚焦 —— “改变 key 来强制重新创建”是 React 里很常用的技巧。
+</p>
+
+<div class="box warn">
+  <div class="t">&#9888; 别把 ref 回调写成内联箭头函数</div>
+  <p>
+    <code>ref={(el) =&gt; el?.focus()}</code> 每次渲染都是一个新函数，React 会先用 <code>null</code> 调用旧函数、再用元素调用新函数 ——
+    结果是每次渲染都聚焦一次，用户在标题输入框里打字时，焦点会被抢回编辑器。所以要么定义在组件外面，要么用 <code>useCallback</code> 保持引用稳定。
+    简单场景也可以直接用 <code>autoFocus</code> 属性，效果相同。
+  </p>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 把 ref 传给自己写的组件</div>
+  <p>
+    React 19 之前，函数组件要用 <code>forwardRef</code> 包一层才能接收 <code>ref</code>。现在 <code>ref</code> 就是一个普通的 prop：
+    <code>function Editor({ ref, ...props }) { return &lt;textarea ref={ref} {...props} /&gt; }</code>，父组件写 <code>&lt;Editor ref={editorRef} /&gt;</code> 即可。
+  </p>
+</div>
+
 <h2 id="demo">在线试一试</h2>
 
 <p>下面是本章应用的精简版（去掉了 Markdown 渲染和本地存储）：</p>
@@ -862,6 +1085,8 @@ import DOMPurify from 'dompurify'
 
 const dateFormatter = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short' })
 const segmenter = new Intl.Segmenter('zh', { granularity: 'word' })
+// ref 回调：编辑器出现时自动获得焦点（定义在组件外，引用保持不变）
+const autoFocus = (el) =&gt; el?.focus()
 
 function StatusBar({ note }) {
   const text = note.content
@@ -912,12 +1137,12 @@ function Notebook() {
       created: Date.now(),
       favorite: false,
     }
-    setNotes([...notes, note])
+    setNotes((prev) =&gt; [...prev, note])
     setSelectedId(note.id)
   }
 
   function updateSelected(changes) {
-    setNotes(notes.map((note) =&gt; note.id === selectedId ? { ...note, ...changes } : note))
+    setNotes((prev) =&gt; prev.map((note) =&gt; note.id === selectedId ? { ...note, ...changes } : note))
   }
 
   function removeNote() {
@@ -961,7 +1186,7 @@ function Notebook() {
                 &lt;i className="material-icons"&gt;delete&lt;/i&gt;
               &lt;/button&gt;
             &lt;/div&gt;
-            &lt;textarea value={selectedNote.content}
+            &lt;textarea key={selectedNote.id} ref={autoFocus} value={selectedNote.content}
                       onChange={(e) =&gt; updateSelected({ content: e.target.value })} /&gt;
             &lt;StatusBar note={selectedNote} /&gt;
           &lt;/section&gt;
@@ -1011,6 +1236,8 @@ dispatch({ type: 'updated', id: selectedId, changes: { title: '新标题' } })
 <tr><td>列表</td><td><code>arr.map(x =&gt; &lt;li key={x.id}&gt;)</code></td><td>key 用稳定唯一的 id</td></tr>
 <tr><td>条件</td><td><code>&amp;&amp;</code>、三元、提前 <code>return null</code></td><td>小心 <code>0 &amp;&amp;</code></td></tr>
 <tr><td>原始 HTML</td><td><code>dangerouslySetInnerHTML</code></td><td>用户内容务必先消毒</td></tr>
+<tr><td>更新函数 <span class="sup">补充</span></td><td><code>setX(prev =&gt; …)</code></td><td>状态是快照；新值依赖旧值时传函数</td></tr>
+<tr><td>操作 DOM <span class="sup">补充</span></td><td><code>useRef</code> + effect，或 ref 回调</td><td>ref 改了不触发渲染</td></tr>
 </tbody>
 </table></div>
 
@@ -1018,7 +1245,7 @@ dispatch({ type: 'updated', id: selectedId, changes: { title: '新标题' } })
   <h3>动手练习</h3>
   <ol>
     <li>给侧边栏加一个搜索框，筛选出标题或内容包含关键字的笔记（筛选结果是派生数据，不要存进状态）。</li>
-    <li>新建笔记后，让光标自动聚焦到编辑器（提示：<code>useRef</code> + <code>useEffect</code>，或 <code>autoFocus</code> 属性）。</li>
+    <li>写一个 ref 回调 <code>autosize</code>：让 textarea 的高度随内容自动增长（提示：监听 <code>input</code> 事件，设置 <code>el.style.height = el.scrollHeight + 'px'</code>，并返回清理函数移除监听）。</li>
     <li>在状态栏加上“预计阅读时间”，按每分钟 300 字估算。</li>
     <li>故意把 <code>updateSelected</code> 改成直接修改对象（<code>selectedNote.title = ...; setNotes(notes)</code>），观察界面为什么不更新。</li>
     <li>按“进阶”部分的提示，把状态逻辑改写为 <code>useReducer</code>。</li>
@@ -1076,6 +1303,29 @@ dispatch({ type: 'updated', id: selectedId, changes: { title: '新标题' } })
     </div>`
   }
   createRoot(document.getElementById('demo-notebook')).render(html`<${Demo} />`)
+
+  function Snapshot() {
+    const [count, setCount] = useState(0)
+    const [log, setLog] = useState('点一下按钮试试')
+    const wrong = () => {
+      setCount(count + 1); setCount(count + 1); setCount(count + 1)
+      setLog(`三次 setCount(count + 1)，此时 count 仍是快照 ${count} → 结果 ${count + 1}`)
+    }
+    const right = () => {
+      setCount((c) => c + 1); setCount((c) => c + 1); setCount((c) => c + 1)
+      setLog(`三次 setCount(c => c + 1)，依次计算 → 结果 ${count + 3}`)
+    }
+    return html`<div>
+      <div style=${{ fontSize: '32px', fontWeight: 700, margin: '4px 0 10px' }}>${count}</div>
+      <div style=${{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        <button onClick=${wrong}>+3（直接用 count）</button>
+        <button onClick=${right}>+3（更新函数）</button>
+        <button className="ghost" onClick=${() => { setCount(0); setLog('已重置') }}>重置</button>
+      </div>
+      <p className="muted" style=${{ marginBottom: 0 }}>${log}</p>
+    </div>`
+  }
+  createRoot(document.getElementById('demo-snapshot')).render(html`<${Snapshot} />`)
 </script>
 </body>
 </html>

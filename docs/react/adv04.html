@@ -1,0 +1,714 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 12 章 · 跨端：PWA、移动端与桌面端 — React 项目实战教程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="assets/react.css">
+</head>
+<body data-chapter="12">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 12 章 · 进阶专题</span>
+<h1>跨端：PWA、移动端与桌面端</h1>
+<p class="lede">
+  我们写的 React 应用本质上是一堆 HTML、CSS 和 JS。浏览器能运行它，手机 App 里的 WebView 也能运行它，桌面程序里的 WebView 同样可以。
+  本章介绍三种把 React 应用带出浏览器标签页的方式：能安装、能离线的 <strong>PWA</strong>，打包成 iOS / Android 应用的 <strong>Capacitor</strong>，
+  以及打包成 Windows / macOS / Linux 桌面程序的 <strong>Tauri</strong>。你学过的 React 知识一点都不用变。
+  最后还会介绍 React 独有的另一条路：用 <strong>React Native</strong> 写真正的原生界面。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>了解几种跨端方案的原理和取舍：PWA、Capacitor、Tauri、Electron</li>
+    <li>用 <code>vite-plugin-pwa</code> 让第 2 章的笔记本可以安装、可以离线使用</li>
+    <li>理解 Service Worker 的几种缓存策略，并处理“有新版本”的更新提示</li>
+    <li>用 Capacitor 把应用打包成手机 App，调用相机和定位等原生能力</li>
+    <li>用 Tauri 2 把应用打包成桌面程序，从前端调用 Rust 命令</li>
+    <li>用“适配器”组织平台相关代码，让一份代码跑在所有平台上</li>
+    <li>了解 React Native 和 Expo：什么时候该用原生界面代替 WebView</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="overview">一份代码，多种外壳</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="同一个 React 应用的构建产物 dist 可以放进四种外壳：浏览器里的 PWA、Capacitor 手机应用、Tauri 桌面应用、Electron 桌面应用">
+  <rect class="bx-a" x="250" y="20" width="260" height="76" rx="14"/>
+  <text class="ttl on-a" x="380" y="48" text-anchor="middle">你的 React 应用</text>
+  <text class="mono sm" x="380" y="74" text-anchor="middle">vite build → dist/</text>
+
+  <rect class="bx-b" x="20" y="150" width="165" height="130" rx="12"/>
+  <text class="ttl on-b" x="102" y="176" text-anchor="middle">PWA</text>
+  <text class="sm" x="102" y="200" text-anchor="middle">浏览器本身</text>
+  <text class="sm" x="102" y="220" text-anchor="middle">+ Service Worker</text>
+  <text class="sm" x="102" y="248" text-anchor="middle">可安装、可离线</text>
+  <text class="sm" x="102" y="266" text-anchor="middle">零额外体积</text>
+
+  <rect class="bx-g" x="205" y="150" width="165" height="130" rx="12"/>
+  <text class="ttl on-g" x="287" y="176" text-anchor="middle">Capacitor</text>
+  <text class="sm" x="287" y="200" text-anchor="middle">iOS / Android</text>
+  <text class="sm" x="287" y="220" text-anchor="middle">系统 WebView</text>
+  <text class="sm" x="287" y="248" text-anchor="middle">上架应用商店</text>
+  <text class="sm" x="287" y="266" text-anchor="middle">原生插件</text>
+
+  <rect class="bx-p" x="390" y="150" width="165" height="130" rx="12"/>
+  <text class="ttl on-p" x="472" y="176" text-anchor="middle">Tauri 2</text>
+  <text class="sm" x="472" y="200" text-anchor="middle">桌面（也支持移动端）</text>
+  <text class="sm" x="472" y="220" text-anchor="middle">系统 WebView + Rust</text>
+  <text class="sm" x="472" y="248" text-anchor="middle">安装包几 MB</text>
+  <text class="sm" x="472" y="266" text-anchor="middle">权限默认收紧</text>
+
+  <rect class="bx" x="575" y="150" width="165" height="130" rx="12"/>
+  <text class="ttl" x="657" y="176" text-anchor="middle">Electron</text>
+  <text class="sm" x="657" y="200" text-anchor="middle">桌面</text>
+  <text class="sm" x="657" y="220" text-anchor="middle">自带 Chromium + Node</text>
+  <text class="sm" x="657" y="248" text-anchor="middle">各平台渲染一致</text>
+  <text class="sm" x="657" y="266" text-anchor="middle">安装包上百 MB</text>
+
+  <path class="ln-a" d="M300 98 L110 146" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M350 98 L290 146" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M410 98 L470 146" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M460 98 L650 146" marker-end="url(#ar-a)"/>
+</svg>
+<figcaption>图 12-1　同一份构建产物，装进不同的外壳</figcaption>
+</figure>
+
+<div class="tw"><table>
+<thead><tr><th></th><th>PWA</th><th>Capacitor</th><th>Tauri 2</th><th>Electron</th></tr></thead>
+<tbody>
+<tr><td>目标平台</td><td>所有现代浏览器</td><td>iOS、Android（也能输出 Web）</td><td>Windows、macOS、Linux，以及 iOS、Android</td><td>Windows、macOS、Linux</td></tr>
+<tr><td>原生能力</td><td>受浏览器 API 限制</td><td>插件调用相机、定位、推送等</td><td>Rust 后端 + 插件</td><td>完整 Node.js</td></tr>
+<tr><td>分发</td><td>一个网址</td><td>应用商店</td><td>安装包 / 商店</td><td>安装包 / 商店</td></tr>
+<tr><td>体积</td><td>无</td><td>小</td><td>很小（用系统 WebView）</td><td>大（自带浏览器）</td></tr>
+<tr><td>额外要学</td><td>Service Worker</td><td>Xcode / Android Studio 基础</td><td>一点 Rust（可选）</td><td>Node 主进程与 IPC</td></tr>
+</tbody>
+</table></div>
+
+<div class="box key">
+  <div class="t">&#9733; 先从 PWA 开始</div>
+  <p>
+    PWA 成本最低，几乎只是加一个插件。很多“要不要做个 App”的需求，其实一个可以添加到主屏幕、能离线打开的 PWA 就能满足。
+    确实需要上架应用商店或者用到浏览器拿不到的原生能力时，再考虑 Capacitor 或 Tauri。
+  </p>
+</div>
+
+<h2 id="pwa">PWA：让网站像 App 一样</h2>
+
+<p>PWA（Progressive Web App，渐进式 Web 应用）不是某个框架，而是一组浏览器能力的组合。核心是两个文件：</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#128196;</span><h4>Web App Manifest</h4><p>一个 JSON 文件，描述应用名、图标、主题色、启动方式。有了它，浏览器才会提示“安装”。</p></div>
+  <div class="card"><span class="ic">&#9881;</span><h4>Service Worker</h4><p>运行在页面之外的一段脚本，能拦截网络请求、管理缓存，让应用在离线时也能打开。</p></div>
+</div>
+
+<h3>给笔记本加上 vite-plugin-pwa</h3>
+
+<p>第 2 章的笔记本把数据存在 localStorage 里，天生适合离线使用。把它改成 Vite 项目后（第 4 章的方式），安装插件：</p>
+
+<div class="code" data-lang="bash"><pre>
+npm i -D vite-plugin-pwa
+</pre></div>
+
+<div class="code" data-lang="js" data-file="vite.config.js"><pre>
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import { VitePWA } from 'vite-plugin-pwa'
+
+export default defineConfig({
+  plugins: [
+    react(),
+    VitePWA({
+      registerType: 'prompt',              // 有新版本时提示用户，而不是悄悄替换
+      includeAssets: ['favicon.svg'],
+      manifest: {
+        name: 'Markdown 笔记本',
+        short_name: '笔记本',
+        theme_color: '#087ea4',
+        background_color: '#ffffff',
+        display: 'standalone',             // 安装后没有浏览器地址栏，像原生 App
+        icons: [
+          { src: 'pwa-192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'pwa-512.png', sizes: '512x512', type: 'image/png' },
+          { src: 'pwa-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ],
+      },
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],   // 构建产物全部预缓存
+      },
+    }),
+  ],
+})
+</pre></div>
+
+<p>构建后，插件会生成 <code>manifest.webmanifest</code> 和 <code>sw.js</code>，并自动在 HTML 里注册。用 <code>npm run build &amp;&amp; npm run preview</code> 打开，Chrome 地址栏右侧会出现“安装”图标；在开发者工具 Application 面板勾选 Offline 再刷新，页面依然能打开。</p>
+
+<div class="box warn">
+  <div class="t">&#9888; Service Worker 只在 HTTPS 下工作</div>
+  <p><code>localhost</code> 是例外，开发时可以用。部署时 GitHub Pages、Netlify、Vercel 都默认提供 HTTPS。开发环境默认不启用 SW，要调试可以在插件选项里设置 <code>devOptions: { enabled: true }</code>。</p>
+</div>
+
+<h3>缓存策略</h3>
+
+<p>Service Worker 拦截到一个请求后，要决定“先看缓存还是先问网络”。不同的资源适合不同的策略：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="三种缓存策略：缓存优先适合带哈希的静态资源；网络优先适合接口数据，失败时用缓存；先用缓存再后台更新适合头像等允许稍旧的资源">
+  <rect class="bx-b" x="20" y="20" width="230" height="250" rx="12"/>
+  <text class="ttl on-b" x="135" y="46" text-anchor="middle">CacheFirst 缓存优先</text>
+  <text class="sm" x="40" y="76">① 查缓存</text>
+  <text class="sm" x="40" y="98">② 命中 → 直接返回</text>
+  <text class="sm" x="40" y="120">③ 未命中 → 网络，存入缓存</text>
+  <rect class="bx" x="40" y="146" width="190" height="48" rx="8"/>
+  <text class="sm" x="135" y="166" text-anchor="middle">最快，离线可用</text>
+  <text class="sm" x="135" y="184" text-anchor="middle">内容不会自动更新</text>
+  <text class="sm" x="135" y="222" text-anchor="middle">适合：带哈希的 JS/CSS、</text>
+  <text class="sm" x="135" y="242" text-anchor="middle">字体、图标</text>
+
+  <rect class="bx-g" x="265" y="20" width="230" height="250" rx="12"/>
+  <text class="ttl on-g" x="380" y="46" text-anchor="middle">NetworkFirst 网络优先</text>
+  <text class="sm" x="285" y="76">① 先请求网络</text>
+  <text class="sm" x="285" y="98">② 成功 → 返回并更新缓存</text>
+  <text class="sm" x="285" y="120">③ 失败/超时 → 用缓存兜底</text>
+  <rect class="bx" x="285" y="146" width="190" height="48" rx="8"/>
+  <text class="sm" x="380" y="166" text-anchor="middle">数据尽量新</text>
+  <text class="sm" x="380" y="184" text-anchor="middle">离线时显示上次的数据</text>
+  <text class="sm" x="380" y="222" text-anchor="middle">适合：接口数据、</text>
+  <text class="sm" x="380" y="242" text-anchor="middle">HTML 页面</text>
+
+  <rect class="bx-p" x="510" y="20" width="230" height="250" rx="12"/>
+  <text class="ttl on-p" x="625" y="46" text-anchor="middle">StaleWhileRevalidate</text>
+  <text class="sm" x="530" y="76">① 有缓存 → 立即返回</text>
+  <text class="sm" x="530" y="98">② 同时后台请求网络</text>
+  <text class="sm" x="530" y="120">③ 更新缓存，下次用新的</text>
+  <rect class="bx" x="530" y="146" width="190" height="48" rx="8"/>
+  <text class="sm" x="625" y="166" text-anchor="middle">又快又会更新</text>
+  <text class="sm" x="625" y="184" text-anchor="middle">但这次看到的可能是旧的</text>
+  <text class="sm" x="625" y="222" text-anchor="middle">适合：头像、文章图片、</text>
+  <text class="sm" x="625" y="242" text-anchor="middle">不常变的接口</text>
+</svg>
+<figcaption>图 12-2　三种常用的缓存策略</figcaption>
+</figure>
+
+<p>构建产物默认已经预缓存了。对运行时才请求的资源（比如接口、第三方图片），在 <code>workbox.runtimeCaching</code> 里按 URL 指定策略：</p>
+
+<div class="code" data-lang="js" data-file="vite.config.js（workbox 部分）"><pre>
+workbox: {
+  globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+  runtimeCaching: [
+    {
+      urlPattern: ({ url }) =&gt; url.pathname.startsWith('/api/'),
+      handler: 'NetworkFirst',
+      options: { cacheName: 'api', networkTimeoutSeconds: 3, expiration: { maxEntries: 50 } },
+    },
+    {
+      urlPattern: ({ request }) =&gt; request.destination === 'image',
+      handler: 'StaleWhileRevalidate',
+      options: { cacheName: 'images', expiration: { maxEntries: 100, maxAgeSeconds: 7 * 24 * 3600 } },
+    },
+  ],
+},
+</pre></div>
+
+<h3>“有新版本”提示</h3>
+
+<p>
+  Service Worker 的更新有个容易让人困惑的地方：你部署了新版本，用户打开页面时，新的 SW 会被下载，但<strong>旧 SW 仍在控制页面</strong>，
+  直到所有标签页关闭。<code>registerType: 'prompt'</code> 让我们自己决定何时切换。插件为 React 提供了一个 Hook：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="Service Worker 更新流程：部署新版本后浏览器下载新 SW 进入等待状态，needRefresh 变为 true 显示提示，用户点击更新后新 SW 接管并刷新页面">
+  <rect class="bx" x="20" y="60" width="150" height="80" rx="12"/>
+  <text class="ttl" x="95" y="88" text-anchor="middle">部署新版本</text>
+  <text class="sm" x="95" y="112" text-anchor="middle">sw.js 内容变了</text>
+  <rect class="bx-b" x="210" y="60" width="160" height="80" rx="12"/>
+  <text class="ttl on-b" x="290" y="88" text-anchor="middle">新 SW 等待中</text>
+  <text class="sm" x="290" y="112" text-anchor="middle">旧 SW 仍在工作</text>
+  <rect class="bx-a" x="410" y="60" width="160" height="80" rx="12"/>
+  <text class="ttl on-a" x="490" y="88" text-anchor="middle">显示提示条</text>
+  <text class="mono sm" x="490" y="112" text-anchor="middle">needRefresh = true</text>
+  <rect class="bx-g" x="610" y="60" width="130" height="80" rx="12"/>
+  <text class="ttl on-g" x="675" y="88" text-anchor="middle">用户点更新</text>
+  <text class="sm" x="675" y="112" text-anchor="middle">新 SW 接管 + 刷新</text>
+  <path class="ln" d="M170 100 H206" marker-end="url(#ar)"/>
+  <path class="ln" d="M370 100 H406" marker-end="url(#ar)"/>
+  <path class="ln" d="M570 100 H606" marker-end="url(#ar)"/>
+  <text class="lbl" x="380" y="180" text-anchor="middle">用户正在写笔记时不会被强制刷新，由他自己选择时机</text>
+</svg>
+<figcaption>图 12-3　Service Worker 的更新流程</figcaption>
+</figure>
+
+<div class="code" data-lang="jsx" data-file="src/components/UpdatePrompt.jsx"><pre>
+import { useRegisterSW } from 'virtual:pwa-register/react'
+
+export default function UpdatePrompt() {
+  const {
+    needRefresh: [needRefresh, setNeedRefresh],      // 返回 [值, setter]，和 useState 一样
+    offlineReady: [offlineReady, setOfflineReady],
+    updateServiceWorker,
+  } = useRegisterSW()
+
+  if (!needRefresh &amp;&amp; !offlineReady) return null
+  const close = () =&gt; { setNeedRefresh(false); setOfflineReady(false) }
+
+  return (
+    &lt;div className="toast" role="status"&gt;
+      &lt;span&gt;{needRefresh ? '有新版本可用' : '已可以离线使用'}&lt;/span&gt;
+      {needRefresh &amp;&amp; &lt;button onClick={() =&gt; updateServiceWorker(true)}&gt;更新&lt;/button&gt;}
+      &lt;button onClick={close}&gt;关闭&lt;/button&gt;
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<p>
+  再写一个 <code>useOnline()</code>（用第 6 章的 <code>useSyncExternalStore</code> 订阅 <code>online</code> / <code>offline</code> 事件），
+  可以在离线时显示一个小标记，并把“同步到服务器”之类的操作排队，等恢复网络后再执行。
+</p>
+
+<div class="box note">
+  <div class="t">&#9432; iOS 上的 PWA</div>
+  <p>
+    iPhone 上需要用 Safari 的“分享 → 添加到主屏幕”来安装，没有自动的安装提示。从 iOS 16.4 起，添加到主屏幕的 PWA 也能接收推送通知。
+    不同浏览器对 PWA 各项能力的支持程度不一，用到某个 API 前先查一下兼容性。
+  </p>
+</div>
+
+<h2 id="capacitor">Capacitor：打包成手机 App</h2>
+
+<p>
+  Capacitor 把你的 <code>dist/</code> 放进一个原生的 iOS / Android 工程里，用系统的 WebView 显示，并提供一座<strong>桥</strong>：
+  JS 调用插件方法，桥把调用转给原生代码（Swift / Kotlin），结果再传回来。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="Capacitor 架构：React 应用运行在系统 WebView 中，通过 Capacitor 桥调用相机、定位、文件等原生插件，插件由 Swift 和 Kotlin 实现">
+  <rect class="bx" x="20" y="20" width="720" height="200" rx="16"/>
+  <text class="ttl" x="40" y="44">原生 App（Xcode / Android Studio 工程）</text>
+  <rect class="bx-a" x="40" y="62" width="280" height="140" rx="12"/>
+  <text class="ttl on-a" x="180" y="88" text-anchor="middle">WebView</text>
+  <text class="sm" x="180" y="112" text-anchor="middle">运行 dist/ 里的 React 应用</text>
+  <text class="mono sm" x="180" y="142" text-anchor="middle">await Camera.getPhoto()</text>
+  <text class="mono sm" x="180" y="162" text-anchor="middle">await Geolocation</text>
+  <text class="mono sm" x="180" y="180" text-anchor="middle">.getCurrentPosition()</text>
+
+  <rect class="bx-b" x="360" y="90" width="120" height="84" rx="12"/>
+  <text class="ttl on-b" x="420" y="124" text-anchor="middle">Capacitor</text>
+  <text class="ttl on-b" x="420" y="144" text-anchor="middle">桥</text>
+
+  <rect class="bx-g" x="520" y="62" width="200" height="140" rx="12"/>
+  <text class="ttl on-g" x="620" y="88" text-anchor="middle">原生插件</text>
+  <text class="sm" x="620" y="114" text-anchor="middle">相机 · 定位 · 文件</text>
+  <text class="sm" x="620" y="134" text-anchor="middle">推送 · 分享 · 触感反馈</text>
+  <text class="sm" x="620" y="160" text-anchor="middle">Swift（iOS）</text>
+  <text class="sm" x="620" y="180" text-anchor="middle">Kotlin / Java（Android）</text>
+
+  <path class="ln-a" d="M320 118 H356" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M480 118 H516" marker-end="url(#ar-a)"/>
+  <path class="ln-g" d="M516 152 H484" marker-end="url(#ar)"/>
+  <path class="ln-g" d="M356 152 H324" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 12-4　Capacitor：WebView + 桥 + 原生插件</figcaption>
+</figure>
+
+<h3>添加到现有项目</h3>
+
+<ol class="steps">
+  <li>安装并初始化：
+<div class="code" data-lang="bash"><pre>
+npm i @capacitor/core
+npm i -D @capacitor/cli
+npx cap init "地图博客" com.example.geoblog --web-dir dist
+</pre></div></li>
+  <li>添加平台（需要本机装好 Android Studio；iOS 需要 macOS + Xcode）：
+<div class="code" data-lang="bash"><pre>
+npm i @capacitor/android @capacitor/ios
+npx cap add android
+npx cap add ios
+</pre></div></li>
+  <li>每次改完前端代码：构建，然后同步到原生工程，再用 IDE 打开运行：
+<div class="code" data-lang="bash"><pre>
+npm run build
+npx cap sync          # 复制 dist/ 并更新原生插件
+npx cap open android  # 在 Android Studio 里点运行
+</pre></div></li>
+</ol>
+
+<h3>调用原生能力</h3>
+
+<p>第 6 章的地图博客需要“在我的位置发帖”。在 App 里，用定位插件拿到更准确的位置；用相机插件给帖子拍照：</p>
+
+<div class="code" data-lang="bash"><pre>
+npm i @capacitor/geolocation @capacitor/camera
+npx cap sync
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/platform/nativeFeatures.js"><pre>
+import { Capacitor } from '@capacitor/core'
+import { Geolocation } from '@capacitor/geolocation'
+import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
+
+export async function getMyPosition() {
+  const { coords } = await Geolocation.getCurrentPosition({ enableHighAccuracy: true })
+  return { lat: coords.latitude, lng: coords.longitude }
+}
+
+export async function takePhoto() {
+  const photo = await Camera.getPhoto({
+    resultType: CameraResultType.Uri,   // 返回一个可以直接放进 &lt;img src&gt; 的地址
+    source: CameraSource.Prompt,        // 让用户选择拍照还是从相册选
+    quality: 80,
+  })
+  return photo.webPath
+}
+
+export const isNativeApp = Capacitor.isNativePlatform()
+</pre></div>
+
+<p>
+  这些官方插件在浏览器里也有 Web 实现（定位用浏览器的 Geolocation API，相机弹出文件选择），所以同一份代码在网页和 App 里都能跑。
+  需要原生权限的插件，记得按插件文档在 <code>Info.plist</code>（iOS）和 <code>AndroidManifest.xml</code>（Android）里声明权限说明。
+</p>
+
+<div class="box tip">
+  <div class="t">&#10003; 想要原生的外观？试试 Ionic React</div>
+  <p>
+    Capacitor 只负责“装进 App”和“调用原生能力”，界面还是你自己写的。如果希望列表、标签栏、页面切换动画都像原生 App，
+    可以使用同一团队的 <strong>Ionic React</strong> 组件库（<code>@ionic/react</code>），它会根据平台自动切换 iOS / Material 风格。
+    如果连“原生的外观”都不够，而是要原生的性能和手感，就该看本章最后的 React Native 了。
+  </p>
+</div>
+
+<h2 id="tauri">Tauri：打包成桌面程序</h2>
+
+<p>
+  Tauri 用操作系统自带的 WebView（Windows 的 WebView2、macOS 的 WKWebView、Linux 的 WebKitGTK）显示界面，后端是一个小巧的 Rust 程序。
+  和自带完整 Chromium 的 Electron 相比，安装包可以小一个数量级。Tauri 2 还加入了 iOS / Android 支持和更细粒度的权限系统。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="Tauri 与 Electron 对比：Tauri 用系统 WebView 加 Rust 核心，前端通过 invoke 调用 Rust 命令，并受权限配置约束；Electron 打包完整的 Chromium 和 Node.js">
+  <rect class="bx-p" x="20" y="20" width="350" height="210" rx="14"/>
+  <text class="ttl on-p" x="195" y="46" text-anchor="middle">Tauri 2</text>
+  <rect class="bx-a" x="40" y="64" width="140" height="84" rx="10"/>
+  <text class="ttl on-a" x="110" y="90" text-anchor="middle">系统 WebView</text>
+  <text class="sm" x="110" y="112" text-anchor="middle">React 应用</text>
+  <text class="mono sm" x="110" y="132" text-anchor="middle">invoke('cmd')</text>
+  <rect class="bx" x="210" y="64" width="140" height="84" rx="10"/>
+  <text class="ttl" x="280" y="90" text-anchor="middle">Rust 核心</text>
+  <text class="sm" x="280" y="112" text-anchor="middle">命令 · 插件</text>
+  <text class="sm" x="280" y="132" text-anchor="middle">文件 · 系统托盘</text>
+  <path class="ln-p" d="M180 106 H206" marker-end="url(#ar)"/>
+  <rect class="bx-d" x="40" y="160" width="310" height="34" rx="8"/>
+  <text class="sm" x="195" y="182" text-anchor="middle">capabilities：前端只能调用声明过的权限</text>
+  <text class="sm" x="195" y="216" text-anchor="middle">安装包通常只有几 MB</text>
+
+  <rect class="bx" x="390" y="20" width="350" height="210" rx="14"/>
+  <text class="ttl" x="565" y="46" text-anchor="middle">Electron</text>
+  <rect class="bx-a" x="410" y="64" width="140" height="84" rx="10"/>
+  <text class="ttl on-a" x="480" y="90" text-anchor="middle">Chromium</text>
+  <text class="sm" x="480" y="112" text-anchor="middle">随应用打包</text>
+  <text class="sm" x="480" y="132" text-anchor="middle">渲染进程</text>
+  <rect class="bx" x="580" y="64" width="140" height="84" rx="10"/>
+  <text class="ttl" x="650" y="90" text-anchor="middle">Node.js</text>
+  <text class="sm" x="650" y="112" text-anchor="middle">主进程</text>
+  <text class="sm" x="650" y="132" text-anchor="middle">IPC 通信</text>
+  <path class="ln" d="M550 106 H576" marker-end="url(#ar)"/>
+  <rect class="bx-d" x="410" y="160" width="310" height="34" rx="8"/>
+  <text class="sm" x="565" y="182" text-anchor="middle">所有平台渲染完全一致；生态成熟</text>
+  <text class="sm" x="565" y="216" text-anchor="middle">安装包通常上百 MB</text>
+</svg>
+<figcaption>图 12-5　Tauri 与 Electron 的结构对比</figcaption>
+</figure>
+
+<h3>给 Vite 项目加上 Tauri</h3>
+
+<p>先按 <a href="https://tauri.app/start/prerequisites/">Tauri 官方文档</a>安装 Rust 和各平台依赖，然后在项目根目录：</p>
+
+<div class="code" data-lang="bash"><pre>
+npm i -D @tauri-apps/cli
+npx tauri init         # 生成 src-tauri/ 目录，按提示填写 dev 地址和 dist 目录
+npx tauri dev          # 启动 Vite 并打开桌面窗口，支持热更新
+npx tauri build        # 生成 .msi / .dmg / .deb 等安装包
+</pre></div>
+
+<div class="code" data-lang="json" data-file="src-tauri/tauri.conf.json（节选）"><pre>
+{
+  "productName": "Markdown 笔记本",
+  "identifier": "com.example.notebook",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{ "title": "笔记本", "width": 1000, "height": 700 }]
+  }
+}
+</pre></div>
+
+<h3>从 React 调用 Rust</h3>
+
+<p>前端拿到桌面能力有两种途径：<strong>自己写的 Rust 命令</strong>，以及<strong>官方插件</strong>。先看前者：用 <code>#[tauri::command]</code> 标记一个 Rust 函数（这里是统计字数），前端用 <code>invoke</code> 调用它。后者用来把笔记导出成真正的 <code>.md</code> 文件：</p>
+
+<div class="code" data-lang="rust" data-file="src-tauri/src/lib.rs"><pre>
+#[tauri::command]
+fn word_count(text: &amp;str) -&gt; usize {
+    text.split_whitespace().count()
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .invoke_handler(tauri::generate_handler![word_count])
+        .run(tauri::generate_context!())
+        .expect("启动失败");
+}
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/platform/desktop.js"><pre>
+import { invoke } from '@tauri-apps/api/core'
+import { save } from '@tauri-apps/plugin-dialog'
+import { writeTextFile } from '@tauri-apps/plugin-fs'
+
+export const countWords = (text) =&gt; invoke('word_count', { text })
+
+export async function exportNote(note) {
+  const path = await save({ defaultPath: `${note.title}.md`, filters: [{ name: 'Markdown', extensions: ['md'] }] })
+  if (path) await writeTextFile(path, note.content)
+}
+</pre></div>
+
+<p>
+  文件对话框和文件读写用的是官方插件（<code>npm i @tauri-apps/plugin-dialog @tauri-apps/plugin-fs</code>，并在 <code>Cargo.toml</code> 里加上对应的 Rust 依赖，
+  <code>npx tauri add dialog</code> 可以一步完成）。Tauri 2 默认不给前端任何权限，要在 capabilities 文件里明确声明：
+</p>
+
+<div class="code" data-lang="json" data-file="src-tauri/capabilities/default.json"><pre>
+{
+  "identifier": "default",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:allow-save", "fs:allow-write-text-file"]
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 为什么要声明权限</div>
+  <p>
+    桌面程序能访问用户的整个文件系统。如果应用加载的某个第三方脚本被篡改，权限越大，造成的破坏越大。
+    “默认什么都不允许，用到什么声明什么”是 Tauri 的安全设计；fs 插件还可以进一步限定只能访问某些目录。具体的权限名称以插件文档为准。
+  </p>
+</div>
+
+<h2 id="adapter">平台相关代码怎么组织</h2>
+
+<p>
+  同一个应用要跑在网页、手机和桌面上，“保存笔记”“获取位置”在每个平台的实现都不一样。不要在组件里到处写 <code>if (isTauri) … else if (isNative) …</code>，
+  而是定义一个统一的接口，每个平台各写一份<strong>适配器</strong>：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="适配器模式：组件只调用 platform 接口的 exportNote 和 getPosition，根据运行环境选择 Web、Capacitor 或 Tauri 的实现">
+  <rect class="bx-a" x="270" y="20" width="220" height="56" rx="12"/>
+  <text class="ttl on-a" x="380" y="44" text-anchor="middle">组件</text>
+  <text class="mono sm" x="380" y="64" text-anchor="middle">platform.exportNote(note)</text>
+
+  <rect class="bx-b" x="230" y="110" width="300" height="50" rx="12"/>
+  <text class="ttl on-b" x="380" y="132" text-anchor="middle">src/platform/index.js</text>
+  <text class="sm" x="380" y="150" text-anchor="middle">统一接口：按运行环境选一个实现</text>
+
+  <rect class="bx" x="20" y="190" width="220" height="44" rx="10"/>
+  <text class="sm" x="130" y="217" text-anchor="middle">web.js：下载 Blob 文件</text>
+  <rect class="bx-g" x="270" y="190" width="220" height="44" rx="10"/>
+  <text class="sm" x="380" y="217" text-anchor="middle">native.js：Capacitor 分享</text>
+  <rect class="bx-p" x="520" y="190" width="220" height="44" rx="10"/>
+  <text class="sm" x="630" y="217" text-anchor="middle">desktop.js：Tauri 保存对话框</text>
+
+  <path class="ln" d="M380 78 V106" marker-end="url(#ar)"/>
+  <path class="ln" d="M300 162 L150 186" marker-end="url(#ar)"/>
+  <path class="ln" d="M380 162 V186" marker-end="url(#ar)"/>
+  <path class="ln" d="M460 162 L610 186" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 12-6　用适配器隔离平台差异</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="src/platform/index.js"><pre>
+import { Capacitor } from '@capacitor/core'
+
+// Tauri 2 会在 window 上注入 __TAURI_INTERNALS__
+const isTauri = '__TAURI_INTERNALS__' in window
+const isNative = Capacitor.isNativePlatform()
+
+// 动态导入：每个平台只加载自己的实现，网页版不会打包 Tauri 的代码
+const load = isTauri ? () =&gt; import('./desktop.js')
+  : isNative ? () =&gt; import('./native.js')
+  : () =&gt; import('./web.js')
+
+let impl
+export async function getPlatform() {
+  impl ??= await load()
+  return impl
+}
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/platform/web.js"><pre>
+export async function exportNote(note) {
+  const url = URL.createObjectURL(new Blob([note.content], { type: 'text/markdown' }))
+  const a = Object.assign(document.createElement('a'), { href: url, download: `${note.title}.md` })
+  a.click()
+  URL.revokeObjectURL(url)
+}
+</pre></div>
+
+<p>
+  三个文件导出同样名字、同样参数的函数，组件里只写 <code>(await getPlatform()).exportNote(note)</code>。
+  如果某个平台的代码依赖很重，也可以结合第 4 章的环境变量，用 <code>vite build --mode desktop</code> 在构建时就确定平台。
+</p>
+
+<h3>移动端界面的几个细节</h3>
+
+<div class="tw"><table>
+<thead><tr><th>问题</th><th>做法</th></tr></thead>
+<tbody>
+<tr><td>刘海屏、底部手势条遮挡内容</td><td><code>&lt;meta name="viewport" content="…, viewport-fit=cover"&gt;</code>，再用 <code>padding-bottom: env(safe-area-inset-bottom)</code></td></tr>
+<tr><td><code>100vh</code> 在手机上被地址栏挡住</td><td>用 <code>100dvh</code>（动态视口高度）</td></tr>
+<tr><td>按钮太小点不中</td><td>可点击区域至少约 44×44 像素</td></tr>
+<tr><td>输入框聚焦时 iOS 自动放大页面</td><td>输入框字号不小于 16px</td></tr>
+<tr><td>悬停效果在触屏上“粘住”</td><td>写在 <code>@media (hover: hover)</code> 里</td></tr>
+</tbody>
+</table></div>
+
+<h2 id="react-native">另一条路：React Native 与 Expo</h2>
+
+<p>
+  前面三种方案都是“把网页装进壳里”，界面最终还是 WebView 里的 HTML。React 还有一条独特的路：<strong>React Native</strong>。
+  它用同样的组件、状态、Hooks 写法，但渲染出来的是<strong>真正的原生控件</strong>（iOS 的 <code>UIView</code>、Android 的 <code>View</code>），而不是 DOM。
+  第 9 章说过，React 的核心只负责“算出元素树、比较差异”，最后由谁去修改界面是可以替换的 —— <code>react-dom</code> 改 DOM，React Native 改原生视图。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="WebView 方案与 React Native 对比：WebView 方案中 React 通过 react-dom 生成 HTML，在 WebView 里显示；React Native 中同样的 React 核心通过原生渲染器生成 iOS 和 Android 的原生控件">
+  <rect class="bx-a" x="280" y="16" width="200" height="50" rx="10"/>
+  <text class="ttl on-a" x="380" y="38" text-anchor="middle">React 核心</text>
+  <text class="sm" x="380" y="56" text-anchor="middle">组件 · Hooks · 调和</text>
+  <path class="ln" d="M330 68 L190 104" marker-end="url(#ar)"/>
+  <path class="ln" d="M430 68 L570 104" marker-end="url(#ar)"/>
+
+  <rect class="bx-b" x="20" y="108" width="340" height="140" rx="12"/>
+  <text class="ttl on-b" x="190" y="134" text-anchor="middle">react-dom（Capacitor / Tauri / PWA）</text>
+  <text class="mono sm" x="190" y="162" text-anchor="middle">&lt;div&gt; &lt;button&gt; &lt;input&gt;</text>
+  <text class="sm" x="190" y="188" text-anchor="middle">在 WebView 里显示 HTML + CSS</text>
+  <text class="sm on-g" x="190" y="212" text-anchor="middle">✓ 和网页版共用全部代码</text>
+  <text class="sm on-r" x="190" y="232" text-anchor="middle">△ 滚动、动画、手势不如原生</text>
+
+  <rect class="bx-p" x="400" y="108" width="340" height="140" rx="12"/>
+  <text class="ttl on-p" x="570" y="134" text-anchor="middle">React Native 渲染器</text>
+  <text class="mono sm" x="570" y="162" text-anchor="middle">&lt;View&gt; &lt;Text&gt; &lt;Pressable&gt;</text>
+  <text class="sm" x="570" y="188" text-anchor="middle">生成 iOS / Android 原生控件</text>
+  <text class="sm on-g" x="570" y="212" text-anchor="middle">✓ 原生的性能、手感和系统组件</text>
+  <text class="sm on-r" x="570" y="232" text-anchor="middle">△ 界面代码要按 RN 的组件重写</text>
+</svg>
+<figcaption>图 12-7　同一个 React，不同的渲染器</figcaption>
+</figure>
+
+<p>用 <strong>Expo</strong> 起步是官方推荐的方式，它包办了原生工程配置、常用原生模块和云端构建：</p>
+
+<div class="code" data-lang="bash"><pre>
+npx create-expo-app@latest notebook-app
+cd notebook-app
+npx expo start          # 用手机上的 Expo Go 扫码，立即在真机上看到效果
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="app/index.jsx（Expo Router：文件即路由）"><pre>
+import { useState } from 'react'
+import { View, Text, TextInput, Pressable, FlatList, StyleSheet } from 'react-native'
+import { useNotesStore } from '../stores/notes'      // 和网页版共用的 Zustand store
+
+export default function Notes() {
+  const notes = useNotesStore((s) =&gt; s.notes)
+  const addNote = useNotesStore((s) =&gt; s.addNote)
+  const [title, setTitle] = useState('')
+
+  return (
+    &lt;View style={styles.page}&gt;
+      &lt;TextInput style={styles.input} value={title} onChangeText={setTitle} placeholder="新笔记标题" /&gt;
+      &lt;Pressable style={styles.button} onPress={() =&gt; { addNote(title); setTitle('') }}&gt;
+        &lt;Text style={styles.buttonText}&gt;添加&lt;/Text&gt;
+      &lt;/Pressable&gt;
+      {/* FlatList 自带虚拟化，只渲染屏幕上的行（第 8 章的虚拟滚动） */}
+      &lt;FlatList data={notes} keyExtractor={(n) =&gt; n.id}
+                renderItem={({ item }) =&gt; &lt;Text style={styles.item}&gt;{item.title}&lt;/Text&gt;} /&gt;
+    &lt;/View&gt;
+  )
+}
+
+const styles = StyleSheet.create({
+  page: { flex: 1, padding: 16, gap: 8 },
+  input: { borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, fontSize: 16 },
+  button: { backgroundColor: '#087ea4', borderRadius: 8, padding: 12, alignItems: 'center' },
+  buttonText: { color: '#fff', fontWeight: '600' },
+  item: { paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+})
+</pre></div>
+
+<div class="tw"><table>
+<thead><tr><th>能复用的</th><th>要重写的</th></tr></thead>
+<tbody>
+<tr><td>组件的写法、Hooks、状态管理（Zustand）、TanStack Query、Zod 校验、业务逻辑和工具函数</td><td>所有界面：没有 <code>div</code>、<code>span</code>、CSS 文件；用 <code>View</code>、<code>Text</code> 和 <code>StyleSheet</code>（类似 CSS 的 Flexbox 子集）</td></tr>
+<tr><td>TypeScript 类型、接口层（<code>fetch</code> 照常可用）</td><td>路由（Expo Router / React Navigation）、存储（<code>localStorage</code> 换成 AsyncStorage / SQLite）</td></tr>
+</tbody>
+</table></div>
+
+<div class="box key">
+  <div class="t">&#9733; 怎么选</div>
+  <p>
+    以内容和表单为主、已经有网页版的应用，Capacitor 能用最小的代价上架；对滚动流畅度、手势、相机、动画要求高的消费级 App，React Native 的体验明显更好。
+    很多团队的做法是：把业务逻辑放进 monorepo 的共享包（第 11 章），网页版用 react-dom，App 用 React Native，各自写界面。
+    社区也有 <strong>react-native-web</strong>、Tamagui 等方案尝试让一份界面代码同时跑在两边，但会带来额外的约束。
+  </p>
+</div>
+
+<h2 id="summary">小结</h2>
+
+<div class="tw"><table>
+<thead><tr><th>主题</th><th>要点</th></tr></thead>
+<tbody>
+<tr><td>选型</td><td>先 PWA；要上架应用商店、用原生能力选 Capacitor；桌面选 Tauri（体积小）或 Electron（一致性好）</td></tr>
+<tr><td>PWA</td><td><code>vite-plugin-pwa</code>：manifest + Service Worker；预缓存构建产物；<code>runtimeCaching</code> 指定策略</td></tr>
+<tr><td>缓存策略</td><td>CacheFirst 静态资源、NetworkFirst 接口、StaleWhileRevalidate 图片</td></tr>
+<tr><td>更新</td><td><code>registerType: 'prompt'</code> + <code>useRegisterSW()</code>（<code>virtual:pwa-register/react</code>），由用户决定何时刷新</td></tr>
+<tr><td>Capacitor</td><td><code>cap init / add / sync / open</code>；官方插件同时有 Web 实现</td></tr>
+<tr><td>Tauri 2</td><td><code>tauri init / dev / build</code>；<code>invoke</code> 调用 Rust 命令；capabilities 声明权限</td></tr>
+<tr><td>组织代码</td><td>统一接口 + 每个平台一个适配器，动态导入</td></tr>
+<tr><td>React Native</td><td>同样的 React，原生渲染器；Expo 起步；复用逻辑，重写界面</td></tr>
+</tbody>
+</table></div>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>把第 2 章的笔记本做成 PWA，部署到 GitHub Pages（第 7 章的工作流），在手机上安装并在飞行模式下打开。</li>
+    <li>加上 <code>UpdatePrompt</code> 组件：改一行代码重新部署，验证打开的页面会提示“有新版本”。</li>
+    <li>用 <code>useSyncExternalStore</code> 写一个 <code>useOnline()</code>，在离线时显示一个“离线”徽标。</li>
+    <li>用 Capacitor 把第 6 章的地图博客打包成 Android 应用，用定位插件实现“在我的位置发帖”。</li>
+    <li>用 Tauri 把笔记本打包成桌面程序，实现“导出为 .md 文件”，并用适配器让网页版通过下载实现同样的功能。</li>
+    <li>用 Expo 新建一个应用，把第 2 章笔记本的数据逻辑抽成 Zustand store 复用过去，用 <code>View</code>、<code>TextInput</code>、<code>FlatList</code> 重写界面，在手机上用 Expo Go 运行。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

@@ -53,6 +53,8 @@
     <li>用 <code>useReducer</code> + Immer 管理复杂状态，理解 reducer 为什么必须是纯函数</li>
     <li>用 Motion 的 <code>AnimatePresence</code> 和 <code>layout</code> 做进出场与列表动画，再次理解 <code>key</code></li>
     <li>写自定义 Hook；用 <code>useRef</code> 直接操作 DOM，做不触发重新渲染的高频动画</li>
+    <li>用 <code>createPortal</code> 把浮层渲染到 <code>&lt;body&gt;</code> 下，避开层叠上下文和 <code>overflow</code> 的限制<span class="sup">补充</span></li>
+    <li>把 <code>state</code> 和 <code>dispatch</code> 分别放进两个 Context：组件只能读状态，修改必须通过 action<span class="sup">补充</span></li>
   </ul>
 </div>
 
@@ -970,6 +972,75 @@ const OverlayContent = overlays[state.activeOverlay]   // 大写开头，JSX 才
 &lt;/AnimatePresence&gt;
 </pre></div>
 
+<h3>用 createPortal 把浮层“传送”出去<span class="sup">补充</span></h3>
+
+<p>
+  浮层在组件树里属于 <code>Game</code>，但从页面布局上看，它应该盖在<strong>所有东西</strong>的上面。
+  如果它的某个祖先元素设置了 <code>transform</code>、<code>filter</code>、<code>perspective</code>（3D 翻转动画就会用到）或 <code>overflow: hidden</code>，
+  浮层就会被困在祖先的层叠上下文里：<code>z-index</code> 写多大都盖不住外面的元素，<code>position: fixed</code> 也会变成相对祖先定位。
+</p>
+
+<p>
+  <code>createPortal(内容, 目标 DOM 节点)</code> 可以让一段 JSX <strong>在组件树中的位置不变</strong>，但<strong>真实 DOM 渲染到别的地方</strong>：
+</p>
+
+<div class="code" data-lang="jsx" data-file="src/components/GameOverlay.jsx"><pre>
+import { createPortal } from 'react-dom'
+import { motion } from 'motion/react'
+
+export default function GameOverlay({ children, onClose }) {
+  return createPortal(
+    &lt;motion.div className="overlay" onClick={onClose} role="dialog" aria-modal="true"
+                initial={{ opacity: 0, scale: 0.7 }} animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.7 }} transition={{ duration: 0.3 }}&gt;
+      &lt;div className="content"&gt;{children}&lt;/div&gt;
+    &lt;/motion.div&gt;,
+    document.body,          // 渲染到 &lt;body&gt; 的末尾
+  )
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="Portal：React 组件树里 GameOverlay 仍是 Game 的子组件，props、Context 和事件冒泡都按组件树走；真实 DOM 却挂在 body 下，不受 .game 的样式限制">
+  <rect class="bx-a" x="20" y="20" width="340" height="230" rx="12"/>
+  <text class="ttl on-a" x="190" y="46" text-anchor="middle">React 组件树（逻辑上）</text>
+  <rect class="bx" x="130" y="64" width="120" height="32" rx="8"/><text class="mono sm" x="190" y="85" text-anchor="middle">Game</text>
+  <path class="ln" d="M170 98 L90 128"/><path class="ln" d="M190 98 V128"/><path class="ln" d="M210 98 L290 128"/>
+  <rect class="bx" x="40" y="130" width="100" height="32" rx="8"/><text class="mono sm" x="90" y="151" text-anchor="middle">World</text>
+  <rect class="bx" x="150" y="130" width="80" height="32" rx="8"/><text class="mono sm" x="190" y="151" text-anchor="middle">Hand</text>
+  <rect class="bx-g" x="240" y="130" width="110" height="32" rx="8"/><text class="mono sm on-g" x="295" y="151" text-anchor="middle">GameOverlay</text>
+  <text class="sm" x="190" y="196" text-anchor="middle">props、Context、事件冒泡</text>
+  <text class="sm" x="190" y="216" text-anchor="middle">都按这棵树走</text>
+
+  <rect class="bx-p" x="400" y="20" width="340" height="230" rx="12"/>
+  <text class="ttl on-p" x="570" y="46" text-anchor="middle">真实 DOM（渲染结果）</text>
+  <text class="mono sm" x="420" y="80">&lt;body&gt;</text>
+  <text class="mono sm" x="440" y="104">&lt;div id="root"&gt;</text>
+  <text class="mono sm" x="460" y="128">&lt;div class="game"&gt;</text>
+  <text class="sm" x="480" y="150">世界、手牌……（transform）</text>
+  <text class="mono sm" x="460" y="172">&lt;/div&gt;</text>
+  <text class="mono sm" x="440" y="194">&lt;/div&gt;</text>
+  <rect class="bx-g" x="432" y="204" width="236" height="28" rx="6"/>
+  <text class="mono sm on-g" x="550" y="223" text-anchor="middle">&lt;div class="overlay"&gt; ✓</text>
+  <path class="ln-g" d="M352 146 C390 146 390 218 428 218" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 3-12　Portal：组件树里的位置不变，DOM 挂到别处</figcaption>
+</figure>
+
+<ul>
+  <li><strong>逻辑上仍是子组件</strong>：浮层照样能读取 <code>Game</code> 提供的 Context，<code>AnimatePresence</code> 的离开动画也照常工作。</li>
+  <li><strong>事件按组件树冒泡</strong>：浮层里的点击会冒泡到 React 父组件的 <code>onClick</code>，即使 DOM 上它们并不相邻。需要时用 <code>e.stopPropagation()</code>。</li>
+  <li><strong>样式要独立</strong>：如果样式表写的是 <code>.game .overlay { … }</code>，传送出去后就匹配不到了，改成只依赖 <code>.overlay</code> 自身。</li>
+</ul>
+
+<div class="box note">
+  <div class="t">&#9432; 原生 &lt;dialog&gt; 也是一个选择</div>
+  <p>
+    浏览器原生的 <code>&lt;dialog&gt;</code> 调用 <code>showModal()</code> 后会进入页面的“顶层”（top layer），天然盖住一切，还自带按 Esc 关闭、把焦点限制在对话框内、<code>::backdrop</code> 背景。
+    在 React 里用 ref 拿到元素，在 effect 里调用 <code>showModal()</code> / <code>close()</code> 即可。第 6 章的小屏幕弹窗会用到它。
+  </p>
+</div>
+
 <h2 id="world">游戏世界</h2>
 
 <h3>自定义 Hook：窗口缩放比例</h3>
@@ -1032,7 +1103,7 @@ export function useWorldRatio() {
   <text class="sm" x="20" y="120">中间的组件</text>
   <text class="sm" x="20" y="138">不需要再转发 props</text>
 </svg>
-<figcaption>图 3-12　Context 跨越组件层级传值</figcaption>
+<figcaption>图 3-13　Context 跨越组件层级传值</figcaption>
 </figure>
 
 <div class="code" data-lang="js" data-file="src/hooks.js"><pre>
@@ -1056,6 +1127,78 @@ return (
 <div class="box tip">
   <div class="t">&#10003; 别滥用 Context</div>
   <p>Context 的值一变，所有读取它的组件都会重新渲染。适合“很多地方都要用、但不常变”的数据：主题、语言、当前用户、这里的缩放比例。频繁变化的复杂状态更适合状态管理库。</p>
+</div>
+
+<h3>共享游戏状态：state 与 dispatch 分开提供<span class="sup">补充</span></h3>
+
+<p>
+  现在 <code>Game</code> 把 <code>players</code>、<code>onCardPlay</code> 等一层层传下去。组件一多，同样会遇到 prop drilling。
+  一个常见的模式是：把 <code>useReducer</code> 返回的 <strong>state</strong> 和 <strong>dispatch</strong> 分别放进两个 Context。
+</p>
+
+<div class="code" data-lang="jsx" data-file="src/GameContext.jsx"><pre>
+import { createContext, use, useReducer } from 'react'
+import { gameReducer, createInitialState } from './game.js'
+
+const GameState = createContext(null)
+const GameDispatch = createContext(null)
+
+export function GameProvider({ children }) {
+  const [state, dispatch] = useReducer(gameReducer, null, createInitialState)
+  return (
+    &lt;GameState value={state}&gt;
+      &lt;GameDispatch value={dispatch}&gt;{children}&lt;/GameDispatch&gt;
+    &lt;/GameState&gt;
+  )
+}
+
+// React 19 的 use() 可以读取 Context，和 useContext 作用相同，但允许写在 if 里
+export const useGameState = () =&gt; use(GameState)
+export const useGameDispatch = () =&gt; use(GameDispatch)
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="任意深度的组件里"><pre>
+function GameCard({ card }) {
+  const dispatch = useGameDispatch()
+  return &lt;div className="card" onClick={() =&gt; dispatch({ type: 'cardPlayed', card })}&gt;…&lt;/div&gt;
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="state 与 dispatch 两个 Context：读状态的组件订阅 GameState，只需要发 action 的组件订阅 GameDispatch；dispatch 的引用永远不变，所以后者不会因为状态变化而重新渲染">
+  <rect class="bx-a" x="250" y="16" width="260" height="56" rx="12"/>
+  <text class="ttl on-a" x="380" y="40" text-anchor="middle">GameProvider</text>
+  <text class="mono sm" x="380" y="60" text-anchor="middle">useReducer(gameReducer)</text>
+  <rect class="bx-b" x="40" y="110" width="270" height="44" rx="10"/>
+  <text class="mono sm on-b" x="175" y="137" text-anchor="middle">GameState：state（只读）</text>
+  <rect class="bx-g" x="450" y="110" width="270" height="44" rx="10"/>
+  <text class="mono sm on-g" x="585" y="137" text-anchor="middle">GameDispatch：dispatch（永不变）</text>
+  <path class="ln-b" d="M320 74 L200 106" marker-end="url(#ar)"/>
+  <path class="ln-g" d="M440 74 L560 106" marker-end="url(#ar)"/>
+  <rect class="bx" x="40" y="182" width="270" height="44" rx="10"/>
+  <text class="sm" x="175" y="202" text-anchor="middle">TopBar、World：读状态</text>
+  <text class="sm" x="175" y="219" text-anchor="middle">状态一变就重新渲染</text>
+  <rect class="bx" x="450" y="182" width="270" height="44" rx="10"/>
+  <text class="sm" x="585" y="202" text-anchor="middle">GameCard、按钮：只发 action</text>
+  <text class="sm" x="585" y="219" text-anchor="middle">状态变化不影响它们</text>
+  <path class="ln" d="M175 156 V178" marker-end="url(#ar)"/>
+  <path class="ln" d="M585 156 V178" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 3-14　读写分离：state 和 dispatch 各用一个 Context</figcaption>
+</figure>
+
+<p>这样分开有两个好处：</p>
+<ul>
+  <li><strong>修改有唯一入口</strong>：子组件拿到的 state 只用来读，想改只能 dispatch 一个 action，所有规则集中在 reducer 里，和“单向数据流”的精神一致。</li>
+  <li><strong>减少重新渲染</strong>：<code>dispatch</code> 的引用永远不变，只读取 <code>GameDispatch</code> 的组件不会因为状态变化而重新渲染。</li>
+</ul>
+
+<div class="box warn">
+  <div class="t">&#9888; state 不是真的只读</div>
+  <p>
+    JavaScript 不会阻止你写 <code>state.players[0].food = 99</code>，但这样改了 React 也察觉不到（引用没变）。
+    开发时可以在 reducer 返回前调用 <code>Object.freeze</code> 做深冻结，误改时立即报错；Immer 的 <code>produce</code> 在开发模式下默认就会冻结它返回的对象。
+  </p>
 </div>
 
 <h3>城堡、气泡与旗帜</h3>
@@ -1140,7 +1283,7 @@ export default function World({ players }) {
   <text class="sm" x="380" y="144">SVG 元素在 JSX 里和 HTML 元素写法一样，</text>
   <text class="sm" x="380" y="166">只是属性名同样要驼峰：strokeWidth、viewBox</text>
 </svg>
-<figcaption>图 3-13　一笔画出带缺口的旗帜</figcaption>
+<figcaption>图 3-15　一笔画出带缺口的旗帜</figcaption>
 </figure>
 
 <p>为了让旗帜平滑伸缩，我们写一个自定义 Hook：输入目标值，输出一个“逐帧逼近目标”的当前值：</p>
@@ -1218,7 +1361,7 @@ export default function BannerBar({ color, ratio, className }) {
   <text class="mono sm" x="430" y="130">el.current.style.transform = …</text>
   <text class="sm on-g" x="430" y="172">组件只渲染一次，动画不经过 React</text>
 </svg>
-<figcaption>图 3-14　高频动画不要走 React 的渲染流程</figcaption>
+<figcaption>图 3-16　高频动画不要走 React 的渲染流程</figcaption>
 </figure>
 
 <div class="code" data-lang="jsx" data-file="src/components/Cloud.jsx"><pre>
@@ -1317,7 +1460,7 @@ export default function Cloud({ type }) {
   <rect class="bx-r" x="310" y="282" width="220" height="36" rx="8"/>
   <text class="sm on-r" x="420" y="305" text-anchor="middle">游戏结束浮层 · 点击 → restarted</text>
 </svg>
-<figcaption>图 3-15　一个回合中 action 的顺序</figcaption>
+<figcaption>图 3-17　一个回合中 action 的顺序</figcaption>
 </figure>
 
 <div class="code" data-lang="jsx" data-file="src/components/Game.jsx"><pre>
@@ -1424,6 +1567,8 @@ export default function Game() {
 <tr><td>动态组件</td><td>映射表 + 大写变量：<code>const C = map[name]; &lt;C /&gt;</code></td></tr>
 <tr><td>复杂状态</td><td><code>useReducer</code>（纯函数）+ Immer 的 <code>produce</code></td></tr>
 <tr><td>跨层级数据</td><td><code>createContext</code> + <code>useContext</code></td></tr>
+<tr><td>渲染到别处 <span class="sup">补充</span></td><td><code>createPortal(jsx, document.body)</code>，事件仍按组件树冒泡</td></tr>
+<tr><td>共享 reducer <span class="sup">补充</span></td><td>state、dispatch 各一个 Context；<code>use(Context)</code></td></tr>
 <tr><td>复用逻辑</td><td>自定义 Hook：<code>useWorldRatio</code>、<code>useTween</code></td></tr>
 <tr><td>进出场 / 列表动画</td><td>Motion：<code>AnimatePresence</code>、<code>initial/animate/exit</code>、<code>layout</code></td></tr>
 <tr><td>重置组件 / 触发切换动画</td><td>改变 <code>key</code></td></tr>
@@ -1439,6 +1584,8 @@ export default function Game() {
     <li>给气泡里的数字也用 <code>useTween</code> 做补间，让 10 → 7 时数字逐渐减少。</li>
     <li>给 <code>gameReducer</code> 写一个测试：传入固定的 <code>random</code>，断言抽到的是哪张牌（第 7 章会学 Vitest）。</li>
     <li>添加一张新卡牌“丰收”：获得 4 点粮食，对手获得 1 点粮食。只需要改 <code>cards.js</code>。</li>
+    <li>用上面的 <code>GameProvider</code> 重构：<code>Game</code> 不再给 <code>CardHand</code> 传 <code>onCardPlay</code>，改由 <code>GameCard</code> 自己调用 <code>useGameDispatch()</code>。</li>
+    <li>把 <code>GameOverlay</code> 改成原生 <code>&lt;dialog&gt;</code>：在 effect 里调用 <code>showModal()</code>，并支持按 Esc 关闭。</li>
   </ol>
 </div>
 

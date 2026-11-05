@@ -14,7 +14,7 @@
 <main>
 
 <div class="hero">
-  <span class="chapter-eyebrow">面向初学者的 8 章 + 附录</span>
+  <span class="chapter-eyebrow">面向初学者的 8 章 + 5 个进阶专题 + 附录</span>
   <h1>React 项目实战：用 6 个应用学会现代 React</h1>
   <p class="sub">
     这套教程以 Packt 出版的《Vue.js 2 Web Development Projects》（Guillaume Chau 著）的六个项目为蓝本 ——
@@ -24,7 +24,7 @@
   <p style="margin-top:14px">
     <span class="pill">React 19</span><span class="pill">Hooks</span><span class="pill">React Compiler</span>
     <span class="pill">Vite</span><span class="pill">React Router 7</span><span class="pill">TanStack Query</span>
-    <span class="pill">Zustand</span><span class="pill">Motion</span><span class="pill">Vitest</span><span class="pill">Next.js</span><span class="pill">Meteor 3</span>
+    <span class="pill">Zustand</span><span class="pill">TypeScript</span><span class="pill">Motion</span><span class="pill">Vitest</span><span class="pill">Playwright</span><span class="pill">Next.js</span><span class="pill">Meteor 3</span>
   </p>
   <p style="margin-top:10px"><a href="../index.html">&#8644; 同样的六个项目也有 Vue 3 版本</a></p>
 </div>
@@ -101,12 +101,43 @@
 </tbody>
 </table></div>
 
+<h2 id="extra">补充内容与进阶专题</h2>
+
+<p>
+  原书的六个项目覆盖了主线，但今天的 React 开发还有一些“标配”值得掌握。我们没有把它们堆在书的末尾，而是放进最适合的项目里，
+  让你在真实场景中学会它们。这些小节都带有 <span class="sup">补充</span> 标记：
+</p>
+
+<div class="tw"><table>
+<thead><tr><th>章节</th><th>补充的内容</th></tr></thead>
+<tbody>
+<tr><td>第 2 章 · 笔记本</td><td>状态快照与更新函数、过期闭包、Strict Mode、<code>useRef</code> 与 ref 回调</td></tr>
+<tr><td>第 3 章 · 卡牌游戏</td><td><code>createPortal</code>、state 与 dispatch 分开的 Context</td></tr>
+<tr><td>第 4 章 · 工程化</td><td>按功能组织与路径别名、TypeScript、环境变量与构建模式</td></tr>
+<tr><td>第 5 章 · 客服中心（拆为上下两篇）</td><td><code>useClickOutside</code> 与 <code>useEffectEvent</code>、Session 与 JWT、<code>&lt;Activity&gt;</code>、Zod + React Hook Form、复合组件、错误边界</td></tr>
+<tr><td>第 6 章 · 地图博客</td><td>Zustand <code>persist</code> 中间件、<code>useSyncExternalStore</code> 与原生 <code>&lt;dialog&gt;</code>、大量数据时的渲染性能</td></tr>
+<tr><td>第 7 章 · 在线商店</td><td>Playwright E2E 与 MSW、Next.js Server Actions 与混合渲染、GitHub Actions、Docker、Sentry</td></tr>
+<tr><td>第 8 章 · 实时仪表盘</td><td>大列表性能（<code>memo</code>、虚拟滚动）、完整的 Express + SSE 实时方案</td></tr>
+</tbody>
+</table></div>
+
+<p>学完六个项目后，第四部分的进阶专题帮你走得更远：</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#9881;</span><h4>第 9 章 · 深入渲染原理</h4><p>亲手写一个迷你 React，理解 Hooks 规则、批处理、调和、Fiber、并发渲染和 React Compiler。</p></div>
+  <div class="card"><span class="ic">&#127912;</span><h4>第 10 章 · 组件库与设计系统</h4><p>MUI、Ant Design、shadcn/ui、Radix 选型，设计令牌与主题、无障碍、Storybook。</p></div>
+  <div class="card"><span class="ic">&#127959;</span><h4>第 11 章 · 大型项目架构</h4><p>按功能分模块、<code>queryOptions</code> 数据层、pnpm monorepo、发布组件库。</p></div>
+  <div class="card"><span class="ic">&#128241;</span><h4>第 12 章 · 跨端</h4><p>PWA 离线应用、Capacitor 手机 App、Tauri 桌面程序，以及 React Native / Expo。</p></div>
+  <div class="card"><span class="ic">&#129302;</span><h4>第 13 章 · AI 应用前端</h4><p>Hono + DeepSeek 的流式聊天界面：SSE、停止生成、思考过程、安全渲染 Markdown。</p></div>
+</div>
+
 <h2 id="who">这套教程写给谁</h2>
 
 <ul>
   <li><strong>会一点 HTML / CSS / JavaScript，想学 React</strong> 的人。第 1–2 章不需要安装任何东西，打开浏览器就能跟着做。</li>
   <li><strong>学过 Vue、想上手 React</strong> 的人。同样的项目、同样的结构，可以和本站 Vue 版逐章对照；附录有一份完整的对照表。</li>
   <li><strong>只看过老教程</strong>（class 组件、Create React App、Redux 样板代码）的人。这里全部是 2026 年的写法。</li>
+  <li><strong>已经会写 React、想再进一步</strong>的人。第四部分的进阶专题讲原理、架构、跨端和 AI 应用，可以单独阅读。</li>
 </ul>
 
 <div class="box note">
@@ -123,7 +154,7 @@
   <div class="card"><span class="ic">&#128214;</span><h4>按顺序读</h4><p>章节是递进的。特别是第 1–4 章打下的“纯函数、不可变更新、渲染原理”基础，后面每一章都会用到。</p></div>
   <div class="card"><span class="ic">&#9000;&#65039;</span><h4>动手敲代码</h4><p>代码块右上角有“复制”按钮，但亲手敲一遍记得更牢。每章末尾有练习题。</p></div>
   <div class="card"><span class="ic">&#128193;</span><h4>复用仓库素材</h4><p>仓库里的 <code>ChapterXX</code> 目录有原书的样式、图片、数据和服务端代码，可以直接拿来用。</p></div>
-  <div class="card"><span class="ic">&#9654;&#65039;</span><h4>在线演示</h4><p>第 1、2、3、4、8 章内嵌了可交互的小演示，直接在页面上就能玩。</p></div>
+  <div class="card"><span class="ic">&#9654;&#65039;</span><h4>在线演示</h4><p>第 1、2、3、4、8 章和第 9、10、13 章内嵌了可交互的小演示，直接在页面上就能玩。</p></div>
 </div>
 
 <div class="box note"><div class="t">&#9432; 说明</div><p>补充背景知识或细节。</p></div>
@@ -132,6 +163,8 @@
 <div class="box key"><div class="t">&#9733; 重点</div><p>本章最核心的概念。</p></div>
 <div class="box deep"><div class="t">&#128269; 深入</div><p>原理性的内容，初次阅读可以跳过。</p></div>
 
+<p>标题后面带 <span class="sup">补充</span> 标记的小节是在原书项目的基础上，为今天的 React 生态新增的内容。</p>
+
 <h2 id="toc">目录</h2>
 
 <div id="toc-grid"></div>
@@ -139,7 +172,7 @@
 <h2 id="notes">版本说明</h2>
 
 <p>
-  本教程基于 <strong>React 19.2</strong>、Vite、React Router 7、TanStack Query 5、Zustand 5、Motion、Vitest、Next.js（App Router）和 Meteor 3 编写。
+  本教程基于 <strong>React 19.2</strong>、Vite、React Router 7、TanStack Query 5、Zustand 5、Motion、Vitest、Playwright、Next.js（App Router）和 Meteor 3 编写；第 13 章的示例代码在仓库的 <code>examples/ch13-ai-chat-react</code> 目录。
   生态更新很快，命令行提示和配置文件的细节可能和你看到的略有不同，遇到差异时以各工具的官方文档为准；
   本教程讲解的核心概念（组件、状态、副作用、渲染、路由、数据获取、测试、SSR）是稳定的。
 </p>

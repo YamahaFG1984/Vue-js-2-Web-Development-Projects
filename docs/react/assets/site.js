@@ -8,14 +8,20 @@
 
   const CHAPTERS = [
     { id: '1', t: '初识 React 19',            d: 'UI = f(state)、组件、JSX 与第一个 createRoot', part: '第一部分 · 基础' },
-    { id: '2', t: '项目一：Markdown 笔记本',  d: 'useState、派生数据、useEffect、列表与条件渲染、不可变更新' },
-    { id: '3', t: '项目二：城堡决斗卡牌游戏', d: '组件树、props 与回调、children、useReducer、Motion 动画与 SVG' },
-    { id: '4', t: '工程化：Vite 与渲染原理',  d: 'Vite + React、渲染与提交、React Compiler、样式方案', part: '第二部分 · 工程化开发' },
-    { id: '5', t: '项目三：客服支持中心',     d: 'React Router 7、Context、自定义 Hook、TanStack Query、表单 Actions' },
+    { id: '2', t: '项目一：Markdown 笔记本',  d: 'useState、派生数据、useEffect、不可变更新、useRef' },
+    { id: '3', t: '项目二：城堡决斗卡牌游戏', d: '组件树、props 与回调、children、useReducer、Portal、Motion 动画与 SVG' },
+    { id: '4', t: '工程化：Vite 与渲染原理',  d: 'Vite + React、渲染与提交、React Compiler、TypeScript、环境变量', part: '第二部分 · 工程化开发' },
+    { id: '5A', num: '5', label: '第 5 章（上）', file: 'ch05.html',  t: '项目三（上）：路由与认证', d: 'React Router 7、TanStack Query、Context、表单 Actions、守卫路由' },
+    { id: '5B', num: '5', label: '第 5 章（下）', file: 'ch05b.html', t: '项目三（下）：工单与表单', d: '嵌套路由、Activity、表单校验、复合组件、错误处理' },
     { id: '6', t: '项目四：地理定位博客',     d: 'Zustand 状态管理、OAuth 登录、react-leaflet、render props' },
-    { id: '7', t: '项目五：在线商店与规模化', d: 'ESLint、Vitest + Testing Library、react-i18next、Next.js 与服务端组件', part: '第三部分 · 规模化与全栈' },
-    { id: '8', t: '项目六：Meteor 实时仪表盘', d: 'Meteor 3 + React：useTracker、useFind、方法与发布订阅' },
-    { id: '9', t: '附录：Vue ↔ React 对照',   d: '同一个概念在两个框架里怎么写', part: '附录' }
+    { id: '7', t: '项目五：在线商店与规模化', d: 'ESLint、Vitest、Playwright、react-i18next、Next.js 与 CI/CD', part: '第三部分 · 规模化与全栈' },
+    { id: '8', t: '项目六：Meteor 实时仪表盘', d: 'Meteor 3 + React：useTracker、发布订阅与大列表性能' },
+    { id: '9',  file: 'adv01.html', t: '深入渲染原理',         d: '亲手实现 Hooks、Fiber 与调和、并发渲染、React Compiler', part: '第四部分 · 进阶专题' },
+    { id: '10', file: 'adv02.html', t: '组件库与设计系统',     d: '组件库选型、主题定制、无障碍' },
+    { id: '11', file: 'adv03.html', t: '大型项目架构',         d: '按功能组织代码、monorepo、开发并发布组件库' },
+    { id: '12', file: 'adv04.html', t: '跨端：PWA、移动端与桌面端', d: 'vite-plugin-pwa、Capacitor、Tauri、React Native' },
+    { id: '13', file: 'adv05.html', t: 'AI 应用前端：流式聊天界面', d: 'Hono + DeepSeek、流式输出、中断与 Markdown 渲染' },
+    { id: 'A', num: '附', label: '附录', file: 'ch09.html', t: 'Vue ↔ React 对照', d: '同一个概念在两个框架里怎么写', part: '附录' }
   ];
 
   const pad = (n) => String(n).padStart(2, '0');

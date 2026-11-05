@@ -3,34 +3,38 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>第 5 章 · 项目三：客服支持中心 — React 项目实战教程</title>
+<title>第 5 章（上）· 项目三：路由与认证 — React 项目实战教程</title>
 <link rel="stylesheet" href="../assets/style.css">
 <link rel="stylesheet" href="assets/react.css">
 </head>
-<body data-chapter="5">
+<body data-chapter="5A">
 <div id="app">
 <aside id="sidebar"></aside>
 <main>
 
-<span class="chapter-eyebrow">第 5 章 · 项目三</span>
-<h1>客服支持中心</h1>
+<span class="chapter-eyebrow">第 5 章（上）· 项目三</span>
+<h1>客服支持中心（上）：路由与认证</h1>
 <p class="lede">
   第一个真正的单页应用：虚构网店“我的衬衫铺”的客服中心，有常见问题、注册登录、工单列表、提交工单和工单详情。
-  我们会学习 React Router 7、用 Context 共享登录状态、把重复逻辑抽成自定义 Hook、用 TanStack Query 管理服务器数据，以及 React 19 的表单 Actions。
+  内容比较多，分成两篇：这一篇搭好骨架 —— React Router 7、加载数据（自定义 Hook → TanStack Query）、用 Context 共享登录状态、React 19 的表单 Actions 和守卫路由；
+  <a href="ch05b.html">下篇</a>完成工单功能，并深入表单校验、页面状态保留和错误处理。
 </p>
 
 <div class="goals">
-  <h4>本章目标</h4>
+  <h4>本篇目标</h4>
   <ul>
-    <li>用 React Router 7 搭建多页面应用：路由表、<code>&lt;Outlet&gt;</code>、<code>&lt;NavLink&gt;</code>、嵌套路由、动态参数、404</li>
+    <li>用 React Router 7 搭建多页面应用：路由表、<code>&lt;Outlet&gt;</code>、<code>&lt;NavLink&gt;</code>、编程式导航</li>
     <li>用自定义 Hook 复用“加载数据”的逻辑，再升级为 TanStack Query</li>
     <li>用 Context 共享当前用户，用“守卫路由”保护私有页面</li>
     <li>封装通用表单组件：受控输入、<code>...rest</code> 透传属性、<code>useActionState</code></li>
-    <li>处理登录跳转、会话过期和刷新后恢复登录</li>
+    <li>写一个 <code>useClickOutside</code> Hook，做出可用键盘操作的用户下拉菜单<span class="sup">补充</span></li>
+    <li>处理登录跳转、会话过期，并理解 Session 与 JWT 的取舍<span class="sup">补充</span></li>
   </ul>
 </div>
 
 <div id="chapter-toc"></div>
+
+
 
 <h2 id="overview">应用全貌</h2>
 
@@ -893,6 +897,109 @@ export default function NavMenu() {
 }
 </pre></div>
 
+<h3>用户下拉菜单：useClickOutside<span class="sup">补充</span></h3>
+
+<p>
+  菜单栏里并排放着用户名和“登出”有点简陋。常见的做法是点击用户名弹出一个下拉菜单，点击菜单外面的任何地方、或者按 Esc，菜单自动关闭。
+  “点击外部关闭”在弹出层、下拉框、日期选择器里到处都要用，正好封装成一个自定义 Hook。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="useClickOutside：在 document 上监听 pointerdown，用 ref.current.contains 判断点击位置，在菜单内部则忽略，在外部则调用回调关闭菜单">
+  <rect class="bx" x="20" y="20" width="460" height="210" rx="12"/>
+  <text class="sm" x="40" y="44">document（在这里统一监听 pointerdown）</text>
+  <rect class="bx-a" x="240" y="62" width="200" height="140" rx="10"/>
+  <text class="ttl on-a" x="340" y="86" text-anchor="middle">ref.current</text>
+  <text class="sm" x="340" y="106" text-anchor="middle">菜单容器（按钮 + 下拉列表）</text>
+  <circle class="bx-g" cx="320" cy="150" r="9"/>
+  <text class="sm on-g" x="336" y="155">点在里面</text>
+  <circle class="bx-r" cx="100" cy="150" r="9"/>
+  <text class="sm on-r" x="116" y="155">点在外面</text>
+
+  <rect class="bx-g" x="520" y="40" width="220" height="70" rx="10"/>
+  <text class="mono sm on-g" x="630" y="66" text-anchor="middle">contains(e.target) = true</text>
+  <text class="sm" x="630" y="90" text-anchor="middle">什么都不做</text>
+  <rect class="bx-r" x="520" y="140" width="220" height="70" rx="10"/>
+  <text class="mono sm on-r" x="630" y="166" text-anchor="middle">contains(e.target) = false</text>
+  <text class="sm" x="630" y="190" text-anchor="middle">调用 handler → setOpen(false)</text>
+  <path class="ln-g" d="M330 140 C420 120 460 76 516 76" marker-end="url(#ar)"/>
+  <path class="ln-r" d="M100 162 C140 215 420 215 516 180" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 5-11　判断一次点击是否发生在元素外部</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="src/hooks/useClickOutside.js"><pre>
+import { useEffect, useEffectEvent } from 'react'
+
+export function useClickOutside(ref, handler) {
+  // useEffectEvent（React 19.2）：在 effect 里总能调用到最新的 handler，
+  // 又不必把 handler 写进依赖数组（否则父组件每次渲染都会重新注册监听）
+  const onOutside = useEffectEvent(handler)
+
+  useEffect(() =&gt; {
+    function onPointerDown(e) {
+      if (ref.current &amp;&amp; !ref.current.contains(e.target)) onOutside(e)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () =&gt; document.removeEventListener('pointerdown', onPointerDown)   // 卸载时移除
+  }, [ref])
+}
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="src/components/UserMenu.jsx"><pre>
+import { useState, useRef } from 'react'
+import { Link } from 'react-router'
+import { useClickOutside } from '../hooks/useClickOutside.js'
+
+export default function UserMenu({ user, onLogout }) {
+  const [open, setOpen] = useState(false)
+  const menuRef = useRef(null)
+  const buttonRef = useRef(null)
+  useClickOutside(menuRef, () =&gt; setOpen(false))
+
+  function handleKeyDown(e) {
+    if (e.key === 'Escape' &amp;&amp; open) {
+      setOpen(false)
+      buttonRef.current.focus()           // 关闭后把焦点还给按钮，键盘用户不会“迷路”
+    }
+  }
+
+  return (
+    &lt;div className="user-menu" ref={menuRef} onKeyDown={handleKeyDown}&gt;
+      &lt;button ref={buttonRef} aria-haspopup="menu" aria-expanded={open}
+              onClick={() =&gt; setOpen((o) =&gt; !o)}&gt;
+        {user.username} ▾
+      &lt;/button&gt;
+      {open &amp;&amp; (
+        &lt;ul className="dropdown" role="menu"&gt;
+          &lt;li role="none"&gt;&lt;Link role="menuitem" to="/tickets" onClick={() =&gt; setOpen(false)}&gt;我的工单&lt;/Link&gt;&lt;/li&gt;
+          &lt;li role="none"&gt;&lt;button role="menuitem" onClick={onLogout}&gt;登出&lt;/button&gt;&lt;/li&gt;
+        &lt;/ul&gt;
+      )}
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<p>在 <code>NavMenu</code> 里把原来的两个链接换成 <code>{user ? &lt;UserMenu user={user} onLogout={logout} /&gt; : &lt;NavLink to="/login"&gt;登录&lt;/NavLink&gt;}</code> 即可。</p>
+
+<div class="box tip">
+  <div class="t">&#10003; 几个细节</div>
+  <p>
+    监听 <code>pointerdown</code> 而不是 <code>click</code>：拖动选中文字后松开鼠标，<code>click</code> 可能落在菜单外，导致误关闭。
+    用真正的 <code>&lt;button&gt;</code> 当触发器，键盘的回车、空格天然可用；<code>aria-expanded</code> 让读屏软件知道菜单是开是关。
+    完整的菜单还应支持方向键在菜单项之间移动，第 10 章（组件库与设计系统）会讲怎么用现成的无障碍组件做到这些。
+  </p>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 没有 useEffectEvent 时</div>
+  <p>
+    React 19.2 之前，常见写法是用一个 ref 保存最新的回调：<code>const handlerRef = useRef(handler); useEffect(() =&gt; { handlerRef.current = handler })</code>，
+    在监听函数里调用 <code>handlerRef.current(e)</code>。效果相同，你会在很多现有代码和库里看到它。
+  </p>
+</div>
+
 <h2 id="guards">保护私有页面</h2>
 
 <p>
@@ -965,7 +1072,7 @@ export const router = createBrowserRouter([
   <text class="lbl" x="230" y="226">守卫就是一个普通组件：</text>
   <text class="lbl" x="230" y="246">user 一变（比如登出），它会自动重新渲染并跳转</text>
 </svg>
-<figcaption>图 5-11　用布局路由实现守卫</figcaption>
+<figcaption>图 5-12　用布局路由实现守卫</figcaption>
 </figure>
 
 <div class="box note">
@@ -1047,336 +1154,63 @@ export function AuthProvider({ initialUser, children }) {
   <text class="sm" x="650" y="116" text-anchor="middle">到 /login?redirect=…</text>
   <text class="lbl" x="380" y="170" text-anchor="middle">不需要在请求层里写跳转逻辑：状态一变，守卫组件自然会处理</text>
 </svg>
-<figcaption>图 5-12　声明式地处理会话过期</figcaption>
+<figcaption>图 5-13　声明式地处理会话过期</figcaption>
 </figure>
 
-<h2 id="nested">工单：嵌套路由</h2>
-
-<p>工单页面里有列表、新建表单和详情三个子页面。给 <code>/tickets</code> 加上子路由，<code>TicketsLayout</code> 里放第二个 <code>&lt;Outlet&gt;</code>：</p>
-
-<div class="code" data-lang="jsx" data-file="src/router.jsx"><pre>
-{
-  Component: RequireAuth,
-  children: [
-    {
-      path: 'tickets',
-      Component: TicketsLayout,
-      children: [
-        { index: true, Component: Tickets },           // /tickets
-        { path: 'new', Component: NewTicket },         // /tickets/new
-        { path: ':id', Component: TicketPage },        // /tickets/abc123
-      ],
-    },
-  ],
-},
-</pre></div>
-
-<figure>
-<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="嵌套的 Outlet：外层显示 TicketsLayout，内层显示子页面">
-  <rect class="bx" x="20" y="20" width="440" height="230" rx="12"/>
-  <text class="mono sm" x="36" y="42">AppLayout</text>
-  <rect class="bx" x="36" y="52" width="408" height="24" rx="5"/>
-  <text class="sm" x="240" y="69" text-anchor="middle">header + NavMenu</text>
-  <rect class="bx-a" x="36" y="84" width="408" height="152" rx="10"/>
-  <text class="mono sm on-a" x="50" y="104">&lt;Outlet /&gt; ① → RequireAuth → TicketsLayout</text>
-  <rect class="bx" x="56" y="114" width="368" height="24" rx="5"/>
-  <text class="sm" x="240" y="131" text-anchor="middle">“我的工单”标题 + 切换按钮</text>
-  <rect class="bx-g" x="56" y="146" width="368" height="78" rx="8"/>
-  <text class="mono sm on-g" x="70" y="166">&lt;Outlet /&gt; ② → 子页面</text>
-  <text class="sm" x="240" y="196" text-anchor="middle">Tickets / NewTicket / TicketPage</text>
-  <text class="ttl" x="490" y="44">URL → 两层 Outlet</text>
-  <text class="mono sm" x="490" y="78">/tickets</text>
-  <text class="sm" x="600" y="78">② Tickets</text>
-  <text class="mono sm" x="490" y="106">/tickets/new</text>
-  <text class="sm" x="600" y="106">② NewTicket</text>
-  <text class="mono sm" x="490" y="134">/tickets/abc</text>
-  <text class="sm" x="600" y="134">② TicketPage</text>
-  <text class="mono sm" x="490" y="162">/faq</text>
-  <text class="sm" x="600" y="162">① FAQ（没有 ②）</text>
-  <text class="lbl" x="490" y="208">守卫放在外层，</text>
-  <text class="lbl" x="490" y="228">所有子路由都受保护</text>
-</svg>
-<figcaption>图 5-13　嵌套路由与嵌套的 Outlet</figcaption>
-</figure>
-
-<div class="code" data-lang="jsx" data-file="src/pages/TicketsLayout.jsx"><pre>
-import { Link, Outlet, useLocation } from 'react-router'
-
-export default function TicketsLayout() {
-  const { pathname } = useLocation()
-  return (
-    &lt;main className="tickets-layout"&gt;
-      &lt;h1&gt;我的工单&lt;/h1&gt;
-      &lt;div className="actions"&gt;
-        {pathname !== '/tickets' &amp;&amp; &lt;Link className="button secondary" to="/tickets"&gt;查看所有工单&lt;/Link&gt;}
-        {pathname !== '/tickets/new' &amp;&amp; &lt;Link className="button" to="/tickets/new"&gt;新建工单&lt;/Link&gt;}
-      &lt;/div&gt;
-      &lt;Outlet /&gt;
-    &lt;/main&gt;
-  )
-}
-</pre></div>
-
-<p>子路由的 <code>to</code> 也可以写<strong>相对路径</strong>：在 <code>/tickets</code> 下面，<code>&lt;Link to="new"&gt;</code> 就是 <code>/tickets/new</code>。</p>
-
-<h3>工单列表</h3>
-
-<div class="code" data-lang="js" data-file="src/utils/format.js"><pre>
-const dateFormatter = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium' })
-export const formatDate = (value) =&gt; dateFormatter.format(new Date(value))
-</pre></div>
-
-<div class="code" data-lang="jsx" data-file="src/pages/Tickets.jsx"><pre>
-import { Link } from 'react-router'
-import { useQuery } from '@tanstack/react-query'
-import { $fetch } from '../api.js'
-import { formatDate } from '../utils/format.js'
-import Loading from '../components/Loading.jsx'
-
-export default function Tickets() {
-  const { data: tickets, isPending } = useQuery({
-    queryKey: ['tickets'],
-    queryFn: () =&gt; $fetch('tickets'),
-  })
-
-  if (isPending) return &lt;Loading /&gt;
-  if (!tickets?.length) return &lt;div className="empty"&gt;你还没有任何工单。&lt;/div&gt;
-
-  return (
-    &lt;section className="tickets-list"&gt;
-      {tickets.map((ticket) =&gt; (
-        &lt;div key={ticket._id} className="ticket-item"&gt;
-          &lt;Link to={ticket._id}&gt;{ticket.title}&lt;/Link&gt;
-          &lt;span className="badge"&gt;{ticket.status}&lt;/span&gt;
-          &lt;span className="date"&gt;{formatDate(ticket.date)}&lt;/span&gt;
-        &lt;/div&gt;
-      ))}
-    &lt;/section&gt;
-  )
-}
-</pre></div>
-
-<h3>提交新工单：useMutation + 备份输入</h3>
-
-<p>修改服务器数据用 <code>useMutation</code>。成功后让 <code>['tickets']</code> 缓存失效，列表会自动重新获取：</p>
-
-<div class="code" data-lang="jsx" data-file="src/pages/NewTicket.jsx"><pre>
-import { Link, useNavigate } from 'react-router'
-import { useQueryClient } from '@tanstack/react-query'
-import { $fetch } from '../api.js'
-import { useLocalStorageState } from '../hooks/useLocalStorageState.js'
-import SmartForm from '../components/SmartForm.jsx'
-import FormInput from '../components/FormInput.jsx'
-
-export default function NewTicket() {
-  // 自动备份到 localStorage：误刷新、会话过期被踢去登录，回来后内容还在
-  const [title, setTitle] = useLocalStorageState('NewTicket.title', '')
-  const [description, setDescription] = useLocalStorageState('NewTicket.description', '')
-  const queryClient = useQueryClient()
-  const navigate = useNavigate()
-
-  async function operation() {
-    const ticket = await $fetch('tickets/new', {
-      method: 'POST',
-      body: JSON.stringify({ title, description }),
-    })
-    setTitle('')
-    setDescription('')
-    await queryClient.invalidateQueries({ queryKey: ['tickets'] })   // 列表缓存失效
-    navigate(`/tickets/${ticket._id}`)
-  }
-
-  return (
-    &lt;SmartForm title="新工单" operation={operation} valid={Boolean(title &amp;&amp; description)}
-               actions={&lt;&gt;
-                 &lt;Link className="button secondary" to="/tickets"&gt;返回&lt;/Link&gt;
-                 &lt;button type="submit" disabled={!title || !description}&gt;提交工单&lt;/button&gt;
-               &lt;/&gt;}&gt;
-      &lt;FormInput name="title" value={title} onChange={setTitle}
-                 placeholder="简短描述（最多 100 字）" maxLength={100} required /&gt;
-      &lt;FormInput type="textarea" name="description" value={description} onChange={setDescription}
-                 placeholder="详细描述你遇到的问题" rows={4} /&gt;
-    &lt;/SmartForm&gt;
-  )
-}
-</pre></div>
-
-<p>这里用 SmartForm 统一处理加载和错误；如果想用 TanStack Query 的 <code>useMutation</code>，它同样提供 <code>isPending</code>、<code>error</code> 和 <code>onSuccess</code> 回调。</p>
-
-<div class="code" data-lang="js" data-file="src/hooks/useLocalStorageState.js"><pre>
-import { useState, useEffect } from 'react'
-
-// 和 useState 用法一样，但会自动存到 localStorage
-export function useLocalStorageState(key, defaultValue) {
-  const [value, setValue] = useState(() =&gt; {
-    const saved = localStorage.getItem(key)
-    return saved !== null ? JSON.parse(saved) : defaultValue
-  })
-
-  useEffect(() =&gt; {
-    localStorage.setItem(key, JSON.stringify(value))
-  }, [key, value])
-
-  return [value, setValue]
-}
-</pre></div>
-
-<h2 id="advanced">动态参数、404 与其他</h2>
-
-<h3>动态路由参数</h3>
-
-<div class="tw"><table>
-<thead><tr><th>路由模式</th><th>示例路径</th><th><code>useParams()</code></th></tr></thead>
-<tbody>
-<tr><td><code>tickets/:id</code></td><td><code>/tickets/abc</code></td><td><code>{ id: 'abc' }</code></td></tr>
-<tr><td><code>tickets/:id/comments/:comId</code></td><td><code>/tickets/abc/comments/42</code></td><td><code>{ id: 'abc', comId: '42' }</code></td></tr>
-<tr><td><code>files/*</code></td><td><code>/files/a/b.txt</code></td><td><code>{ '*': 'a/b.txt' }</code></td></tr>
-<tr><td><code>users/:id?</code></td><td><code>/users</code></td><td><code>{}</code>（可选参数）</td></tr>
-</tbody>
-</table></div>
+<h3>Session 还是 JWT？<span class="sup">补充</span></h3>
 
 <p>
-  把“读取路由参数”和“显示工单”分成两个组件：页面组件 <code>TicketPage</code> 只负责从 URL 取出 id；<code>Ticket</code> 组件只接收一个普通的 <code>id</code> prop。
-  这样 <code>Ticket</code> 可以在任何地方复用（比如在弹窗里显示一张工单），测试也更容易：
+  这个项目用的是<strong>基于 Cookie 的会话（Session）</strong>：登录后服务器把会话 id 写进 Cookie，浏览器之后每次请求都自动带上它。
+  网上很多 React 教程用的是另一种方式 —— <strong>JWT 令牌</strong>：登录后服务器返回一个签名过的令牌，前端自己保存（常见的是 localStorage），每次请求放进 <code>Authorization</code> 头。
+  两者该怎么选？
 </p>
 
 <figure>
-<svg class="dgm" viewBox="0 0 760 170" role="img" aria-label="页面组件从 useParams 取出 id，作为 prop 传给可复用的展示组件">
-  <rect class="bx-b" x="20" y="50" width="200" height="70" rx="10"/>
-  <text class="mono sm on-b" x="120" y="78" text-anchor="middle">URL /tickets/abc</text>
-  <text class="mono sm" x="120" y="100" text-anchor="middle">useParams() → { id }</text>
-  <path class="ln" d="M222 85 H276" marker-end="url(#ar)"/>
-  <rect class="bx-a" x="280" y="50" width="180" height="70" rx="10"/>
-  <text class="ttl on-a" x="370" y="78" text-anchor="middle">TicketPage</text>
-  <text class="sm" x="370" y="100" text-anchor="middle">只做“翻译”</text>
-  <path class="ln-a" d="M462 85 H516" marker-end="url(#ar-a)"/>
-  <text class="halo mono sm on-a" x="489" y="76" text-anchor="middle">id</text>
-  <rect class="bx-g" x="520" y="50" width="220" height="70" rx="10"/>
-  <text class="ttl on-g" x="630" y="78" text-anchor="middle">Ticket({ id })</text>
-  <text class="sm" x="630" y="100" text-anchor="middle">不知道路由的存在，可复用</text>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="Cookie 会话与存放在 localStorage 的 JWT 对比，以及各自面临的攻击">
+  <rect class="bx-g" x="20" y="20" width="340" height="250" rx="12"/>
+  <text class="ttl on-g" x="190" y="44" text-anchor="middle">HttpOnly Cookie 会话（本项目）</text>
+  <text class="sm" x="40" y="74">· 会话 id 在 Cookie 里，浏览器自动携带</text>
+  <text class="sm" x="40" y="96">· HttpOnly：JS 读不到 Cookie</text>
+  <text class="sm on-g" x="40" y="124">✓ 即使页面有 XSS，令牌也偷不走</text>
+  <text class="sm on-g" x="40" y="146">✓ 服务器可以随时让会话失效</text>
+  <text class="sm on-r" x="40" y="174">△ 要防 CSRF：Cookie 设置 SameSite=Lax，</text>
+  <text class="sm on-r" x="56" y="192">修改数据的接口不用 GET</text>
+  <text class="sm" x="40" y="222">△ 前端和 API 最好同站（同一主域名）</text>
+  <text class="sm" x="40" y="244">　 —— 本章用 Vite 代理就是为了这个</text>
+
+  <rect class="bx-r" x="400" y="20" width="340" height="250" rx="12"/>
+  <text class="ttl on-r" x="570" y="44" text-anchor="middle">JWT 存在 localStorage</text>
+  <text class="sm" x="420" y="74">· 前端保存令牌，手动放进请求头</text>
+  <text class="sm" x="420" y="96">· 服务器无需保存会话（无状态）</text>
+  <text class="sm on-g" x="420" y="124">✓ 跨域、移动端 App 调用方便</text>
+  <text class="sm on-r" x="420" y="152">✗ 页面一旦有 XSS，任何脚本都能</text>
+  <text class="sm on-r" x="436" y="170">读出 localStorage 里的令牌并发走</text>
+  <text class="sm on-r" x="420" y="198">✗ 令牌签发后很难提前作废，</text>
+  <text class="sm on-r" x="436" y="216">只能等过期（要配合短有效期 + 刷新令牌）</text>
 </svg>
-<figcaption>图 5-14　让组件和路由解耦</figcaption>
+<figcaption>图 5-14　两种常见的登录状态保存方式</figcaption>
 </figure>
 
-<div class="code" data-lang="jsx" data-file="src/pages/TicketPage.jsx"><pre>
-import { useParams } from 'react-router'
-import Ticket from '../components/Ticket.jsx'
-
-export default function TicketPage() {
-  const { id } = useParams()
-  return &lt;Ticket id={id} /&gt;
-}
-</pre></div>
-
-<div class="code" data-lang="jsx" data-file="src/components/Ticket.jsx"><pre>
-import { useQuery } from '@tanstack/react-query'
-import { $fetch } from '../api.js'
-import { formatDate } from '../utils/format.js'
-import Loading from './Loading.jsx'
-
-export default function Ticket({ id }) {
-  const { data: ticket, isPending } = useQuery({
-    queryKey: ['ticket', id],                 // id 是 key 的一部分：id 变了就是另一份缓存
-    queryFn: () =&gt; $fetch(`ticket/${id}`),
-  })
-
-  if (isPending) return &lt;Loading /&gt;
-  if (!ticket) return &lt;div className="empty"&gt;找不到这张工单。&lt;/div&gt;
-
-  return (
-    &lt;div className="ticket"&gt;
-      &lt;section className="infos"&gt;
-        &lt;div className="info"&gt;创建于 &lt;strong&gt;{formatDate(ticket.date)}&lt;/strong&gt;&lt;/div&gt;
-        &lt;div className="info"&gt;作者 &lt;strong&gt;{ticket.user.username}&lt;/strong&gt;&lt;/div&gt;
-        &lt;div className="info"&gt;状态 &lt;span className="badge"&gt;{ticket.status}&lt;/span&gt;&lt;/div&gt;
-      &lt;/section&gt;
-      &lt;section className="content"&gt;
-        &lt;h3&gt;{ticket.title}&lt;/h3&gt;
-        &lt;p&gt;{ticket.description}&lt;/p&gt;
-      &lt;/section&gt;
-    &lt;/div&gt;
-  )
-}
-</pre></div>
-
-<div class="box tip">
-  <div class="t">&#10003; 竞态条件也被处理了</div>
+<div class="box key">
+  <div class="t">&#9733; 对普通网页应用的建议</div>
   <p>
-    快速从工单 A 点到工单 B 时，A 的请求可能比 B 的晚回来。我们手写的 <code>useRemoteData</code> 靠 <code>ignore</code> 标志避免了这个问题；
-    TanStack Query 按 <code>queryKey</code> 分别缓存，B 页面只读 <code>['ticket', 'B']</code>，A 的结果根本不会混进来。
+    前端和 API 在同一个站点下时，<strong>优先使用 HttpOnly + Secure + SameSite 的 Cookie 会话</strong>，它对 XSS 更有抵抗力，实现也更简单。
+    需要给第三方或移动端提供 API 时再考虑令牌方案；如果要在浏览器里用 JWT，也尽量把它放在 HttpOnly Cookie 里，而不是 localStorage。
+    无论哪种方式，前端的守卫路由都只是体验优化，真正的权限检查必须在服务器上做。
   </p>
 </div>
 
-<h3>404 页面</h3>
-
-<div class="code" data-lang="jsx" data-file="src/router.jsx"><pre>
-{ path: '*', Component: NotFound },     // 放在 AppLayout 的 children 末尾
-</pre></div>
-
-<div class="code" data-lang="jsx" data-file="src/pages/NotFound.jsx"><pre>
-import { Link } from 'react-router'
-
-export default function NotFound() {
-  return (
-    &lt;main className="not-found"&gt;
-      &lt;h1&gt;页面不存在&lt;/h1&gt;
-      &lt;p className="more-info"&gt;抱歉，你要找的页面不存在，可能已被移动或删除。&lt;/p&gt;
-      &lt;div className="actions"&gt;&lt;Link className="button" to="/"&gt;返回首页&lt;/Link&gt;&lt;/div&gt;
-    &lt;/main&gt;
-  )
-}
-</pre></div>
-
-<p>React Router 会按“具体程度”给路由排序，<code>*</code> 匹配所有其他路径，写在哪里都只会在没有更具体的匹配时才生效。</p>
-
-<h3>滚动恢复、懒加载、错误边界</h3>
-
-<div class="code" data-lang="jsx" data-file="src/components/AppLayout.jsx"><pre>
-import { Outlet, ScrollRestoration } from 'react-router'
-
-export default function AppLayout() {
-  return (
-    &lt;div className="app-layout"&gt;
-      {/* ... */}
-      &lt;Outlet /&gt;
-      &lt;ScrollRestoration /&gt;   {/* 切换页面回到顶部，前进/后退时恢复原来的位置 */}
-    &lt;/div&gt;
-  )
-}
-</pre></div>
-
-<p>不常访问的页面可以<strong>懒加载</strong>：被访问时才下载对应的代码。数据模式下给路由写 <code>lazy</code>：</p>
-
-<div class="code" data-lang="jsx"><pre>
-{
-  path: 'tickets',
-  lazy: async () =&gt; ({ Component: (await import('./pages/TicketsLayout.jsx')).default }),
-  children: [ /* ... */ ],
-},
-</pre></div>
-
-<p>路由还可以设置 <code>ErrorBoundary</code>：该路由渲染时抛出的错误会被捕获，显示一个错误页面，而不是整个应用白屏。</p>
-
-<div class="code" data-lang="jsx"><pre>
-import { useRouteError } from 'react-router'
-
-function ErrorPage() {
-  const error = useRouteError()
-  return &lt;main&gt;&lt;h1&gt;出错了&lt;/h1&gt;&lt;p&gt;{error.message}&lt;/p&gt;&lt;/main&gt;
-}
-
-// { path: '/', Component: AppLayout, ErrorBoundary: ErrorPage, children: [...] }
-</pre></div>
-
 <div class="box note">
-  <div class="t">&#9432; 页面切换动画</div>
+  <div class="t">&#9432; React 的 XSS 防护有多可靠</div>
   <p>
-    React Router 支持浏览器原生的 View Transitions：<code>&lt;Link to="/faq" viewTransition&gt;</code>，再用 CSS 的 <code>::view-transition-old/new</code> 定义动画。
-    也可以用第 3 章的 Motion，以 <code>location.pathname</code> 作为 key 包裹 <code>&lt;Outlet /&gt;</code>。
+    JSX 里的 <code>{变量}</code> 默认会转义，React 应用天然比手写 <code>innerHTML</code> 安全得多。但漏洞仍可能来自 <code>dangerouslySetInnerHTML</code>、
+    未经校验就放进 <code>href</code>、<code>src</code> 的用户输入、第三方脚本和依赖包。所以“令牌放在 JS 读不到的地方”依然是值得的纵深防御。
   </p>
 </div>
 
 <h2 id="summary">小结</h2>
+
+<p>上篇我们搭起了支持中心的骨架：路由和页面、加载数据、Context 共享登录状态、表单 Action 和守卫路由。<a href="ch05b.html">下篇</a>会在此基础上完成工单功能，并深入嵌套路由、表单校验和错误处理。</p>
 
 <div class="tw"><table>
 <thead><tr><th>需求</th><th>React 生态的做法</th></tr></thead>
@@ -1385,15 +1219,14 @@ function ErrorPage() {
 <tr><td>布局 / 子路由占位</td><td><code>&lt;Outlet /&gt;</code></td></tr>
 <tr><td>站内链接 / 菜单高亮</td><td><code>&lt;Link&gt;</code> / <code>&lt;NavLink&gt;</code>（<code>end</code>）</td></tr>
 <tr><td>代码中跳转</td><td><code>useNavigate()</code></td></tr>
-<tr><td>路由参数 / 查询参数</td><td><code>useParams()</code> / <code>useSearchParams()</code></td></tr>
-<tr><td>保护页面</td><td>守卫布局组件：<code>&lt;Navigate&gt;</code> 或 <code>&lt;Outlet&gt;</code></td></tr>
-<tr><td>共享登录状态</td><td>Context + 自定义 Hook <code>useAuth()</code></td></tr>
 <tr><td>复用有状态逻辑</td><td>自定义 Hook</td></tr>
 <tr><td>服务器数据</td><td>TanStack Query：<code>useQuery</code>、<code>invalidateQueries</code></td></tr>
+<tr><td>共享登录状态</td><td>Context + 自定义 Hook <code>useAuth()</code></td></tr>
 <tr><td>表单提交状态</td><td>React 19 <code>useActionState</code> + <code>&lt;form action&gt;</code></td></tr>
-<tr><td>组件“双向绑定”</td><td><code>value</code> + <code>onChange</code> 两个 props</td></tr>
-<tr><td>属性透传</td><td><code>...rest</code> 展开到内部元素</td></tr>
-<tr><td>404 / 滚动 / 懒加载</td><td><code>path: '*'</code> / <code>&lt;ScrollRestoration&gt;</code> / <code>lazy</code></td></tr>
+<tr><td>组件“双向绑定” / 属性透传</td><td><code>value</code> + <code>onChange</code> / <code>...rest</code></td></tr>
+<tr><td>保护页面</td><td>守卫布局组件：<code>&lt;Navigate&gt;</code> 或 <code>&lt;Outlet&gt;</code></td></tr>
+<tr><td>点击外部关闭 <span class="sup">补充</span></td><td>自定义 Hook <code>useClickOutside(ref, handler)</code></td></tr>
+<tr><td>登录状态保存 <span class="sup">补充</span></td><td>同站优先 HttpOnly Cookie 会话；前端守卫只是体验优化</td></tr>
 </tbody>
 </table></div>
 
@@ -1401,9 +1234,7 @@ function ErrorPage() {
   <h3>动手练习</h3>
   <ol>
     <li>注册成功后，在表单下方显示“账号已创建，请登录”的提示。</li>
-    <li>给工单详情加上评论列表和评论表单，提交评论后用 <code>invalidateQueries(['ticket', id])</code> 刷新。</li>
-    <li>工单列表支持按状态筛选，筛选条件放在 URL 里（<code>/tickets?status=open</code>，用 <code>useSearchParams</code>），刷新后仍然保留。</li>
-    <li>用 TanStack Query 的 <code>useMutation</code> 改写 NewTicket 的提交逻辑。</li>
+    <li>给 <code>useClickOutside</code> 加一个 <code>enabled</code> 参数：菜单关闭时不注册监听，打开时才注册。</li>
     <li>给用户加角色：普通用户只能提交工单，管理员能关闭工单。写一个 <code>&lt;RequireRole role="admin"&gt;</code> 守卫。</li>
   </ol>
 </div>

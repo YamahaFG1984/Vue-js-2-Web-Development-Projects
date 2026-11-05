@@ -29,6 +29,9 @@
     <li>用 react-leaflet 声明式地使用地图，理解它“哪些属性只在初始化时生效”</li>
     <li>写一个 render props 组件，再改写成自定义 Hook，比较两者</li>
     <li>处理请求竞态，实现评论的乐观更新</li>
+    <li>用 Zustand 的 <code>persist</code> 中间件记住地图位置<span class="sup">补充</span></li>
+    <li>用 <code>useSyncExternalStore</code> 写 <code>useMediaQuery</code>，小屏幕上改用原生 <code>&lt;dialog&gt;</code> 弹窗<span class="sup">补充</span></li>
+    <li>帖子很多时：拆分订阅、<code>memo</code>、保持对象引用稳定、标记聚合<span class="sup">补充</span></li>
   </ul>
 </div>
 
@@ -572,6 +575,77 @@ export const useMapStore = create((set, get) =&gt; ({
 }))
 </pre></div>
 
+<h3>Zustand 中间件：记住地图位置<span class="sup">补充</span></h3>
+
+<p>
+  每次刷新页面，地图都回到埃菲尔铁塔。如果能回到用户上次看的位置和缩放级别就好了。
+  Zustand 的<strong>中间件</strong>可以包在 store 的创建函数外面，给它加上额外的能力，最常用的就是 <code>persist</code>：
+</p>
+
+<div class="code" data-lang="js" data-file="src/stores/map.js"><pre>
+import { create } from 'zustand'
+import { persist, devtools } from 'zustand/middleware'
+
+export const useMapStore = create(
+  devtools(                                   // 在 Redux DevTools 扩展里查看每一次状态变化
+    persist(
+      (set, get) =&gt; ({
+        center: { lat: 48.8538302, lng: 2.2982161 },
+        zoom: 15,
+        userPosition: null,
+        // ……action 和原来完全一样……
+      }),
+      {
+        name: 'blog-map',                                         // localStorage 里的 key
+        partialize: (s) =&gt; ({ center: s.center, zoom: s.zoom }),  // 只保存这两个字段
+        version: 1,                                               // 将来数据结构变了，用 migrate 升级旧数据
+      },
+    ),
+    { name: 'map' },
+  ),
+)
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="persist 中间件：store 每次 set 后把 partialize 选出的字段写入 localStorage；创建 store 时先读出保存的数据合并进初始状态">
+  <rect class="bx-a" x="20" y="60" width="200" height="110" rx="12"/>
+  <text class="ttl on-a" x="120" y="86" text-anchor="middle">useMapStore</text>
+  <text class="mono sm" x="120" y="110" text-anchor="middle">center、zoom</text>
+  <text class="mono sm" x="120" y="130" text-anchor="middle">userPosition</text>
+  <text class="mono sm" x="120" y="150" text-anchor="middle">setView()…</text>
+  <rect class="bx-p" x="290" y="60" width="190" height="110" rx="12"/>
+  <text class="ttl on-p" x="385" y="86" text-anchor="middle">persist 中间件</text>
+  <text class="sm" x="385" y="112" text-anchor="middle">partialize：挑字段</text>
+  <text class="sm" x="385" y="134" text-anchor="middle">JSON 序列化</text>
+  <text class="sm" x="385" y="156" text-anchor="middle">version / migrate</text>
+  <rect class="bx-g" x="550" y="60" width="190" height="110" rx="12"/>
+  <text class="ttl on-g" x="645" y="86" text-anchor="middle">localStorage</text>
+  <text class="mono sm" x="645" y="112" text-anchor="middle">"blog-map":</text>
+  <text class="mono sm" x="645" y="132" text-anchor="middle">{"state":{center,zoom},</text>
+  <text class="mono sm" x="645" y="152" text-anchor="middle">"version":1}</text>
+  <path class="ln-a" d="M222 95 H286" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M482 95 H546" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="385" y="44" text-anchor="middle">每次 set 之后：写入</text>
+  <path class="ln-g" d="M546 140 H482" marker-end="url(#ar)"/>
+  <path class="ln-g" d="M286 140 H222" marker-end="url(#ar)"/>
+  <text class="halo sm on-g" x="385" y="200" text-anchor="middle">创建 store 时：读出并合并（localStorage 是同步的，第一次渲染就能用上）</text>
+</svg>
+<figcaption>图 6-6　persist 中间件的写入与恢复</figcaption>
+</figure>
+
+<p>
+  因为 localStorage 是同步读取的，<code>BlogMap</code> 里 <code>useMapStore.getState().center</code> 拿到的已经是恢复后的值，地图一出现就在上次的位置。
+  注意 <code>setUserPosition</code> 第一次定位时会自动居中，会覆盖恢复的位置，可以根据需要去掉这个行为。
+</p>
+
+<div class="box note">
+  <div class="t">&#9432; 中间件是怎么工作的</div>
+  <p>
+    中间件就是一个“接收 store 创建函数、返回新的创建函数”的函数。<code>persist</code> 在里面包装了 <code>set</code>：先调用原来的 <code>set</code>，再把选中的字段写进存储。
+    多个中间件可以层层嵌套，<code>devtools</code> 一般放在最外层。用户、登录状态这类数据则不要持久化到 localStorage —— 它们应该以服务器为准。
+  </p>
+</div>
+
 <h3>地图组件</h3>
 
 <div class="code" data-lang="jsx" data-file="src/components/BlogMap.jsx"><pre>
@@ -686,7 +760,7 @@ export default function BlogMap() {
   <path class="ln-p" d="M516 170 C500 200 490 202 474 202" marker-end="url(#ar)"/>
   <path class="ln-p" d="M288 202 C270 202 260 190 244 170" marker-end="url(#ar)"/>
 </svg>
-<figcaption>图 6-6　“只负责接线、返回 null”的组件，是集成命令式库的常用技巧</figcaption>
+<figcaption>图 6-7　“只负责接线、返回 null”的组件，是集成命令式库的常用技巧</figcaption>
 </figure>
 
 <div class="box tip">
@@ -810,7 +884,7 @@ export const selectCurrentPost = (s) =&gt; s.draft || selectSelectedPost(s)   //
   <text class="lbl" x="200" y="200" text-anchor="middle">没有这个检查，</text>
   <text class="lbl" x="200" y="218" text-anchor="middle">旧的 A 会覆盖新的 B</text>
 </svg>
-<figcaption>图 6-7　竞态条件：只采纳最新一次请求的结果</figcaption>
+<figcaption>图 6-8　竞态条件：只采纳最新一次请求的结果</figcaption>
 </figure>
 
 <h2 id="content">右侧内容面板</h2>
@@ -837,7 +911,7 @@ export const selectCurrentPost = (s) =&gt; s.draft || selectSelectedPost(s)   //
   <path class="ln" d="M472 206 C620 206 620 125 204 125" marker-end="url(#ar)"/>
   <text class="halo sm" x="620" y="170">关闭</text>
 </svg>
-<figcaption>图 6-8　内容面板是一个由 store 驱动的小状态机</figcaption>
+<figcaption>图 6-9　内容面板是一个由 store 驱动的小状态机</figcaption>
 </figure>
 
 <div class="code" data-lang="jsx" data-file="src/components/content/BlogContent.jsx"><pre>
@@ -897,6 +971,119 @@ export default function CreatePost() {
 </pre></div>
 
 <p>输入框直接受控于 store 里的草稿：用户输入 → <code>updateDraft</code> → store 更新 → 所有用到草稿的组件刷新。地图上草稿标记的位置和这里的表单，读的是同一份数据。</p>
+
+<h2 id="mobile">小屏幕上用弹窗显示内容<span class="sup">补充</span></h2>
+
+<p>
+  在手机上，地图和右侧面板并排放不下。常见的做法是：宽屏时面板固定在右侧；窄屏时地图占满屏幕，有内容要显示时弹出一个对话框。
+  CSS 媒体查询能改变布局，但这里连<strong>渲染的结构</strong>都不一样（一个是普通 <code>div</code>，一个是对话框），所以 JavaScript 也要知道当前屏幕宽度。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="宽屏时内容面板在地图右侧；窄屏时地图占满屏幕，内容在原生 dialog 弹窗中显示">
+  <rect class="bx" x="20" y="20" width="400" height="210" rx="12"/>
+  <text class="ttl" x="220" y="44" text-anchor="middle">宽屏（&gt; 700px）</text>
+  <rect class="bx-b" x="40" y="60" width="240" height="150" rx="8"/>
+  <text class="on-b" x="160" y="140" text-anchor="middle">地图</text>
+  <rect class="bx-a" x="290" y="60" width="110" height="150" rx="8"/>
+  <text class="sm on-a" x="345" y="132" text-anchor="middle">内容面板</text>
+  <text class="sm" x="345" y="150" text-anchor="middle">&lt;div&gt;</text>
+
+  <rect class="bx" x="480" y="20" width="260" height="210" rx="12"/>
+  <text class="ttl" x="610" y="44" text-anchor="middle">窄屏（≤ 700px）</text>
+  <rect class="bx-b" x="530" y="56" width="160" height="164" rx="14"/>
+  <text class="on-b" x="610" y="80" text-anchor="middle">地图占满</text>
+  <rect class="bx-a" x="545" y="96" width="130" height="110" rx="8"/>
+  <text class="sm on-a" x="610" y="140" text-anchor="middle">&lt;dialog&gt;</text>
+  <text class="sm" x="610" y="160" text-anchor="middle">Esc / 点背景关闭</text>
+  <path class="ln-a" d="M422 125 H476" marker-end="url(#ar-a)"/>
+  <text class="halo mono sm on-a" x="449" y="114" text-anchor="middle">useMediaQuery</text>
+</svg>
+<figcaption>图 6-10　同一份内容，两种呈现方式</figcaption>
+</figure>
+
+<h3>useMediaQuery：订阅浏览器的外部状态</h3>
+
+<p>
+  屏幕宽度是浏览器里的“外部状态”，不归 React 管。React 专门为订阅这类外部数据源提供了 <code>useSyncExternalStore</code>：
+  告诉它<strong>怎么订阅变化</strong>和<strong>怎么读取当前值</strong>，它保证组件始终拿到一致的最新值（Zustand 内部也是用它实现的）。
+</p>
+
+<div class="code" data-lang="js" data-file="src/hooks/useMediaQuery.js"><pre>
+import { useCallback, useSyncExternalStore } from 'react'
+
+export function useMediaQuery(query) {
+  const subscribe = useCallback((onChange) =&gt; {
+    const mql = matchMedia(query)
+    mql.addEventListener('change', onChange)        // 跨过断点时通知 React
+    return () =&gt; mql.removeEventListener('change', onChange)
+  }, [query])
+
+  return useSyncExternalStore(
+    subscribe,
+    () =&gt; matchMedia(query).matches,   // 读取当前值
+    () =&gt; false,                       // 服务端渲染时的值（没有窗口）
+  )
+}
+</pre></div>
+
+<h3>原生 &lt;dialog&gt; 弹窗</h3>
+
+<p>
+  浏览器自带的 <code>&lt;dialog&gt;</code> 调用 <code>showModal()</code> 后会显示在页面最顶层，自带半透明背景（<code>::backdrop</code>）、按 Esc 关闭、把焦点限制在对话框内。
+  我们只需要把 React 的 <code>open</code> 状态同步给它：
+</p>
+
+<div class="code" data-lang="jsx" data-file="src/components/Modal.jsx"><pre>
+import { useEffect, useRef } from 'react'
+
+export default function Modal({ open, onClose, children }) {
+  const ref = useRef(null)
+
+  useEffect(() =&gt; {
+    const dialog = ref.current
+    if (open &amp;&amp; !dialog.open) dialog.showModal()
+    else if (!open &amp;&amp; dialog.open) dialog.close()
+  }, [open])
+
+  return (
+    &lt;dialog ref={ref} className="content-dialog"
+            onClose={onClose}                                       // Esc 或 close() 都会触发
+            onClick={(e) =&gt; e.target === ref.current &amp;&amp; onClose()}&gt;  {/* 点在背景上 */}
+      {children}
+    &lt;/dialog&gt;
+  )
+}
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="src/components/content/ContentPanel.jsx"><pre>
+import { useMediaQuery } from '../../hooks/useMediaQuery.js'
+import { usePostsStore, selectCurrentPost } from '../../stores/posts.js'
+import Modal from '../Modal.jsx'
+import BlogContent from './BlogContent.jsx'
+
+export default function ContentPanel() {
+  const narrow = useMediaQuery('(width &lt;= 700px)')
+  const hasContent = usePostsStore((s) =&gt; Boolean(selectCurrentPost(s)))
+  const clearDraft = usePostsStore((s) =&gt; s.clearDraft)
+  const unselectPost = usePostsStore((s) =&gt; s.unselectPost)
+
+  if (!narrow) return &lt;BlogContent /&gt;
+  return (
+    &lt;Modal open={hasContent} onClose={() =&gt; { clearDraft(); unselectPost() }}&gt;
+      &lt;BlogContent /&gt;
+    &lt;/Modal&gt;
+  )
+}
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 内容都在 store 里，切换呈现方式毫无成本</div>
+  <p>
+    <code>BlogContent</code> 不知道自己是在侧栏里还是弹窗里，它只读 store。把浏览器窗口从宽拖到窄，正在编辑的草稿不会丢 ——
+    这就是把状态放在组件外面的好处。弹窗里的 <code>CreatePost</code> 依然和地图上的草稿标记读同一份数据。
+  </p>
+</div>
 
 <h2 id="render-props">地点信息：render props 与 Hook</h2>
 
@@ -965,7 +1152,7 @@ export default function ReverseGeocode({ position, children }) {
   <text class="sm" x="380" y="212" text-anchor="middle">children 不一定是 JSX —— 它可以是任何值，包括函数。</text>
   <text class="sm" x="380" y="232" text-anchor="middle">这种“只提供数据、不决定外观”的组件也叫无渲染组件（renderless component）</text>
 </svg>
-<figcaption>图 6-9　render props：子组件出数据，调用者出外观</figcaption>
+<figcaption>图 6-11　render props：子组件出数据，调用者出外观</figcaption>
 </figure>
 
 <h3>做法二：自定义 Hook（更常用）</h3>
@@ -1079,7 +1266,7 @@ export default function Comment({ comment }) {
   <text class="sm" x="640" y="174" text-anchor="middle">再提示用户</text>
   <text class="lbl" x="380" y="216" text-anchor="middle">乐观值只在 Action（异步过渡）进行期间存在，结束后自动丢弃</text>
 </svg>
-<figcaption>图 6-10　乐观更新</figcaption>
+<figcaption>图 6-12　乐观更新</figcaption>
 </figure>
 
 <div class="code" data-lang="js" data-file="src/stores/posts.js（新增 action）"><pre>
@@ -1180,6 +1367,115 @@ export default function PostContent() {
   </p>
 </div>
 
+<h2 id="perf">帖子很多时：渲染性能<span class="sup">补充</span></h2>
+
+<p>
+  热门地区可能有上千个帖子。现在的 <code>BlogMap</code> 同时订阅了 <code>posts</code>、<code>draft</code> 和 <code>currentPost</code>：
+  用户在草稿标题里每打一个字，<code>draft</code> 就变一次，<code>BlogMap</code> 重新渲染，上千个 <code>&lt;Marker&gt;</code> 跟着重新渲染，
+  而且每个都拿到了新的 <code>eventHandlers</code> 对象和新的图标，react-leaflet 只好逐个更新 Leaflet 标记。输入开始卡顿。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="优化前：草稿变化导致 BlogMap 和全部 1000 个标记重新渲染；优化后：标记放进只订阅 posts 的 PostMarkers 并用 memo 包裹，草稿变化只重新渲染草稿标记">
+  <rect class="bx-r" x="20" y="20" width="340" height="230" rx="12"/>
+  <text class="ttl on-r" x="190" y="46" text-anchor="middle">优化前：输入一个字</text>
+  <rect class="bx-r" x="110" y="64" width="160" height="34" rx="8"/>
+  <text class="mono sm on-r" x="190" y="86" text-anchor="middle">BlogMap ↻</text>
+  <path class="ln-r" d="M150 100 L80 130"/><path class="ln-r" d="M190 100 V130"/><path class="ln-r" d="M230 100 L300 130"/>
+  <rect class="bx-r" x="30" y="132" width="100" height="30" rx="6"/><text class="mono sm on-r" x="80" y="152" text-anchor="middle">Marker ↻</text>
+  <rect class="bx-r" x="140" y="132" width="100" height="30" rx="6"/><text class="mono sm on-r" x="190" y="152" text-anchor="middle">Marker ↻</text>
+  <rect class="bx-r" x="250" y="132" width="100" height="30" rx="6"/><text class="mono sm on-r" x="300" y="152" text-anchor="middle">…×1000 ↻</text>
+  <text class="sm" x="190" y="200" text-anchor="middle">每个标记都拿到新的 handlers 和 icon</text>
+  <text class="sm" x="190" y="222" text-anchor="middle">→ 1000 次 Leaflet 更新</text>
+
+  <rect class="bx-g" x="400" y="20" width="340" height="230" rx="12"/>
+  <text class="ttl on-g" x="570" y="46" text-anchor="middle">优化后：输入一个字</text>
+  <rect class="bx" x="490" y="64" width="160" height="34" rx="8"/>
+  <text class="mono sm" x="570" y="86" text-anchor="middle">BlogMap</text>
+  <path class="ln" d="M530 100 L470 130"/><path class="ln" d="M610 100 L670 130"/>
+  <rect class="bx" x="410" y="132" width="130" height="30" rx="6"/><text class="mono sm" x="475" y="152" text-anchor="middle">PostMarkers</text>
+  <rect class="bx-g" x="600" y="132" width="130" height="30" rx="6"/><text class="mono sm on-g" x="665" y="152" text-anchor="middle">DraftMarker ↻</text>
+  <path class="ln" d="M475 164 V184"/>
+  <rect class="bx" x="410" y="186" width="130" height="30" rx="6"/><text class="mono sm" x="475" y="206" text-anchor="middle">memo(PostMarker)</text>
+  <text class="sm" x="640" y="196" text-anchor="middle">只有订阅了 draft</text>
+  <text class="sm" x="640" y="214" text-anchor="middle">的组件重新渲染</text>
+  <text class="sm" x="570" y="238" text-anchor="middle">↻ = 重新渲染</text>
+</svg>
+<figcaption>图 6-13　缩小重新渲染的范围</figcaption>
+</figure>
+
+<h3>第一步：拆分订阅，让 memo 生效</h3>
+
+<div class="code" data-lang="jsx" data-file="src/components/BlogMap.jsx（优化版）"><pre>
+import { memo, useMemo } from 'react'
+
+// 图标只创建一次，而不是每次渲染都 new 一个
+const icons = { normal: icon('face'), selected: icon('face', 'selected'), draft: icon('add_circle', 'draft') }
+
+const PostMarker = memo(function PostMarker({ post, selected }) {
+  const selectPost = usePostsStore((s) =&gt; s.selectPost)          // store 里的函数引用永远不变
+  const handlers = useMemo(() =&gt; ({ click: () =&gt; selectPost(post._id) }), [post._id, selectPost])
+  return &lt;Marker position={post.position} icon={selected ? icons.selected : icons.normal} eventHandlers={handlers} /&gt;
+})
+
+function PostMarkers() {
+  const posts = usePostsStore((s) =&gt; s.posts)                     // 只订阅需要的数据
+  const selectedId = usePostsStore((s) =&gt; s.selectedPostId)
+  return posts.map((p) =&gt; &lt;PostMarker key={p._id} post={p} selected={p._id === selectedId} /&gt;)
+}
+
+function DraftMarker() {
+  const position = usePostsStore((s) =&gt; s.draft?.position)       // 改标题不会改变 position 的引用
+  return position ? &lt;Marker position={position} icon={icons.draft} opacity={0.75} interactive={false} /&gt; : null
+}
+
+// BlogMap 里：&lt;PostMarkers /&gt; &lt;DraftMarker /&gt;，自己不再订阅 posts 和 draft
+</pre></div>
+
+<p>
+  现在输入草稿时，只有 <code>DraftMarker</code> 的 selector 被重新计算；它返回的 <code>position</code> 没变，连它也不会重新渲染。
+  切换选中的帖子时，<code>PostMarkers</code> 重新渲染，但 <code>memo</code> 让 props 没变的 998 个 <code>PostMarker</code> 直接跳过，只有新旧两个选中的标记更新。
+</p>
+
+<h3>第二步：重新加载时保持对象引用</h3>
+
+<p>
+  拖动地图会重新请求帖子。服务器每次返回的都是<strong>全新的对象</strong>，哪怕内容一模一样，<code>memo</code> 的浅比较也会认为 <code>post</code> 变了。
+  可以在存进 store 时复用内容没变的旧对象：
+</p>
+
+<div class="code" data-lang="js" data-file="src/stores/posts.js"><pre>
+// 内容没变的帖子沿用旧对象，memo 就能继续生效
+function reuseUnchanged(oldList, newList) {
+  const old = new Map(oldList.map((p) =&gt; [p._id, p]))
+  return newList.map((p) =&gt; {
+    const prev = old.get(p._id)
+    return prev &amp;&amp; JSON.stringify(prev) === JSON.stringify(p) ? prev : p
+  })
+}
+
+// fetchPosts 里：
+if (requestId === fetchPostsUid) set((s) =&gt; ({ posts: reuseUnchanged(s.posts, posts), mapBounds }))
+</pre></div>
+
+<p>TanStack Query 默认就会这样做（它叫 structural sharing），这也是服务器数据交给它管理的好处之一。</p>
+
+<h3>第三步：数量实在太多时</h3>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#129302;</span><h4>React Compiler</h4><p>第 4 章介绍过。开启后，上面的 <code>memo</code>、<code>useMemo</code> 大多可以删掉，编译器会自动加上。但拆分订阅、稳定引用仍然要自己做。</p></div>
+  <div class="card"><span class="ic">&#128205;</span><h4>标记聚合</h4><p>用 <code>react-leaflet-cluster</code> 把相近的标记合并成一个带数字的圆圈，放大后再展开。几千个标记也很流畅。</p></div>
+  <div class="card"><span class="ic">&#127912;</span><h4>Canvas 渲染</h4><p>给 <code>MapContainer</code> 加 <code>preferCanvas</code>，并用 <code>CircleMarker</code> 代替 DOM 图标，标记画在一张画布上，而不是上千个 DOM 元素。</p></div>
+</div>
+
+<div class="box key">
+  <div class="t">&#9733; 优化前先测量</div>
+  <p>
+    打开 React DevTools 的 Profiler，勾选“Highlight updates when components render”，在草稿里打几个字，看看是哪些组件在闪。
+    只优化真正有问题的地方；几十个帖子的时候，最初的写法完全没有问题。
+  </p>
+</div>
+
 <h2 id="architecture">整体架构回顾</h2>
 
 <figure>
@@ -1217,7 +1513,7 @@ export default function PostContent() {
   <text class="sm" x="380" y="298" text-anchor="middle">组件只做两件事：用 selector 读取需要的状态来渲染，调用 action 响应用户操作。</text>
   <text class="sm" x="380" y="316" text-anchor="middle">请求、竞态处理、登录流程都在 store 里；$fetch 和路由也可以通过 getState() 直接使用 store。</text>
 </svg>
-<figcaption>图 6-11　组件 ↔ store 的关系</figcaption>
+<figcaption>图 6-14　组件 ↔ store 的关系</figcaption>
 </figure>
 
 <h2 id="summary">小结</h2>
@@ -1236,6 +1532,10 @@ export default function PostContent() {
 <tr><td>逻辑与外观分离</td><td>自定义 Hook（首选）或 render props</td></tr>
 <tr><td>竞态</td><td>请求编号 / <code>AbortController</code></td></tr>
 <tr><td>乐观更新</td><td>React 19 <code>useOptimistic</code> + <code>startTransition</code></td></tr>
+<tr><td>持久化 store <span class="sup">补充</span></td><td><code>persist</code> 中间件 + <code>partialize</code>；<code>devtools</code></td></tr>
+<tr><td>订阅浏览器状态 <span class="sup">补充</span></td><td><code>useSyncExternalStore</code>（如 <code>useMediaQuery</code>）</td></tr>
+<tr><td>弹窗 <span class="sup">补充</span></td><td>原生 <code>&lt;dialog&gt;</code> + effect 里 <code>showModal()</code></td></tr>
+<tr><td>大量数据 <span class="sup">补充</span></td><td>拆分订阅、<code>memo</code>、复用未变对象、聚合 / Canvas</td></tr>
 </tbody>
 </table></div>
 
@@ -1243,7 +1543,8 @@ export default function PostContent() {
   <h3>动手练习</h3>
   <ol>
     <li>在帖子标记上显示点赞数（服务器有 <code>POST /posts/:id/like</code>），并在 <code>PostContent</code> 里加点赞按钮，同样做成乐观更新。</li>
-    <li>给 <code>useMapStore</code> 加上 Zustand 的 <code>persist</code> 中间件，刷新页面后地图回到上次的位置和缩放级别。</li>
+    <li>给 <code>usePostsStore</code> 的草稿也加上 <code>persist</code>（用 <code>sessionStorage</code>：<code>storage: createJSONStorage(() =&gt; sessionStorage)</code>），写到一半刷新页面也不会丢。</li>
+    <li>在 Profiler 里对比优化前后输入草稿标题时的渲染次数；再接入 <code>react-leaflet-cluster</code>，用脚本生成 3000 个假帖子试试。</li>
     <li>用 TanStack Query 改写帖子详情的加载（<code>queryKey: ['post', id]</code>），比较它和 store 里手写 <code>selectPost</code> 的区别。</li>
     <li>写一个 <code>&lt;MouseTracker&gt;{({ x, y }) =&gt; …}&lt;/MouseTracker&gt;</code> render props 组件，再把它改写成 <code>useMouse()</code> Hook。</li>
     <li>（进阶）服务器支持 Socket.IO 实时推送新帖子。用 <code>socket.io-client</code> 连接，在 posts store 里收到新帖子时加入列表。</li>

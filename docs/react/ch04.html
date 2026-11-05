@@ -41,6 +41,9 @@
     <li>理解“触发 → 渲染 → 提交”三个阶段，知道组件在哪些情况下会重新渲染</li>
     <li>会用 <code>memo</code>、<code>useMemo</code>、<code>useCallback</code>，并知道 React Compiler 可以自动完成这些</li>
     <li>选择合适的样式方案：普通 CSS、CSS Modules、Tailwind CSS</li>
+    <li>项目变大后按功能组织代码，配置路径别名 <code>@</code><span class="sup">补充</span></li>
+    <li>在 React 中使用 TypeScript：给 props、事件、状态、ref 加类型<span class="sup">补充</span></li>
+    <li>用 <code>.env</code> 文件和构建模式区分开发、测试、生产环境<span class="sup">补充</span></li>
   </ul>
 </div>
 
@@ -536,22 +539,258 @@ export default function Movies() {
 }
 </pre></div>
 
-<details class="box deep">
-<summary class="t" style="cursor:pointer">&#128269; 可选：TypeScript（点击展开）</summary>
-<p>React 社区里 TypeScript 已经非常普遍。用 <code>react-ts</code> 模板创建项目后，组件文件改为 <code>.tsx</code>，props 可以用类型描述：</p>
-<div class="code" data-lang="tsx"><pre>
+<h3>项目变大以后：按功能组织<span class="sup">补充</span></h3>
+
+<p>小项目按“文件类型”分目录就够了；项目变大后，更推荐<strong>按功能（feature）</strong>组织，把一个功能相关的组件、Hook、store、API 放在一起：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 280" role="img" aria-label="按文件类型组织与按功能组织的目录结构对比">
+  <rect class="bx" x="20" y="20" width="340" height="240" rx="12"/>
+  <text class="ttl" x="190" y="44" text-anchor="middle">按类型组织（小项目）</text>
+  <text class="mono sm" x="40" y="74">src/</text>
+  <text class="mono sm" x="56" y="96">components/ <tspan class="on-r">TicketList.jsx …</tspan></text>
+  <text class="mono sm" x="56" y="118">hooks/      <tspan class="on-r">useTickets.js …</tspan></text>
+  <text class="mono sm" x="56" y="140">stores/     <tspan class="on-r">tickets.js …</tspan></text>
+  <text class="mono sm" x="56" y="162">api/        <tspan class="on-r">tickets.js …</tspan></text>
+  <text class="sm" x="40" y="200">改一个“工单”功能，要在 4 个目录里来回跳；</text>
+  <text class="sm" x="40" y="220">删掉一个功能，很难确定删干净了</text>
+
+  <rect class="bx-a" x="400" y="20" width="340" height="240" rx="12"/>
+  <text class="ttl on-a" x="570" y="44" text-anchor="middle">按功能组织（中大型项目）</text>
+  <text class="mono sm" x="420" y="74">src/</text>
+  <text class="mono sm" x="436" y="96">features/</text>
+  <text class="mono sm on-a" x="452" y="118">tickets/ <tspan class="sm" style="fill:var(--fg-soft)">组件 + Hook + store + api</tspan></text>
+  <text class="mono sm on-a" x="452" y="140">auth/    <tspan class="sm" style="fill:var(--fg-soft)">登录相关的一切</tspan></text>
+  <text class="mono sm" x="436" y="162">shared/  <tspan class="sm" style="fill:var(--fg-soft)">通用组件、工具函数</tspan></text>
+  <text class="mono sm" x="436" y="184">routes/  main.jsx  App.jsx</text>
+  <text class="sm" x="420" y="220">一个功能的代码在一起，边界清晰</text>
+  <text class="sm" x="420" y="240">功能之间只通过公开的入口（index.js）互相引用</text>
+</svg>
+<figcaption>图 4-9　两种目录组织方式</figcaption>
+</figure>
+
+<p>
+  组件嵌套深了以后，<code>import X from '../../../shared/X.jsx'</code> 这种相对路径很难维护。Vite 的 React 模板没有预设别名，自己加一个 <code>@</code> 指向 <code>src</code>：
+</p>
+
+<div class="code" data-lang="js" data-file="vite.config.js"><pre>
+import { fileURLToPath, URL } from 'node:url'
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  resolve: {
+    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+  },
+})
+</pre></div>
+
+<div class="code" data-lang="jsx"><pre>
+import Button from '@/shared/components/Button.jsx'   // 不管在哪个文件里，写法都一样
+</pre></div>
+
+<p>TypeScript 项目还要在 <code>tsconfig.app.json</code> 的 <code>compilerOptions</code> 里加上 <code>"paths": { "@/*": ["./src/*"] }</code>，编辑器才认识这个别名。第 11 章（进阶专题）会进一步讨论大型项目的边界和 monorepo。</p>
+
+<h2 id="typescript">在 React 中使用 TypeScript<span class="sup">补充</span></h2>
+
+<p>
+  React 社区里 TypeScript 已经非常普遍：组件库、招聘要求、大部分新项目都默认使用它。它在 React 里的价值特别直观 ——
+  给组件的 props 写上类型，使用组件时少传、传错一个属性，编辑器马上标红。
+</p>
+
+<h3>开启 TypeScript</h3>
+
+<div class="code" data-lang="bash"><pre>
+npm create vite@latest my-app -- --template react-ts
+</pre></div>
+
+<p>
+  组件文件改成 <code>.tsx</code>，普通模块是 <code>.ts</code>。<code>package.json</code> 里的构建命令变成 <code>tsc -b &amp;&amp; vite build</code>：
+  先做类型检查，通过了再打包。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="Vite 只是去掉类型并不检查，类型检查由编辑器和 tsc 完成">
+  <rect class="bx-b" x="20" y="70" width="150" height="70" rx="10"/>
+  <text class="mono on-b" x="95" y="100" text-anchor="middle">Movie.tsx</text>
+  <text class="sm" x="95" y="122" text-anchor="middle">带类型的源码</text>
+  <rect class="bx-a" x="250" y="20" width="220" height="70" rx="10"/>
+  <text class="ttl on-a" x="360" y="48" text-anchor="middle">Vite（开发与构建）</text>
+  <text class="sm" x="360" y="70" text-anchor="middle">只把类型删掉，不检查，所以很快</text>
+  <rect class="bx-p" x="250" y="120" width="220" height="70" rx="10"/>
+  <text class="ttl on-p" x="360" y="148" text-anchor="middle">编辑器 / tsc -b</text>
+  <text class="sm" x="360" y="170" text-anchor="middle">真正做类型检查，发现错误</text>
+  <path class="ln-a" d="M172 96 L246 60" marker-end="url(#ar-a)"/>
+  <path class="ln" d="M172 116 L246 152" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="550" y="20" width="190" height="70" rx="10"/>
+  <text class="ttl on-g" x="645" y="48" text-anchor="middle">浏览器运行的 JS</text>
+  <text class="sm" x="645" y="70" text-anchor="middle">不含任何类型</text>
+  <rect class="bx-r" x="550" y="120" width="190" height="70" rx="10"/>
+  <text class="ttl on-r" x="645" y="148" text-anchor="middle">红色波浪线 / 构建失败</text>
+  <text class="sm" x="645" y="170" text-anchor="middle">类型错误在这里暴露</text>
+  <path class="ln-a" d="M472 55 H546" marker-end="url(#ar-a)"/>
+  <path class="ln" d="M472 155 H546" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 4-10　转译和类型检查是两件事</figcaption>
+</figure>
+
+<h3>给 props 加类型</h3>
+
+<div class="code" data-lang="tsx" data-file="src/Movie.tsx"><pre>
+import type { ReactNode } from 'react'
+
 type MovieProps = {
   movie: { id: number; title: string }
-  highlighted?: boolean
-  onSelect?: (id: number) =&gt; void
+  highlighted?: boolean                  // 可选
+  onSelect?: (id: number) =&gt; void        // 回调 prop 也要写清参数
+  children?: ReactNode                   // 任何能渲染的东西
 }
 
-export default function Movie({ movie, highlighted = false, onSelect }: MovieProps) {
-  return &lt;li onClick={() =&gt; onSelect?.(movie.id)}&gt;{movie.title}&lt;/li&gt;
+export default function Movie({ movie, highlighted = false, onSelect, children }: MovieProps) {
+  return (
+    &lt;li className={highlighted ? 'hl' : ''} onClick={() =&gt; onSelect?.(movie.id)}&gt;
+      {movie.title} {children}
+    &lt;/li&gt;
+  )
 }
 </pre></div>
-<p>本教程为了照顾初学者使用 JavaScript，所有示例都能平滑迁移到 TypeScript。</p>
-</details>
+
+<p>想复用原生元素的全部属性（比如封装一个按钮），用 <code>ComponentProps</code>：</p>
+
+<div class="code" data-lang="tsx"><pre>
+import type { ComponentProps } from 'react'
+
+type ButtonProps = ComponentProps&lt;'button'&gt; &amp; { variant?: 'primary' | 'ghost' }
+
+function Button({ variant = 'primary', ...rest }: ButtonProps) {
+  return &lt;button className={`btn btn-${variant}`} {...rest} /&gt;    // onClick、disabled、type 都有类型提示
+}
+</pre></div>
+
+<h3>状态、事件、ref 与 reducer</h3>
+
+<div class="code" data-lang="tsx"><pre>
+import { useState, useRef, useReducer, type ChangeEvent } from 'react'
+
+type User = { id: string; name: string }
+
+// 能从初始值推断的不用写；初始值是 null 时要写清楚“以后会是什么”
+const [count, setCount] = useState(0)                   // number
+const [user, setUser] = useState&lt;User | null&gt;(null)
+
+// DOM ref：传入元素类型，初始值 null
+const inputRef = useRef&lt;HTMLInputElement&gt;(null)
+
+// 事件对象的类型
+function handleChange(e: ChangeEvent&lt;HTMLInputElement&gt;) {
+  setName(e.target.value)
+}
+
+// reducer 的 action 用“可辨识联合类型”：switch 里每个分支都能拿到对应的字段
+type Action =
+  | { type: 'added'; note: Note }
+  | { type: 'removed'; id: string }
+
+function notesReducer(notes: Note[], action: Action): Note[] {
+  switch (action.type) {
+    case 'added':   return [...notes, action.note]           // 这里 action.note 有类型
+    case 'removed': return notes.filter((n) =&gt; n.id !== action.id)
+  }
+}
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 不要过度标注</div>
+  <p>
+    TypeScript 能推断的地方（大多数 <code>useState</code>、<code>useMemo</code>、事件处理函数内联写在 JSX 上时的参数）就让它推断。
+    类型主要写在<strong>边界</strong>上：组件的 props、函数参数、API 返回的数据。也不必再用 <code>React.FC</code>，直接给参数加类型更简单。
+  </p>
+</div>
+
+<h2 id="envvars">环境变量与构建模式<span class="sup">补充</span></h2>
+
+<p>
+  真实项目几乎都有“不同环境不同配置”的需求：开发时 API 在 <code>localhost:3000</code>，生产环境在 <code>https://api.example.com</code>；
+  测试环境要打开调试日志，生产环境要关掉。把这些值写死在代码里，每次部署都得改代码。Vite 的做法是 <strong>.env 文件 + 构建模式</strong>。
+</p>
+
+<div class="code" data-lang="bash" data-file=".env（所有模式都会加载）"><pre>
+VITE_APP_TITLE=我的电影清单
+</pre></div>
+
+<div class="code" data-lang="bash" data-file=".env.development（npm run dev 时加载）"><pre>
+VITE_API_BASE=/api/
+VITE_DEBUG=true
+</pre></div>
+
+<div class="code" data-lang="bash" data-file=".env.production（npm run build 时加载）"><pre>
+VITE_API_BASE=https://api.example.com/
+VITE_DEBUG=false
+</pre></div>
+
+<p>在代码里通过 <code>import.meta.env</code> 读取（注意：值都是字符串）：</p>
+
+<div class="code" data-lang="jsx"><pre>
+const baseUrl = import.meta.env.VITE_API_BASE        // 开发时是 '/api/'，构建后是正式地址
+
+if (import.meta.env.DEV) {                            // 内置变量：是否开发环境
+  console.log('当前模式：', import.meta.env.MODE)     // 'development' / 'production' / 自定义
+}
+
+export default function App() {
+  return &lt;h1&gt;{import.meta.env.VITE_APP_TITLE}&lt;/h1&gt;
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="Vite 根据模式加载不同的 .env 文件，并在构建时把 import.meta.env 替换成具体值">
+  <rect class="bx-b" x="20" y="30" width="170" height="56" rx="10"/>
+  <text class="mono sm on-b" x="105" y="54" text-anchor="middle">npm run dev</text>
+  <text class="sm" x="105" y="74" text-anchor="middle">mode = development</text>
+  <rect class="bx-p" x="20" y="110" width="170" height="56" rx="10"/>
+  <text class="mono sm on-p" x="105" y="134" text-anchor="middle">npm run build</text>
+  <text class="sm" x="105" y="154" text-anchor="middle">mode = production</text>
+  <rect class="bx-a" x="20" y="190" width="170" height="56" rx="10"/>
+  <text class="mono sm on-a" x="105" y="214" text-anchor="middle">vite build --mode staging</text>
+  <text class="sm" x="105" y="234" text-anchor="middle">自定义模式</text>
+
+  <rect class="bx" x="260" y="30" width="230" height="216" rx="12"/>
+  <text class="ttl" x="375" y="54" text-anchor="middle">加载顺序（后者覆盖前者）</text>
+  <rect class="bx" x="280" y="66" width="190" height="30" rx="6"/><text class="mono sm" x="375" y="86" text-anchor="middle">.env</text>
+  <rect class="bx" x="280" y="104" width="190" height="30" rx="6"/><text class="mono sm" x="375" y="124" text-anchor="middle">.env.local</text>
+  <rect class="bx" x="280" y="142" width="190" height="30" rx="6"/><text class="mono sm" x="375" y="162" text-anchor="middle">.env.[mode]</text>
+  <rect class="bx-a" x="280" y="180" width="190" height="30" rx="6"/><text class="mono sm on-a" x="375" y="200" text-anchor="middle">.env.[mode].local</text>
+  <text class="sm" x="375" y="232" text-anchor="middle">*.local 不提交 Git，放个人配置</text>
+  <path class="ln" d="M192 58 H256" marker-end="url(#ar)"/>
+  <path class="ln" d="M192 138 H256" marker-end="url(#ar)"/>
+  <path class="ln" d="M192 218 H256" marker-end="url(#ar)"/>
+
+  <rect class="bx-g" x="560" y="60" width="180" height="150" rx="12"/>
+  <text class="ttl on-g" x="650" y="86" text-anchor="middle">构建产物</text>
+  <text class="mono sm" x="650" y="114" text-anchor="middle">import.meta.env</text>
+  <text class="mono sm" x="650" y="132" text-anchor="middle">.VITE_API_BASE</text>
+  <text class="sm" x="650" y="156" text-anchor="middle">被直接替换为</text>
+  <text class="mono sm on-g" x="650" y="180" text-anchor="middle">"https://api…"</text>
+  <path class="ln-g" d="M492 138 H556" marker-end="url(#ar)"/>
+  <text class="lbl" x="380" y="276" text-anchor="middle">环境变量在构建时被“写死”进 JS 文件 —— 改了 .env 要重新构建才会生效</text>
+</svg>
+<figcaption>图 4-11　模式、.env 文件与构建产物</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; 前端没有秘密</div>
+  <p>
+    只有以 <code>VITE_</code> 开头的变量才会暴露给前端代码，这是 Vite 的保护措施。但请记住：<strong>暴露给前端的任何值，用户都能在浏览器里看到</strong>。
+    API 密钥、数据库密码、OAuth 客户端密钥绝不能放进 <code>VITE_</code> 变量，它们只能留在服务器上（第 13 章的 AI 聊天会演示怎么做）。
+    含有真实密钥的 <code>.env.local</code> 一定要写进 <code>.gitignore</code>。
+  </p>
+</div>
+
+<div class="box tip">
+  <div class="t">&#10003; 给环境变量加上类型提示</div>
+  <p>TypeScript 项目可以在 <code>src/vite-env.d.ts</code> 里声明 <code>interface ImportMetaEnv { readonly VITE_API_BASE: string }</code>，编辑器就能补全，拼错名字时会报错。</p>
+</div>
 
 <h2 id="build">构建与部署</h2>
 
@@ -589,6 +828,9 @@ npm run preview    # 本地预览
   <li>组件在自身状态变化、读取的 Context 变化、父组件渲染时会重新渲染；这通常不是问题。</li>
   <li><code>memo</code> / <code>useMemo</code> / <code>useCallback</code> 可以手动优化，React Compiler 能自动完成大部分。</li>
   <li>样式：普通 CSS、CSS Modules、Tailwind 各有适用场景。</li>
+  <li>项目变大后按功能组织代码，用别名 <code>@</code> 代替很深的相对路径。<span class="sup">补充</span></li>
+  <li>TypeScript：类型写在边界上（props、参数、API 数据），Vite 只转译，<code>tsc</code> 负责检查。<span class="sup">补充</span></li>
+  <li>环境变量放在 <code>.env.[mode]</code> 里，只有 <code>VITE_</code> 开头的会暴露给前端，前端没有秘密。<span class="sup">补充</span></li>
 </ul>
 
 <div class="exercise">
@@ -598,6 +840,8 @@ npm run preview    # 本地预览
     <li>打开 React DevTools 的 Profiler，录制一次输入操作，看看哪些组件被重新渲染了。</li>
     <li>启用 React Compiler，再录制一次，对比渲染的组件数量。</li>
     <li>把 <code>Movie</code> 组件的样式改写为 CSS Modules，在开发者工具里观察生成的类名。</li>
+    <li>用 <code>react-ts</code> 模板新建一个项目，把 <code>Movie</code> 和 <code>Movies</code> 改写为 TypeScript，故意少传一个必填 prop，看看编辑器和 <code>npm run build</code> 分别报什么错。</li>
+    <li>新建 <code>.env.staging</code>，用 <code>vite build --mode staging</code> 构建，在页面标题里显示当前的 <code>import.meta.env.MODE</code>。</li>
     <li>运行 <code>npm run build</code>，查看 <code>dist/</code>；设置 <code>base</code> 后再构建一次，对比 <code>index.html</code> 里资源路径的变化。</li>
   </ol>
 </div>
