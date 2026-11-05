@@ -1,0 +1,1246 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>项目 4 · 搜索自动补全框 — 从设计到实现</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="assets/design.css">
+</head>
+<body data-chapter="4">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">项目 4 · 第二阶段 · 组件设计</span>
+<h1>搜索自动补全框</h1>
+<p class="lede">
+  前三个项目做的都是“应用”，这一篇做的是一个<strong>组件</strong>：小商城顶部的搜索框，输入关键字，下面弹出匹配的商品。
+  它看起来只是一个输入框加一个列表，却是前端里公认最难做对的控件之一：要防抖、要处理请求竞态、要支持键盘、要照顾屏幕阅读器，
+  而且要设计成<strong>别人拿去就能用</strong>的样子，后台的“选择商品”“选择城市”也能用它。
+</p>
+
+<div class="goals">
+  <h4>本篇目标</h4>
+  <ul>
+    <li>设计卡新增第五格：<strong>接口</strong>。先写用法，再写实现；props / emit / slots 就是组件的函数签名</li>
+    <li>理解<strong>防抖</strong>和<strong>竞态</strong>，并用一个 <code>onCleanup</code> 同时解决</li>
+    <li>键盘交互也是状态机；高亮项<strong>存 key 不存下标</strong></li>
+    <li>焦点与事件顺序、ARIA combobox 模式、不用 <code>v-html</code> 的高亮</li>
+    <li>Vue 3：作用域插槽、<code>defineModel</code>、<code>useId</code>、<code>useTemplateRef</code>、<code>shallowRef</code>、<code>toValue</code>；用 Vue Test Utils 只通过接口测试组件</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="demo">先看成品</h2>
+
+<p>
+  同一个组件，两种用法：上面搜商品（异步请求、自定义每一项的样子），下面选城市（本地数据、默认样子）。
+  先正常用一用：输入“耳机”或拼音 “kafei”，用上下键和回车选择。然后<strong>勾选下面的“破坏”开关</strong>，再快速打字，看看没有防抖、没有竞态保护时会发生什么。
+</p>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · 搜索自动补全（右侧为组件内部状态）</div>
+  <div class="body">
+    <div id="demo-ac" v-cloak class="acd">
+      <div class="acd-main">
+        <div class="acd-switch">
+          <label><input type="checkbox" v-model="noDebounce"> 关闭防抖</label>
+          <label><input type="checkbox" v-model="noGuard"> 关闭竞态保护</label>
+          <label><input type="checkbox" v-model="slow"> 慢网络</label>
+        </div>
+        <label class="acd-label">搜索商品</label>
+        <auto-complete ref="ac1" v-model="product" :search="searchProducts" item-label="name" :debounce="noDebounce ? 0 : 300"
+                       :race-guard="!noGuard" placeholder="试试“耳机”或“kafei”" @select="onSelect">
+          <template #item="{ item, query, active }">
+            <span>{{ item.emoji }}</span><highlight-text :text="item.name" :query="query"></highlight-text>
+            <span class="acd-price" :class="{ active }">¥{{ (item.price / 100).toFixed(2) }}</span>
+          </template>
+          <template #empty="{ query }">没有“{{ query }}”相关的商品</template>
+        </auto-complete>
+        <p class="muted" style="margin:6px 0 0">v-model：{{ product ? product.name : 'null' }}<template v-if="lastSelect">　·　最近一次 select 事件：{{ lastSelect }}</template></p>
+        <label class="acd-label">选择城市</label>
+        <auto-complete v-model="city" :search="searchCities" item-key="code" item-label="name" :debounce="0" placeholder="城市名或拼音，如 hang"></auto-complete>
+        <p class="muted" style="margin:6px 0 0">v-model：{{ city ? JSON.stringify(city) : 'null' }}</p>
+        <div class="acd-log">
+          <div class="muted">请求记录（新的在上）</div>
+          <div v-for="r in log" :key="r.id" :class="'acd-' + r.status">#{{ r.id }} “{{ r.query }}” · {{ r.ms }}ms · {{ r.status }}<template v-if="r.applied"> · 结果已显示</template></div>
+          <div v-if="!log.length" class="muted">还没有请求</div>
+        </div>
+      </div>
+      <div class="pomo-state">
+        <div class="h" style="color:var(--purple)">接口 PROPS / MODEL</div>
+        <div><span class="k">modelValue:</span> {{ product ? '{ id: "' + product.id + '", … }' : 'null' }}</div>
+        <div><span class="k">debounce:</span> {{ noDebounce ? 0 : 300 }}</div>
+        <div class="h st">内部状态</div>
+        <div><span class="k">query:</span> "{{ s('query') }}"</div>
+        <div><span class="k">open:</span> {{ s('open') }}</div>
+        <div><span class="k">activeKey:</span> {{ s('activeKey') === null ? 'null' : '"' + s('activeKey') + '"' }}</div>
+        <div><span class="k">result.status:</span> "{{ s('status') }}"</div>
+        <div class="h dv">派生</div>
+        <div><span class="k">items:</span> {{ s('count') }} 项</div>
+        <div><span class="k">activeIndex:</span> {{ s('activeIndex') }}</div>
+        <div><span class="k">showList:</span> {{ s('showList') }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p>
+  关闭防抖后，每敲一个字母就发一个请求；再关闭竞态保护、打开慢网络，快速输入 “erji”，你会看到列表先显示了 “erji” 的结果，接着又被先发出、后返回的 “er” 或 “erj” 的结果<strong>覆盖</strong>：
+  输入框里是 “erji”，列表却对不上。这类 bug 在开发环境（本机接口很快）几乎遇不到，一上线、一遇到慢网络就冒出来。
+</p>
+
+<div class="box dj">
+  <div class="t">Django 对照</div>
+  <p>
+    Django admin 的 <code>autocomplete_fields</code> 就是这个控件：一个带搜索的下拉框，背后调用 admin 的 JSON 接口。你只需要写一行配置，
+    因为有人把它做成了<strong>可复用的组件</strong>，接口就是那几个参数。这一篇站在“写组件的人”这边：怎样设计接口，才能让使用者一行配置就用上，而且各种场景都能用。
+  </p>
+</div>
+
+<h2 id="req">第 1 步：需求与草图</h2>
+
+<p>需求分三组。前两组是用户看得见的，第三组是给“使用这个组件的程序员”的：</p>
+<ul>
+  <li><strong>搜索</strong>：输入至少 1 个字开始搜索；结果中的关键字高亮；有“搜索中”“没有结果”“出错了（可重试）”三种提示；不要每敲一个字就发一次请求；结果不能和输入对不上</li>
+  <li><strong>操作</strong>：上下键移动高亮项（到头后循环），回车选中，Esc 关闭列表、再按一次清空；鼠标悬停高亮、点击选中；点别处列表关闭；屏幕阅读器能用</li>
+  <li><strong>复用</strong>：既能搜服务器，也能过滤本地数组；每一项长什么样由使用者决定；用 <code>v-model</code> 拿到选中的项</li>
+</ul>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="草图：输入框下方弹出结果列表，第二项高亮，关键字标黄；右侧是搜索中、无结果、出错三种提示的缩略图">
+  <rect class="bx-a" x="20" y="20" width="360" height="40" rx="8"/>
+  <text x="36" y="45" style="fill:var(--fg)">耳机</text>
+  <circle cx="356" cy="40" r="8" style="fill:none;stroke:var(--accent);stroke-width:2;stroke-dasharray:30 20"/>
+  <rect class="bx" x="20" y="68" width="360" height="132" rx="8"/>
+  <text x="36" y="96" style="fill:var(--fg)">🎧 降噪<tspan style="fill:var(--red);font-weight:700">耳机</tspan></text>
+  <text class="sm" x="364" y="96" text-anchor="end">¥899.00</text>
+  <rect x="26" y="108" width="348" height="34" rx="6" style="fill:var(--accent-bg)"/>
+  <text x="36" y="130" style="fill:var(--fg)">🎧 运动<tspan style="fill:var(--red);font-weight:700">耳机</tspan></text>
+  <text class="sm on-a" x="364" y="130" text-anchor="end">¥299.00</text>
+  <text x="36" y="168" style="fill:var(--fg)">🎧 头戴式<tspan style="fill:var(--red);font-weight:700">耳机</tspan></text>
+  <text class="sm" x="364" y="168" text-anchor="end">¥499.00</text>
+
+  <text class="sm on-p" x="20" y="226">① 输入框里的文字　② 列表开没开　③ 高亮第几项</text>
+  <text class="sm on-p" x="20" y="248">④ 搜到了什么、正在搜吗　⑤ 关键字标黄　⑥ 选中了哪一项</text>
+  <text class="sm" x="20" y="278">每一项的样子（图标、价格）由使用者决定，组件只负责“列表”</text>
+
+  <text class="ttl" x="420" y="40">同一块区域，还有三种样子：</text>
+  <rect class="bx" x="420" y="56" width="320" height="50" rx="8"/>
+  <text class="sm" x="436" y="86">搜索中…（加载时保留上一次结果，变淡显示）</text>
+  <rect class="bx" x="420" y="118" width="320" height="50" rx="8"/>
+  <text class="sm" x="436" y="148">没有找到“耳机壳”</text>
+  <rect class="bx-r" x="420" y="180" width="320" height="50" rx="8"/>
+  <text class="sm on-r" x="436" y="210">服务器开小差了　[重试]</text>
+  <text class="sm" x="420" y="262">这些文案也该允许使用者替换（插槽）</text>
+</svg>
+<figcaption>图 4-1　草图：一个输入框、一个弹出层，弹出层有四种样子</figcaption>
+</figure>
+
+<h2 id="api">第 2 步：先设计接口</h2>
+
+<p>
+  做应用时，设计卡从“状态”开始。做<strong>组件</strong>时，要先多做一件事：<strong>站在使用者的角度，把用法写出来</strong>。
+  还没有一行实现，先假装组件已经存在，写出你希望别人怎么用它：
+</p>
+
+<div class="code" data-lang="vue" data-file="使用者的代码（先写这个）"><pre>
+&lt;!-- 用法一：搜服务器上的商品，每一项显示图标和价格，选中后跳转 --&gt;
+&lt;AutoComplete v-model="product" :search="searchProducts" item-label="name" @select="goToProduct"&gt;
+  &lt;template #item="{ item, query }"&gt;
+    {{ item.emoji }} &lt;HighlightText :text="item.name" :query="query" /&gt; {{ formatCents(item.price) }}
+  &lt;/template&gt;
+  &lt;template #empty="{ query }"&gt;没有“{{ query }}”相关的商品&lt;/template&gt;
+&lt;/AutoComplete&gt;
+
+&lt;!-- 用法二：过滤本地的城市列表，用默认样子 --&gt;
+&lt;AutoComplete v-model="city" :search="searchCities" item-key="code" item-label="name" :debounce="0" /&gt;
+</pre></div>
+
+<p>写用法的过程，就是在做接口设计。每一个属性都是一个决定：</p>
+
+<div class="tw"><table>
+  <tr><th>接口</th><th>决定</th><th>为什么</th></tr>
+  <tr><td><code>v-model</code></td><td>选中的<strong>整个对象</strong>，没选为 <code>null</code></td><td>使用者拿到就能显示、能跳转，不必再按 id 查一次。代价是表单提交时要自己取 <code>.id</code>。（另一种常见设计是 v-model 只存 id，各有取舍，要在文档里写清楚）</td></tr>
+  <tr><td><code>search</code></td><td><strong>一个函数</strong> <code>(query, { signal }) =&gt; 列表或 Promise</code></td><td>不设计 <code>options</code> 数组和 <code>url</code> 两个属性：本地过滤就是一个同步函数，远程搜索就是一个异步函数，一个接口覆盖两种用法。组件也不需要知道接口地址、参数格式、鉴权方式，那是使用者的事</td></tr>
+  <tr><td><code>itemKey</code> / <code>itemLabel</code></td><td>字段名，默认 <code>'id'</code> / <code>'label'</code></td><td>组件不规定数据长什么样，告诉它“哪个字段是唯一标识、哪个字段显示在输入框里”就行</td></tr>
+  <tr><td><code>minLength</code> / <code>debounce</code></td><td>数字，有合理的默认值</td><td>大多数人不用改；本地数据把 <code>debounce</code> 设成 0</td></tr>
+  <tr><td><code>#item</code> / <code>#empty</code> 插槽</td><td>作用域插槽，把 <code>item</code>、<code>query</code>、<code>active</code> 交给使用者</td><td>每一项长什么样千变万化，用插槽而不是 <code>showPrice</code>、<code>showEmoji</code> 这类布尔属性</td></tr>
+  <tr><td><code>select</code> 事件</td><td>用户选中一项时触发</td><td>v-model 回答“当前值是什么”（状态），<code>select</code> 回答“用户刚刚做了什么”（事件）。跳转页面应该响应动作，而不是监听值的变化</td></tr>
+</table></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="组件接口就像函数签名：props 是参数，emit 是返回值和回调，插槽是使用者传入的、返回界面的回调函数">
+  <rect class="bx-b" x="20" y="30" width="200" height="200" rx="12"/>
+  <text class="ttl on-b" x="120" y="56" text-anchor="middle">使用者（父组件）</text>
+  <text class="sm" x="120" y="84" text-anchor="middle">知道：数据从哪来</text>
+  <text class="sm" x="120" y="104" text-anchor="middle">知道：每一项长什么样</text>
+  <text class="sm" x="120" y="124" text-anchor="middle">知道：选中以后做什么</text>
+  <text class="sm" x="120" y="164" text-anchor="middle">不关心：防抖、竞态、</text>
+  <text class="sm" x="120" y="184" text-anchor="middle">键盘、焦点、ARIA</text>
+
+  <rect class="bx-a" x="540" y="30" width="200" height="200" rx="12"/>
+  <text class="ttl on-a" x="640" y="56" text-anchor="middle">AutoComplete</text>
+  <text class="sm" x="640" y="84" text-anchor="middle">知道：什么时候搜、</text>
+  <text class="sm" x="640" y="104" text-anchor="middle">怎么防抖、怎么作废旧请求</text>
+  <text class="sm" x="640" y="124" text-anchor="middle">知道：键盘、焦点、无障碍</text>
+  <text class="sm" x="640" y="164" text-anchor="middle">不关心：接口地址、</text>
+  <text class="sm" x="640" y="184" text-anchor="middle">数据字段、外观细节</text>
+
+  <path class="ln-b" d="M220 70 H536" marker-end="url(#ar)"/>
+  <text class="halo sm on-b" x="378" y="62" text-anchor="middle">props：search, itemKey, itemLabel, minLength…（参数）</text>
+  <path class="ln-p" d="M540 120 H224" marker-end="url(#ar)"/>
+  <text class="halo sm on-p" x="380" y="112" text-anchor="middle">update:modelValue, select（返回值 / 回调）</text>
+  <path class="ln-g" d="M220 170 H536" marker-end="url(#ar)" style="stroke-dasharray:6 4"/>
+  <text class="halo sm on-g" x="378" y="162" text-anchor="middle">插槽 #item, #empty：使用者传入“返回界面的函数”</text>
+  <path class="ln-g" d="M540 196 H224" marker-end="url(#ar)" style="stroke-dasharray:6 4"/>
+  <text class="halo sm on-g" x="380" y="214" text-anchor="middle">组件调用它时，把 { item, query, active } 交给使用者</text>
+
+  <text class="mono sm" x="380" y="256" text-anchor="middle">def autocomplete(search, *, item_key='id', item_label='label', min_length=1,</text>
+  <text class="mono sm" x="380" y="276" text-anchor="middle">                 debounce=300, render_item=None, on_select=None) -&gt; Item | None</text>
+</svg>
+<figcaption>图 4-2　组件接口就是函数签名：划清“谁知道什么”</figcaption>
+</figure>
+
+<div class="box key">
+  <div class="t">接口设计的三条经验</div>
+  <ol>
+    <li><strong>先写用法，再写实现。</strong>用法写起来别扭，接口就有问题。这时候改，成本为零。</li>
+    <li><strong>按“谁知道什么”划分职责。</strong>使用者知道数据和业务，组件知道交互细节。组件里出现 <code>fetch('/api/products')</code>，或者使用者要自己处理防抖，都说明边界划错了。</li>
+    <li><strong>外观用插槽，行为用 props。</strong>布尔属性会随需求不断膨胀（<code>showPrice</code>、<code>showStock</code>、<code>showBadge</code>……），插槽一次解决。</li>
+  </ol>
+</div>
+
+<div class="box dj">
+  <div class="t">Django 对照</div>
+  <p>
+    这和你设计一个 Django 模板标签、一个表单 Widget，或者一个 service 函数的签名是同一件事：参数要少而正交、默认值要合理、扩展点（比如 Widget 的 <code>template_name</code>）留给使用者覆盖外观。
+    作用域插槽最接近 Django 模板里的 <code>{% block %}</code> 覆盖，区别是插槽还能从组件拿到数据（<code>item</code>、<code>query</code>）。
+  </p>
+</div>
+
+<h2 id="card">第 3 步：设计卡（组件内部）</h2>
+
+<p>接口定下来，再设计内部。这次设计卡多了一格：</p>
+
+<div class="dcard">
+  <div class="title">AutoComplete · 设计卡 v1<small>有三处会在第 5 步被修改</small></div>
+  <div class="st" style="grid-column:1/-1;border-right:none"><h5 style="color:var(--purple)">接口（第 2 步已定）</h5><pre>v-model: 选中项 | null　props: search, itemKey, itemLabel, minLength, debounce
+emit: select　插槽: #item { item, query, active }、#empty { query }</pre></div>
+  <div class="st"><h5>状态</h5><pre>query        输入框里的文字
+open         用户是否“想看”列表
+activeIndex  高亮第几项（-1 表示没有）
+result       { status, items, error }
+             status: idle | loading | success | error</pre></div>
+  <div class="dv"><h5>派生</h5><pre>items     = result.items
+showList  = open 且 query 长度 ≥ minLength
+activeId  = 高亮项的 DOM id（给 ARIA 用）
+每一项的高亮片段 = 按 query 切分 label</pre></div>
+  <div class="ev"><h5>事件</h5><pre>输入     → query = 新值；open = true；v-model = null
+↓ / ↑    → activeIndex 循环移动（列表没开就先打开）
+回车     → 有高亮项就选中它
+Esc      → 开着就关；关着就清空
+选中     → v-model = 项；query = 它的 label；关列表；emit select
+聚焦 / 失焦 → open = true / false</pre></div>
+  <div class="fx"><h5>副作用</h5><pre>query 变化 → 调用 search，结果写入 result
+activeIndex 变化 → 把那一项滚动到可见区域
+外部改了 v-model → 让 query 跟上</pre></div>
+</div>
+
+<p>键盘交互单独画成状态机，能更清楚地看到每个按键在不同状态下做什么：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="键盘状态机：列表关闭和列表打开两个状态；打开状态下高亮项可以在无和第 0 到 n-1 项之间循环移动">
+  <rect class="bx" x="30" y="70" width="170" height="80" rx="14"/>
+  <text class="ttl" x="115" y="102" text-anchor="middle">列表关闭</text>
+  <text class="mono sm" x="115" y="124" text-anchor="middle">open = false</text>
+
+  <rect class="bx-a" x="320" y="30" width="420" height="190" rx="14" style="fill:none"/>
+  <text class="ttl on-a" x="530" y="56" text-anchor="middle">列表打开 open = true</text>
+  <rect class="bx" x="350" y="100" width="90" height="44" rx="8"/>
+  <text class="sm" x="395" y="127" text-anchor="middle" style="fill:var(--fg)">无高亮</text>
+  <rect class="bx-a" x="490" y="100" width="70" height="44" rx="8"/>
+  <text class="sm on-a" x="525" y="127" text-anchor="middle">第 0 项</text>
+  <text class="ttl on-a" x="590" y="127" text-anchor="middle">…</text>
+  <rect class="bx-a" x="620" y="100" width="90" height="44" rx="8"/>
+  <text class="sm on-a" x="665" y="127" text-anchor="middle">第 n−1 项</text>
+  <path class="ln-a" d="M440 114 H486" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="463" y="106" text-anchor="middle">↓</text>
+  <path class="ln-a" d="M665 144 V178 H525 V148" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="595" y="182" text-anchor="middle">↓ 到底后回到第 0 项</text>
+  <path class="ln-a" d="M395 100 V80 H665 V96" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="530" y="84" text-anchor="middle">↑（从无高亮直接到最后一项）</text>
+  <text class="sm" x="530" y="208" text-anchor="middle">高亮项上按回车 → 选中，回到“列表关闭”</text>
+
+  <path class="ln" d="M200 92 H316" marker-end="url(#ar)"/>
+  <text class="halo sm" x="258" y="84" text-anchor="middle">输入 / 聚焦 / ↓</text>
+  <path class="ln" d="M320 132 H204" marker-end="url(#ar)"/>
+  <text class="halo sm" x="262" y="150" text-anchor="middle">Esc / 失焦 / 选中</text>
+  <path class="ln-d" d="M115 150 V196 Q115 210 101 210 H60 Q46 210 46 196 V154" marker-end="url(#ar)"/>
+  <text class="sm" x="150" y="226" text-anchor="middle">关闭时再按 Esc：清空输入</text>
+</svg>
+<figcaption>图 4-3　键盘交互状态机</figcaption>
+</figure>
+
+<h2 id="static">第 4 步：静态原型</h2>
+
+<p>
+  这一篇的静态原型有一个新内容：<strong>ARIA 属性</strong>。屏幕阅读器不认识“一个输入框下面挂着一个 div”，必须用标准的 combobox 模式告诉它每个元素的角色和关系。
+  这些属性和 <code>class</code> 一样，是界面的一部分，所以原型阶段就写上：
+</p>
+
+<div class="code" data-lang="html" data-file="静态原型（结构）"><pre>
+&lt;div class="ac"&gt;
+  &lt;input role="combobox" aria-autocomplete="list" aria-expanded="true"
+         aria-controls="ac-list" aria-activedescendant="ac-list-1" value="耳机"&gt;
+  &lt;div class="ac-pop"&gt;
+    &lt;ul id="ac-list" role="listbox"&gt;
+      &lt;li id="ac-list-0" role="option" aria-selected="false"&gt;降噪&lt;mark&gt;耳机&lt;/mark&gt;&lt;/li&gt;
+      &lt;li id="ac-list-1" role="option" aria-selected="true" class="active"&gt;运动&lt;mark&gt;耳机&lt;/mark&gt;&lt;/li&gt;
+      &lt;li id="ac-list-2" role="option" aria-selected="false"&gt;头戴式&lt;mark&gt;耳机&lt;/mark&gt;&lt;/li&gt;
+    &lt;/ul&gt;
+  &lt;/div&gt;
+  &lt;span class="sr-only" aria-live="polite"&gt;3 个结果，用上下键选择&lt;/span&gt;
+&lt;/div&gt;
+</pre></div>
+
+<div class="tw"><table>
+  <tr><th>原型里写死的值</th><th>将来从哪里来</th></tr>
+  <tr><td><code>value="耳机"</code></td><td><code>query</code>（状态）</td></tr>
+  <tr><td><code>aria-expanded="true"</code>、弹出层显示</td><td><code>showList</code>（派生）</td></tr>
+  <tr><td><code>aria-activedescendant="ac-list-1"</code>、<code>class="active"</code>、<code>aria-selected</code></td><td><code>activeIndex</code> / <code>activeId</code></td></tr>
+  <tr><td><code>id="ac-list"</code></td><td><code>useId()</code>：页面上有两个补全框时，id 不能重复</td></tr>
+  <tr><td>三个 <code>&lt;li&gt;</code></td><td><code>result.items</code></td></tr>
+  <tr><td><code>&lt;mark&gt;耳机&lt;/mark&gt;</code></td><td>按 <code>query</code> 切分 label 的派生数据</td></tr>
+  <tr><td>“3 个结果，用上下键选择”</td><td>由 <code>result</code> 派生的播报文字</td></tr>
+</table></div>
+
+<p>
+  注意 <code>aria-activedescendant</code>：键盘高亮时，<strong>焦点始终留在输入框里</strong>（用户还要继续打字），只是通过这个属性告诉屏幕阅读器“现在指向的是哪一项”。
+  所以高亮项是一个纯粹的状态，而不是浏览器的焦点。
+</p>
+
+<h2 id="impl">第 5 步：逐步实现</h2>
+
+<h3 id="s1">5.1 能搜、能选（朴素版）</h3>
+<div class="flow"><span>需求：输入就搜，点击选中</span><i>→</i><span class="on">设计卡 v1</span><i>→</i><span>代码</span></div>
+
+<p>“query 变化 → 调用 search”是一个副作用，最直接的写法是 <code>watch</code>：</p>
+
+<div class="code" data-lang="js" data-file="AutoComplete.vue（5.1 朴素版，节选）"><pre>
+const query = ref('')
+const items = ref([])
+
+watch(query, async (q) =&gt; {
+  if (q.trim().length &lt; props.minLength) return (items.value = [])
+  items.value = await props.search(q.trim())
+})
+</pre></div>
+
+<p>本机测试一切正常。然后在网络面板里把网速调成 “Slow 3G”，快速输入 “erji” 四个字母，会撞上两堵墙。</p>
+
+<h3 id="wall1">撞墙一：每敲一个字，发一个请求</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="防抖时间线：没有防抖时每次按键都发请求；有防抖时，只在停止输入 300 毫秒后发一次请求">
+  <text class="sm" x="20" y="30">按键</text>
+  <path class="ln" d="M90 26 H740"/>
+  <g class="sm" style="fill:var(--fg)">
+    <circle cx="120" cy="26" r="5" class="bx-a"/><text class="sm" x="120" y="48" text-anchor="middle">e</text>
+    <circle cx="200" cy="26" r="5" class="bx-a"/><text class="sm" x="200" y="48" text-anchor="middle">r</text>
+    <circle cx="270" cy="26" r="5" class="bx-a"/><text class="sm" x="270" y="48" text-anchor="middle">j</text>
+    <circle cx="350" cy="26" r="5" class="bx-a"/><text class="sm" x="350" y="48" text-anchor="middle">i</text>
+  </g>
+  <text class="halo sm" x="560" y="30" text-anchor="middle">（停下来，等结果）</text>
+
+  <text class="ttl on-r" x="20" y="96">无防抖</text>
+  <path class="ln" d="M90 92 H740"/>
+  <rect class="bx-r" x="120" y="80" width="60" height="24" rx="5"/><text class="sm on-r" x="150" y="96" text-anchor="middle">e</text>
+  <rect class="bx-r" x="200" y="80" width="60" height="24" rx="5"/><text class="sm on-r" x="230" y="96" text-anchor="middle">er</text>
+  <rect class="bx-r" x="270" y="80" width="70" height="24" rx="5"/><text class="sm on-r" x="305" y="96" text-anchor="middle">erj</text>
+  <rect class="bx-r" x="350" y="80" width="70" height="24" rx="5"/><text class="sm on-r" x="385" y="96" text-anchor="middle">erji</text>
+  <text class="halo sm on-r" x="440" y="96">4 个请求，前 3 个的结果没人要</text>
+
+  <text class="ttl on-a" x="20" y="160">防抖 300ms</text>
+  <path class="ln" d="M90 156 H740"/>
+  <path class="ln-d" d="M120 140 H200 M200 140 H270 M270 140 H350"/>
+  <path class="ln-a" d="M350 140 H650" style="stroke-dasharray:4 3"/>
+  <text class="halo sm on-a" x="500" y="136" text-anchor="middle">300ms 内没有新按键</text>
+  <rect class="bx-a" x="650" y="144" width="80" height="24" rx="5"/><text class="sm on-a" x="690" y="160" text-anchor="middle">erji</text>
+  <text class="sm" x="235" y="190" text-anchor="middle">每次按键都把计时器重新开始</text>
+  <text class="sm on-a" x="690" y="190" text-anchor="middle">只发 1 个</text>
+</svg>
+<figcaption>图 4-4　防抖：等用户停下来再搜</figcaption>
+</figure>
+
+<p>
+  <strong>防抖（debounce）</strong>的规则是：事件发生后先等一段时间，这段时间里又发生了，就重新计时；直到安静下来才真正执行。
+  它既减少了服务器压力，也避免了结果列表跟着每次按键闪来闪去。
+</p>
+
+<h3 id="wall2">撞墙二：结果和输入对不上</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 236" role="img" aria-label="竞态时间线：先发出的请求 A 很慢，后发出的请求 B 很快；B 先显示，随后 A 返回把正确结果覆盖掉">
+  <text class="sm" x="20" y="34">时间 →</text>
+  <path class="ln" d="M90 30 H740" marker-end="url(#ar)"/>
+
+  <text class="ttl" x="20" y="80">请求 A</text>
+  <rect class="bx" x="120" y="64" width="460" height="26" rx="5"/>
+  <text class="sm" x="130" y="82" style="fill:var(--fg)">搜 “er”（发出早，但很慢：1.2 秒）</text>
+  <text class="ttl" x="20" y="130">请求 B</text>
+  <rect class="bx-a" x="260" y="114" width="180" height="26" rx="5"/>
+  <text class="sm on-a" x="270" y="132">搜 “erji”（0.4 秒）</text>
+
+  <path class="ln-a" d="M440 140 V176" marker-end="url(#ar-a)"/>
+  <text class="sm on-a" x="440" y="194" text-anchor="middle">显示 erji 的结果 ✓</text>
+  <path class="ln-r" d="M580 90 V176" marker-end="url(#ar)"/>
+  <text class="sm on-r" x="600" y="194" text-anchor="middle">又被 er 的结果覆盖 ✗</text>
+  <text class="sm" x="380" y="226" text-anchor="middle">最终：输入框里是 “erji”，列表显示的却是 “er” 的结果</text>
+</svg>
+<figcaption>图 4-5　竞态：请求的返回顺序不等于发出顺序</figcaption>
+</figure>
+
+<p>
+  防抖能减少这种情况，但不能消灭它：用户打字慢一点（每个字间隔超过 300ms），请求照样一个接一个发出去。
+  网络请求的返回顺序没有任何保证，<strong>后发的请求可能先回来</strong>。这就是<strong>竞态</strong>（race condition）。
+  后端也有竞态，但通常是两个请求同时改数据库；前端的竞态是“旧数据覆盖新数据”，表现为界面显示错误的内容。
+</p>
+
+<h3 id="s2">5.2 一个 onCleanup，同时解决防抖和竞态</h3>
+<div class="flow"><span>问题：请求太多、结果错乱</span><i>→</i><span class="on">改副作用格</span><i>→</i><span>代码</span></div>
+
+<p>
+  两个问题看起来不同，本质上却是一件事：<strong>关键字一变，上一次的副作用就该作废</strong>。
+  还没到时间的定时器取消掉，就是防抖；已经发出的请求作废掉，就是竞态保护。
+  回想番茄钟：<code>watch</code> 的 <code>onCleanup</code> 会在“下一次回调执行之前”被调用，正是做这件事的地方：
+</p>
+
+<div class="code" data-lang="js" data-file="src/composables/useSearch.js"><pre>
+import { shallowRef, ref, watch, toValue } from 'vue'
+
+/**
+ * 根据关键字搜索，自带防抖和竞态保护。
+ * @param query   关键字（ref 或 getter）
+ * @param search  (query, { signal }) =&gt; Item[] | Promise&lt;Item[]&gt;
+ * @returns state  { status: 'idle' | 'loading' | 'success' | 'error', items, error } 以及 retry()
+ */
+export function useSearch(query, search, { debounce = 300, minLength = 1 } = {}) {
+  const state = shallowRef({ status: 'idle', items: [], error: '' })
+  const attempt = ref(0) // 点“重试”时加一，让下面的 watch 重新执行
+
+  watch(
+    [() =&gt; toValue(query).trim(), () =&gt; toValue(debounce), () =&gt; toValue(minLength), attempt],
+    ([q, wait, min], _old, onCleanup) =&gt; {
+      if (q.length &lt; min) {
+        state.value = { status: 'idle', items: [], error: '' }
+        return
+      }
+      // 加载中保留上一次的结果，列表不会闪一下变空
+      state.value = { ...state.value, status: 'loading' }
+
+      const ctrl = new AbortController()
+      const timer = setTimeout(async () =&gt; {
+        try {
+          const items = await search(q, { signal: ctrl.signal })
+          if (!ctrl.signal.aborted) state.value = { status: 'success', items, error: '' }
+        } catch (e) {
+          if (!ctrl.signal.aborted) state.value = { status: 'error', items: [], error: e.message }
+        }
+      }, wait)
+
+      // 关键字再变（或组件卸载）时：没到点的定时器取消 = 防抖；已发出的请求作废 = 竞态保护
+      onCleanup(() =&gt; {
+        clearTimeout(timer)
+        ctrl.abort()
+      })
+    },
+    { immediate: true },
+  )
+
+  return { state, retry: () =&gt; attempt.value++ }
+}
+</pre></div>
+
+<p>几个细节：</p>
+<ul>
+  <li><strong><code>AbortController</code></strong>：浏览器内置的“取消令牌”。把 <code>signal</code> 传给 <code>fetch(url, { signal })</code>，调用 <code>abort()</code> 后请求真的会被取消，连网络流量都省了。
+    即使 <code>search</code> 函数不支持取消，<code>if (!ctrl.signal.aborted)</code> 这一句也保证了旧结果不会写进状态。</li>
+  <li><strong>加载中保留旧结果</strong>：<code>status</code> 变成 <code>loading</code> 时 <code>items</code> 不清空，列表变淡显示。否则每敲一个字列表就闪一下变空，体验很差。这又是一个需要明确做出的设计决定。</li>
+  <li><strong><code>shallowRef</code></strong>：<code>state</code> 每次都整体替换，从不修改内部字段，用 <code>shallowRef</code> 就够了，省去把结果数组深层转成响应式的开销。</li>
+  <li><strong><code>toValue</code></strong>：参数既可以是 ref，也可以是 getter 函数，组合式函数因此更好用。组件里传的是 <code>() =&gt; props.debounce</code>，这样 prop 变了也能生效。</li>
+  <li><strong>重试</strong>：<code>attempt</code> 是一个只为“让 watch 再跑一次”而存在的状态，点“重试”时加一。</li>
+</ul>
+
+<div class="box tip">
+  <div class="t">“取消上一次”是前端最常见的副作用模式</div>
+  <p>
+    番茄钟里的定时器、这里的搜索请求，以后的 WebSocket 订阅、事件监听，都是同一个模式：<strong>副作用跟着某个状态走；状态变了，先清理旧的，再启动新的</strong>。
+    用 <code>watch</code> + <code>onCleanup</code> 写，启动和清理写在一起，永远不会忘。
+  </p>
+</div>
+
+<h3 id="s3">5.3 键盘：高亮项存 key，不存下标</h3>
+<div class="flow"><span>需求：上下键、回车、Esc</span><i>→</i><span class="on">修改设计卡</span><i>→</i><span>代码</span></div>
+
+<p>
+  照着图 4-3 写键盘处理很直接。但设计卡 v1 里的 <code>activeIndex</code> 有个隐患：用户按 ↓ 高亮了第 2 项“运动耳机”，这时新的搜索结果回来了，
+  列表变了，第 2 项变成了别的商品，高亮却还停在“第 2 个位置”。用户按回车，选中的不是他看到的那一项。
+</p>
+
+<p>
+  这个问题记账本里见过：<strong>引用一个东西，要用它的 id，而不是它的位置</strong>。把状态改成 <code>activeKey</code>，下标由它派生：
+</p>
+
+<div class="dcard">
+  <div class="title">设计卡 v2 · 高亮项<small>修改第一处</small></div>
+  <div class="st"><h5>状态</h5><pre><del>activeIndex  高亮第几项</del>
+<ins>activeKey    高亮项的 key（itemKey 字段的值）</ins></pre></div>
+  <div class="dv"><h5>派生</h5><pre><ins>activeIndex = items 中 key 等于 activeKey 的下标</ins>
+<ins>（新结果里没有它时，自动为 −1）</ins></pre></div>
+  <div class="ev"><h5>事件</h5><pre>↓ / ↑ → 由 activeIndex 算出下一个下标，
+        <ins>activeKey = 那一项的 key</ins></pre></div>
+  <div class="fx"><h5>副作用</h5><pre>不变</pre></div>
+</div>
+
+<div class="code" data-lang="js" data-file="AutoComplete.vue（键盘部分）"><pre>
+const activeKey = ref(null)
+const activeIndex = computed(() =&gt; items.value.findIndex((it) =&gt; keyOf(it) === activeKey.value))
+
+function move(delta) {
+  if (!open.value) return void (open.value = true)
+  const n = items.value.length
+  if (!n) return
+  const i = activeIndex.value
+  const next = i === -1 ? (delta &gt; 0 ? 0 : n - 1) : (i + delta + n) % n
+  activeKey.value = keyOf(items.value[next])
+}
+
+function onKeydown(e) {
+  switch (e.key) {
+    case 'ArrowDown':
+      e.preventDefault() // 否则光标会跳到行首 / 行尾
+      move(1)
+      break
+    case 'ArrowUp':
+      e.preventDefault()
+      move(-1)
+      break
+    case 'Enter':
+      if (showList.value &amp;&amp; activeIndex.value &gt;= 0) {
+        e.preventDefault() // 别让外层表单提交
+        choose(items.value[activeIndex.value])
+      }
+      break
+    case 'Escape':
+      if (showList.value) open.value = false // 第一次：关列表
+      else if (query.value) { query.value = ''; model.value = null } // 第二次：清空
+      break
+  }
+}
+</pre></div>
+
+<p>
+  注意 <code>preventDefault</code> 的位置：只在<strong>组件真正处理了</strong>这个按键时才阻止默认行为。没有高亮项时按回车，就让它照常提交外层的表单。
+  组件不应该吞掉它不处理的事件。
+</p>
+
+<h3 id="s4">5.4 鼠标与焦点：事件的顺序</h3>
+<div class="flow"><span>需求：点别处关闭、点选项选中</span><i>→</i><span class="on">设计卡事件格</span><i>→</i><span>代码</span></div>
+
+<p>
+  “失焦时关闭列表”和“点击选项时选中”分开看都没问题，放在一起就有 bug：点击选项后，什么也没选上，列表直接关了。原因在于浏览器的事件顺序：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="事件顺序：在选项上按下鼠标时，先触发 mousedown，接着输入框 blur 关闭了列表，等到 click 触发时选项已经不存在；解决办法是在 mousedown 上阻止默认行为">
+  <text class="ttl on-r" x="20" y="32">✗ 用 @click 选中</text>
+  <rect class="bx" x="20" y="44" width="150" height="34" rx="6"/><text class="sm" x="95" y="65" text-anchor="middle" style="fill:var(--fg)">mousedown（选项上）</text>
+  <path class="ln" d="M170 61 H206" marker-end="url(#ar)"/>
+  <rect class="bx-r" x="210" y="44" width="200" height="34" rx="6"/><text class="sm on-r" x="310" y="65" text-anchor="middle">input blur → open = false</text>
+  <path class="ln" d="M410 61 H446" marker-end="url(#ar)"/>
+  <rect class="bx" x="450" y="44" width="110" height="34" rx="6"/><text class="sm" x="505" y="65" text-anchor="middle" style="fill:var(--fg)">mouseup</text>
+  <path class="ln" d="M560 61 H596" marker-end="url(#ar)"/>
+  <rect class="bx-d" x="600" y="44" width="140" height="34" rx="6"/><text class="sm" x="670" y="65" text-anchor="middle">click：选项已隐藏</text>
+
+  <text class="ttl on-a" x="20" y="124">✓ 用 @mousedown.prevent 选中</text>
+  <rect class="bx-a" x="20" y="136" width="300" height="34" rx="6"/><text class="sm on-a" x="170" y="157" text-anchor="middle">mousedown：preventDefault 阻止输入框失焦</text>
+  <path class="ln-a" d="M320 153 H356" marker-end="url(#ar-a)"/>
+  <rect class="bx-a" x="360" y="136" width="200" height="34" rx="6"/><text class="sm on-a" x="460" y="157" text-anchor="middle">直接 choose(item)</text>
+  <text class="sm" x="580" y="157">焦点还在输入框里</text>
+  <text class="sm" x="380" y="192" text-anchor="middle">“重试”按钮也是同样的写法</text>
+</svg>
+<figcaption>图 4-6　blur 比 click 先发生</figcaption>
+</figure>
+
+<p>
+  在选项的 <code>mousedown</code> 上调用 <code>preventDefault()</code>，浏览器就不会把焦点从输入框移走，<code>blur</code> 不会触发；直接在 <code>mousedown</code> 里完成选择。
+  好处还有一个：选完之后焦点仍在输入框里，用户可以接着打字。Vue 的写法是 <code>@mousedown.prevent="choose(item)"</code>。
+</p>
+
+<h3 id="s5">5.5 高亮：返回数据，不返回 HTML</h3>
+
+<p>
+  关键字标黄，最容易想到的写法是用正则把关键字替换成 <code>&lt;mark&gt;耳机&lt;/mark&gt;</code>，再用 <code>v-html</code> 渲染。<strong>不要这样做。</strong>
+  商品名来自服务器，如果某个商品名是 <code>&lt;img src=x onerror=alert(1)&gt;</code>，<code>v-html</code> 就会执行它，这就是 XSS。
+  另外，关键字里如果有 <code>(</code>、<code>+</code> 这些正则特殊字符，正则会直接报错。
+</p>
+<p>更好的做法是写一个纯函数，把文本切成“命中 / 未命中”的片段数组，渲染交给模板，Vue 会自动转义：</p>
+
+<div class="code" data-lang="js" data-file="src/lib/highlight.js"><pre>
+/**
+ * 把文本按关键字切成若干段，标出哪些段是命中的（不区分大小写，所有出现都标出）。
+ * 返回数据而不是 HTML 字符串：渲染交给模板，永远不需要 v-html。
+ *   splitByQuery('降噪耳机', '耳机') → [{ text: '降噪', hit: false }, { text: '耳机', hit: true }]
+ */
+export function splitByQuery(text, query) {
+  const q = query.trim().toLowerCase()
+  if (!q) return [{ text, hit: false }]
+  const lower = text.toLowerCase()
+  const parts = []
+  let from = 0
+  for (let i = lower.indexOf(q); i !== -1; i = lower.indexOf(q, from)) {
+    if (i &gt; from) parts.push({ text: text.slice(from, i), hit: false })
+    parts.push({ text: text.slice(i, i + q.length), hit: true })
+    from = i + q.length
+  }
+  if (from &lt; text.length) parts.push({ text: text.slice(from), hit: false })
+  return parts
+}
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="src/components/HighlightText.vue"><pre>
+&lt;script setup&gt;
+import { computed } from 'vue'
+import { splitByQuery } from '../lib/highlight'
+
+const props = defineProps({ text: { type: String, required: true }, query: { type: String, default: '' } })
+const parts = computed(() =&gt; splitByQuery(props.text, props.query))
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;span&gt;&lt;template v-for="(p, i) in parts" :key="i"&gt;&lt;mark v-if="p.hit"&gt;{{ p.text }}&lt;/mark&gt;&lt;template v-else&gt;{{ p.text }}&lt;/template&gt;&lt;/template&gt;&lt;/span&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="box dj">
+  <div class="t">Django 对照</div>
+  <p>
+    Django 模板默认自动转义，<code>{{ name }}</code> 里的 <code>&lt;</code> 会变成 <code>&amp;lt;</code>；你只有在写 <code>mark_safe()</code> 或 <code>|safe</code> 时才需要提心吊胆。
+    Vue 一样：<code>{{ }}</code> 自动转义，<code>v-html</code> 就是 <code>|safe</code>。规则也一样：<strong>来自用户或服务器的数据，永远不要拼进 HTML 字符串</strong>。
+  </p>
+</div>
+
+<h3 id="s6">5.6 无障碍</h3>
+
+<p>第 4 步的原型里已经写好了 ARIA 结构，这里把它们和状态连起来：</p>
+
+<div class="tw"><table>
+  <tr><th>属性</th><th>绑定</th><th>告诉屏幕阅读器</th></tr>
+  <tr><td><code>role="combobox"</code></td><td>固定</td><td>这是一个带弹出列表的输入框</td></tr>
+  <tr><td><code>aria-expanded</code></td><td><code>showList</code></td><td>列表现在开着没有</td></tr>
+  <tr><td><code>aria-controls</code></td><td><code>listId</code></td><td>弹出的是哪个列表</td></tr>
+  <tr><td><code>aria-activedescendant</code></td><td><code>activeId</code></td><td>键盘现在指向哪一项（焦点仍在输入框）</td></tr>
+  <tr><td><code>role="option"</code> + <code>aria-selected</code></td><td><code>i === activeIndex</code></td><td>每一项是一个选项，哪个被指向</td></tr>
+  <tr><td><code>aria-live="polite"</code> 区域</td><td><code>liveText</code></td><td>“5 个结果，用上下键选择”这类不打断用户的播报</td></tr>
+</table></div>
+
+<p>
+  id 用 Vue 3.5 的 <code>useId()</code> 生成：它保证同一页面上多个组件实例的 id 不重复，服务端渲染时前后端生成的 id 也一致。
+  <strong>无障碍属性同样是派生数据</strong>，它们和 <code>class</code> 一样由状态决定，不需要额外维护。
+</p>
+
+<h3 id="s7">5.7 输入框文字和选中值：两份相关的状态</h3>
+<div class="flow"><span>问题：文字和 v-model 对不上</span><i>→</i><span class="on">修改第二、三处</span><i>→</i><span>代码</span></div>
+
+<p>
+  补全框天生有两份相关的状态：组件内部的 <code>query</code>（输入框里的字）和外部的 <code>v-model</code>（选中的项）。它们必须保持一致：
+</p>
+<ul>
+  <li>用户选中“降噪耳机”后，又把文字改成“降噪”：原来的选择不再成立，<code>onInput</code> 里把 v-model 置为 <code>null</code>。</li>
+  <li>父组件把 v-model 设成 <code>null</code>（比如点了“清空”）：输入框也要清空。但如果用户正在输入，就不能清掉他的字，所以加了 <code>!open.value</code> 的判断。</li>
+</ul>
+
+<div class="code" data-lang="js"><pre>
+watch(model, (m) =&gt; {
+  if (m) query.value = labelOf(m)
+  else if (!open.value) query.value = '' // 用户正在输入时不要清掉他的字
+})
+</pre></div>
+
+<p>
+  还有一个坑，是我写这个示例时自己踩到的：选中一项后，<code>query</code> 被回填成“头戴式耳机”，而 <code>query</code> 一变，搜索的 <code>watch</code> 就又发了一个请求，虽然列表已经关了，根本没人看结果。
+  问题出在设计卡 v1 的副作用格：<strong>“query 变化就搜索”并不准确，应该是“用户在看列表时，按输入的文字搜索”</strong>。把搜索的输入改成一个派生数据：
+</p>
+
+<div class="code" data-lang="js"><pre>
+// 只在列表打开时按输入搜索：选中后回填文字、按 Esc 关闭，都不会再发请求
+const searchText = computed(() =&gt; (open.value ? query.value : ''))
+const { state: result, retry } = useSearch(searchText, (q, opts) =&gt; props.search(q, opts), { /* … */ })
+</pre></div>
+
+<p>
+  列表关闭时 <code>searchText</code> 是空字符串，<code>useSearch</code> 进入 <code>idle</code>，顺带把还在路上的请求也作废了。
+  <strong>给副作用一个精确的输入</strong>，比在副作用里写一堆 <code>if</code> 判断更清楚。
+</p>
+
+<h2 id="change">第 6 步：需求变更演练</h2>
+
+<p>组件的需求变更有一个特别的检验标准：<strong>能不能只改使用者的代码，不改组件</strong>。</p>
+
+<h3 id="c1">变更一：后台要一个“选择城市”的输入框</h3>
+<p>
+  城市只有几十个，存在前端，不用请求。组件一行不改，使用者传一个同步的过滤函数，把防抖关掉：
+</p>
+<div class="code" data-lang="vue"><pre>
+&lt;script setup&gt;
+const city = ref(null)
+const searchCities = (q) =&gt; CITIES.filter((c) =&gt; c.name.includes(q) || c.py.startsWith(q.toLowerCase()))
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;AutoComplete v-model="city" :search="searchCities" item-key="code" item-label="name" :debounce="0" /&gt;
+&lt;/template&gt;
+</pre></div>
+<p>这就是第 2 步把 <code>search</code> 设计成“一个函数”的回报：如果当初设计的是 <code>url</code> 属性，现在就得给组件加一个 <code>options</code> 属性和一堆分支。</p>
+
+<h3 id="c2">变更二：每一项要显示图标和价格</h3>
+<p>同样不改组件。<code>#item</code> 插槽拿到 <code>item</code>、<code>query</code>、<code>active</code>，想怎么画就怎么画（见第 2 步的用法一）。</p>
+
+<h3 id="c3">变更三：输入框为空时，显示“最近搜索”</h3>
+<p>
+  看起来需要给组件加一个 <code>recent</code> 属性。其实不用：把 <code>minLength</code> 设成 0，组件在聚焦时就会用空字符串调用 <code>search</code>，
+  使用者在 <code>search</code> 里判断一下，关键字为空就返回最近搜索：
+</p>
+<div class="code" data-lang="js"><pre>
+const search = (q, opts) =&gt; (q ? searchProducts(q, opts) : recentPicks.value)
+// &lt;AutoComplete :search="search" :min-length="0" … /&gt;
+</pre></div>
+<p>示例工程的组件测试里专门有一条用例验证这个用法。<strong>接口少而正交，组合起来就能覆盖设计时没想到的需求。</strong></p>
+
+<h2 id="final">第 7 步：收尾</h2>
+
+<div class="code" data-lang="vue" data-file="src/components/AutoComplete.vue"><pre>
+&lt;script setup&gt;
+import { ref, computed, watch, nextTick, useId, useTemplateRef } from 'vue'
+import { useSearch } from '../composables/useSearch'
+import HighlightText from './HighlightText.vue'
+
+// ================= 接口：先站在使用者的角度设计 =================
+const model = defineModel({ default: null }) // 选中的那一项（对象），没选为 null
+const props = defineProps({
+  search: { type: Function, required: true }, // (query, { signal }) =&gt; Item[] | Promise&lt;Item[]&gt;
+  itemKey: { type: String, default: 'id' }, // 每一项的唯一标识字段
+  itemLabel: { type: String, default: 'label' }, // 显示和回填到输入框的字段
+  minLength: { type: Number, default: 1 },
+  debounce: { type: Number, default: 300 },
+  placeholder: { type: String, default: '' },
+})
+const emit = defineEmits(['select']) // 用户选中了一项（v-model 之外的“动作”通知）
+// 插槽：#item="{ item, query, active }"、#empty="{ query }"
+
+const keyOf = (item) =&gt; item[props.itemKey]
+const labelOf = (item) =&gt; item[props.itemLabel]
+
+// ================= 状态 =================
+const query = ref(model.value ? labelOf(model.value) : '') // 输入框里的文字
+const open = ref(false) // 用户是否“想看”列表
+const activeKey = ref(null) // 键盘 / 鼠标高亮的那一项的 key（存 key 不存下标）
+
+// 只在列表打开时按输入搜索：选中后回填文字、按 Esc 关闭，都不会再发请求
+const searchText = computed(() =&gt; (open.value ? query.value : ''))
+const { state: result, retry } = useSearch(searchText, (q, opts) =&gt; props.search(q, opts), {
+  debounce: () =&gt; props.debounce,
+  minLength: () =&gt; props.minLength,
+})
+
+// ================= 派生 =================
+const items = computed(() =&gt; result.value.items)
+// 新结果里没有原来高亮的那一项时，自动变成 -1，不需要额外同步
+const activeIndex = computed(() =&gt; items.value.findIndex((it) =&gt; keyOf(it) === activeKey.value))
+const showList = computed(() =&gt; open.value &amp;&amp; query.value.trim().length &gt;= props.minLength)
+const listId = useId()
+const optionId = (i) =&gt; `${listId}-${i}`
+const activeId = computed(() =&gt; (activeIndex.value &gt;= 0 ? optionId(activeIndex.value) : undefined))
+// 给屏幕阅读器的播报
+const liveText = computed(() =&gt; {
+  if (!showList.value) return ''
+  if (result.value.status === 'success') return items.value.length ? `${items.value.length} 个结果，用上下键选择` : '没有结果'
+  if (result.value.status === 'error') return '搜索出错'
+  return ''
+})
+
+// ================= 事件 =================
+function onInput(e) {
+  query.value = e.target.value
+  open.value = true
+  activeKey.value = null
+  if (model.value) model.value = null // 文字改了，原来的选择就不再成立
+}
+function move(delta) {
+  if (!open.value) return void (open.value = true)
+  const n = items.value.length
+  if (!n) return
+  const i = activeIndex.value
+  const next = i === -1 ? (delta &gt; 0 ? 0 : n - 1) : (i + delta + n) % n
+  activeKey.value = keyOf(items.value[next])
+}
+function choose(item) {
+  model.value = item
+  query.value = labelOf(item)
+  open.value = false
+  activeKey.value = null
+  emit('select', item)
+}
+function onKeydown(e) {
+  switch (e.key) {
+    case 'ArrowDown':
+      e.preventDefault() // 否则光标会跳到行首 / 行尾
+      move(1)
+      break
+    case 'ArrowUp':
+      e.preventDefault()
+      move(-1)
+      break
+    case 'Enter':
+      if (showList.value &amp;&amp; activeIndex.value &gt;= 0) {
+        e.preventDefault() // 别让外层表单提交
+        choose(items.value[activeIndex.value])
+      }
+      break
+    case 'Escape':
+      if (showList.value) open.value = false // 第一次：关列表
+      else if (query.value) { query.value = ''; model.value = null } // 第二次：清空
+      break
+  }
+}
+
+// ================= 副作用 =================
+// 外部改了 v-model（比如父组件点了“清空”）：让输入框跟上
+watch(model, (m) =&gt; {
+  if (m) query.value = labelOf(m)
+  else if (!open.value) query.value = '' // 用户正在输入时不要清掉他的字
+})
+// 键盘高亮的项滚动到可见区域
+const listEl = useTemplateRef('list')
+watch(activeIndex, async (i) =&gt; {
+  await nextTick()
+  if (i &gt;= 0) listEl.value?.children[i]?.scrollIntoView({ block: 'nearest' })
+})
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="ac"&gt;
+    &lt;input :value="query" role="combobox" aria-autocomplete="list" :aria-expanded="showList"
+           :aria-controls="listId" :aria-activedescendant="activeId" :placeholder="placeholder"
+           autocomplete="off" @input="onInput" @keydown="onKeydown" @focus="open = true" @blur="open = false"&gt;
+    &lt;span v-if="result.status === 'loading' &amp;&amp; showList" class="ac-spin" aria-hidden="true" /&gt;
+
+    &lt;div v-show="showList" class="ac-pop"&gt;
+      &lt;ul :id="listId" ref="list" role="listbox" :class="{ stale: result.status === 'loading' }"&gt;
+        &lt;!-- mousedown.prevent：阻止输入框失焦，否则 blur 先关掉列表，click 就点空了 --&gt;
+        &lt;li v-for="(item, i) in items" :id="optionId(i)" :key="keyOf(item)" role="option"
+            :aria-selected="i === activeIndex" :class="{ active: i === activeIndex }"
+            @mousedown.prevent="choose(item)" @mousemove="activeKey = keyOf(item)"&gt;
+          &lt;slot name="item" :item="item" :query="query" :active="i === activeIndex"&gt;
+            &lt;HighlightText :text="labelOf(item)" :query="query" /&gt;
+          &lt;/slot&gt;
+        &lt;/li&gt;
+      &lt;/ul&gt;
+      &lt;p v-if="!items.length &amp;&amp; result.status === 'loading'" class="ac-msg"&gt;搜索中…&lt;/p&gt;
+      &lt;p v-else-if="result.status === 'error'" class="ac-msg err"&gt;
+        {{ result.error }} &lt;button type="button" @mousedown.prevent="retry"&gt;重试&lt;/button&gt;
+      &lt;/p&gt;
+      &lt;p v-else-if="!items.length &amp;&amp; result.status === 'success'" class="ac-msg"&gt;
+        &lt;slot name="empty" :query="query.trim()"&gt;没有找到“{{ query.trim() }}”&lt;/slot&gt;
+      &lt;/p&gt;
+    &lt;/div&gt;
+    &lt;span class="sr-only" aria-live="polite"&gt;{{ liveText }}&lt;/span&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<h3 id="test">只通过接口测试组件</h3>
+
+<p>
+  组件的测试应该像使用者那样使用它：传 props、模拟输入和按键，检查渲染出来的 DOM 和发出的事件，<strong>不读内部变量</strong>。
+  这样重构内部实现（比如把 <code>activeIndex</code> 改成 <code>activeKey</code>）时，测试一条都不用改，反而能证明重构没有破坏行为。
+  防抖和竞态这类和时间有关的逻辑，用 <code>vi.useFakeTimers()</code> 控制时间，用手动 resolve 的 Promise 控制请求返回的顺序：
+</p>
+
+<div class="code" data-lang="js" data-file="src/components/AutoComplete.test.js"><pre>
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
+import AutoComplete from './AutoComplete.vue'
+
+const ITEMS = [{ id: 1, label: '苹果' }, { id: 2, label: '香蕉' }, { id: 3, label: '橙子' }]
+
+// 只通过“接口”测试组件：给 props、模拟用户操作、检查渲染结果和发出的事件，不碰内部变量
+function setup(search = vi.fn(async () =&gt; ITEMS), props = {}) {
+  const wrapper = mount(AutoComplete, { props: { search, ...props }, attachTo: document.body })
+  return { wrapper, search, input: wrapper.get('input') }
+}
+const flush = async (ms = 300) =&gt; {
+  await vi.advanceTimersByTimeAsync(ms)
+  await nextTick()
+}
+
+beforeEach(() =&gt; vi.useFakeTimers())
+afterEach(() =&gt; vi.useRealTimers())
+
+describe('AutoComplete', () =&gt; {
+  it('防抖：快速输入只在停顿后搜索一次', async () =&gt; {
+    const { input, search } = setup()
+    for (const v of ['苹', '苹果', '苹果汁']) {
+      await input.setValue(v)
+      await flush(100)
+    }
+    expect(search).not.toHaveBeenCalled()
+    await flush(300)
+    expect(search).toHaveBeenCalledTimes(1)
+    expect(search.mock.calls[0][0]).toBe('苹果汁')
+  })
+
+  it('竞态：先发后到的旧结果不会覆盖新结果', async () =&gt; {
+    const pending = []
+    const search = vi.fn((q) =&gt; new Promise((resolve) =&gt; pending.push({ q, resolve })))
+    const { wrapper, input } = setup(search)
+    await input.setValue('a'); await flush()
+    await input.setValue('ab'); await flush()
+    pending[1].resolve([{ id: 9, label: 'ab 的结果' }]) // 新请求先回来
+    pending[0].resolve([{ id: 8, label: 'a 的结果' }]) // 旧请求后回来
+    await flush(0)
+    expect(wrapper.findAll('[role=option]').map((o) =&gt; o.text())).toEqual(['ab 的结果'])
+  })
+
+  it('键盘：上下键移动高亮，回车选中', async () =&gt; {
+    const { wrapper, input } = setup()
+    await input.setValue('果'); await flush()
+    await input.trigger('keydown', { key: 'ArrowDown' })
+    await input.trigger('keydown', { key: 'ArrowDown' })
+    const active = input.attributes('aria-activedescendant')
+    expect(wrapper.get(`#${CSS.escape(active)}`).text()).toBe('香蕉')
+    await input.trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('update:modelValue').at(-1)).toEqual([ITEMS[1]])
+    expect(wrapper.emitted('select')[0]).toEqual([ITEMS[1]])
+    expect(input.element.value).toBe('香蕉')
+    expect(input.attributes('aria-expanded')).toBe('false')
+  })
+
+  it('Esc：第一次关闭列表，第二次清空', async () =&gt; {
+    const { input } = setup()
+    await input.setValue('果'); await flush()
+    expect(input.attributes('aria-expanded')).toBe('true')
+    await input.trigger('keydown', { key: 'Escape' })
+    expect(input.attributes('aria-expanded')).toBe('false')
+    expect(input.element.value).toBe('果')
+    await input.trigger('keydown', { key: 'Escape' })
+    expect(input.element.value).toBe('')
+  })
+
+  it('选中后再改文字，v-model 变回 null', async () =&gt; {
+    const { wrapper, input } = setup(undefined, { modelValue: ITEMS[0] })
+    expect(input.element.value).toBe('苹果')
+    await input.setValue('苹')
+    expect(wrapper.emitted('update:modelValue').at(-1)).toEqual([null])
+  })
+
+  it('出错时显示错误，点重试会再搜一次', async () =&gt; {
+    const search = vi.fn().mockRejectedValueOnce(new Error('网络错误')).mockResolvedValueOnce(ITEMS)
+    const { wrapper, input } = setup(search)
+    await input.setValue('果'); await flush()
+    expect(wrapper.text()).toContain('网络错误')
+    await wrapper.get('.ac-msg button').trigger('mousedown'); await flush()
+    expect(search).toHaveBeenCalledTimes(2)
+    expect(wrapper.findAll('[role=option]')).toHaveLength(3)
+  })
+
+  it('minLength 为 0 时，聚焦就会用空关键字调用 search（可用来显示“最近搜索”）', async () =&gt; {
+    const recent = [{ id: 7, label: '上次搜过的' }]
+    const search = vi.fn(async (q) =&gt; (q ? ITEMS : recent))
+    const { wrapper, input } = setup(search, { minLength: 0, debounce: 0 })
+    await input.trigger('focus'); await flush(0)
+    expect(search).toHaveBeenCalledWith('', expect.anything())
+    expect(wrapper.findAll('[role=option]').map((o) =&gt; o.text())).toEqual(['上次搜过的'])
+  })
+})
+</pre></div>
+
+<div class="code" data-lang="bash"><pre>
+npm test
+#  ✓ src/lib/highlight.test.js (5 tests)
+#  ✓ src/components/AutoComplete.test.js (7 tests)
+</pre></div>
+
+<div class="dcard">
+  <div class="title">AutoComplete · 设计卡（最终版）<small>对照 v1 看看变了哪些</small></div>
+  <div class="st" style="grid-column:1/-1;border-right:none"><h5 style="color:var(--purple)">接口</h5><pre>v-model: 选中项 | null　props: search(query, { signal }), itemKey, itemLabel, minLength, debounce, placeholder
+emit: select　插槽: #item { item, query, active }、#empty { query }</pre></div>
+  <div class="st"><h5>状态</h5><pre>query · open · activeKey
+result（由 useSearch 管理）
+  { status, items, error }</pre></div>
+  <div class="dv"><h5>派生</h5><pre>searchText = open ? query : ''
+items · activeIndex（由 activeKey 查）
+showList · listId / activeId · liveText
+高亮片段 = splitByQuery(label, query)</pre></div>
+  <div class="ev"><h5>事件</h5><pre>输入（并清空 v-model）· ↓ ↑ · 回车 · Esc 两段式
+mousedown.prevent 选中 · 聚焦 / 失焦 · 重试</pre></div>
+  <div class="fx"><h5>副作用</h5><pre>searchText 变化 → 防抖后搜索；onCleanup 取消定时器、作废请求
+activeIndex 变化 → 滚动到可见
+v-model 被外部修改 → 同步 query</pre></div>
+</div>
+
+<h2 id="launch">上线清单</h2>
+
+<div class="tw"><table>
+  <tr><th>方面</th><th>检查项</th></tr>
+  <tr><td>请求</td><td>防抖；旧请求作废（<code>AbortController</code>）；最少字符数；出错可重试；服务端也要限制返回条数</td></tr>
+  <tr><td>状态</td><td>空关键字、加载中、无结果、出错四种状态都有界面；加载中不闪烁</td></tr>
+  <tr><td>键盘</td><td>↑ ↓ 循环、回车选中、Esc 两段式、Tab 离开时关闭；不吞掉不处理的按键</td></tr>
+  <tr><td>鼠标与触屏</td><td>选项用 <code>mousedown.prevent</code>；移动端点击选项不会被软键盘收起打断；弹出层不被父元素的 <code>overflow: hidden</code> 裁掉（必要时用 <code>Teleport</code>）</td></tr>
+  <tr><td>无障碍</td><td>combobox / listbox / option 角色；<code>aria-expanded</code>、<code>aria-activedescendant</code>；<code>aria-live</code> 播报结果数；id 用 <code>useId()</code></td></tr>
+  <tr><td>安全</td><td>高亮不用 <code>v-html</code>；关键字不拼进正则</td></tr>
+  <tr><td>输入法</td><td>中文输入法拼写过程中会触发 <code>input</code> 事件，必要时用 <code>compositionstart</code> / <code>compositionend</code> 跳过拼写中的搜索（见练习）</td></tr>
+  <tr><td>测试</td><td>防抖、竞态、键盘、v-model 同步各一条组件测试；高亮函数单测</td></tr>
+</table></div>
+
+<h2 id="lib">自己写，还是用现成库</h2>
+
+<ul>
+  <li><strong>组件库的自动补全</strong>：Element Plus 的 <code>ElAutocomplete</code>（自由输入 + 建议）和 <code>ElSelect</code> 的 <code>filterable remote</code>（必须从列表里选），Naive UI 的 <code>NAutoComplete</code>、<code>NSelect</code> 都开箱即用，样式也和整套组件库统一。<strong>公司项目里优先用它们。</strong>
+    但要检查它们是否处理了竞态：有些组件只防抖、不作废旧请求，这时你的 <code>search</code> 函数里要自己用 <code>AbortController</code>。</li>
+  <li><strong>无样式（headless）组件</strong>：Reka UI（原 Radix Vue）、Headless UI 的 Combobox 只提供行为和无障碍，外观完全自己写。设计稿和组件库风格差别很大时，这是最好的选择。
+    它们的接口设计和本篇非常像，读一读它们的文档，会更理解本篇的取舍。</li>
+  <li><strong>工具函数</strong>：VueUse 的 <code>refDebounced</code>、<code>useDebounceFn</code> 可以替代手写的防抖；如果搜索结果需要缓存（同一个关键字不重复请求），用 TanStack Query，第 6 个项目会讲。</li>
+  <li><strong>值得自己写一遍的原因</strong>：防抖、竞态、焦点顺序、ARIA 这四个知识点，换到任何一个“输入 → 异步结果”的场景（筛选、校验用户名、地址联想）都会再遇到。</li>
+</ul>
+
+<h2 id="review">复盘</h2>
+
+<h3 id="quiz">判断题</h3>
+<div class="quiz">
+  <details><summary>为什么组件的 props 设计成一个 <code>search</code> 函数，而不是 <code>url</code> 字符串？</summary>
+    <p>组件不该知道接口地址、参数格式、鉴权方式、返回数据怎么解析，这些都是使用者的事。一个函数既能包装远程请求，也能是本地过滤，覆盖了两种用法。设计接口时问一句“谁知道这件事”。</p></details>
+  <details><summary>有了防抖，还需要处理竞态吗？</summary>
+    <p>需要。防抖只减少请求数量；用户打字稍慢（间隔超过防抖时间），请求照样会一个接一个发出，返回顺序依然没有保证。两者用同一个 <code>onCleanup</code> 解决：取消定时器、作废请求。</p></details>
+  <details><summary>高亮项为什么存 <code>activeKey</code> 而不是 <code>activeIndex</code>？</summary>
+    <p>列表会随搜索结果变化，下标指向的东西会变；key 指向的永远是同一项。新结果里没有这一项时，由 key 派生的下标自动变成 −1，不需要写任何同步代码。</p></details>
+  <details><summary>为什么选项用 <code>@mousedown.prevent</code> 而不是 <code>@click</code>？</summary>
+    <p>点击选项时，输入框的 <code>blur</code> 发生在 <code>click</code> 之前，blur 关闭了列表，click 就落空了。在 mousedown 上阻止默认行为，输入框不会失焦，直接完成选择，焦点也留在输入框里。</p></details>
+  <details><summary>使用者要在选中后跳转页面，应该 <code>watch</code> v-model 还是监听 <code>select</code> 事件？</summary>
+    <p>监听 <code>select</code>。v-model 的变化不一定来自用户的选择（比如父组件自己赋值、用户改文字时被置为 null），跳转应该响应“用户做了选择”这个动作。值是状态，动作是事件，不要用监听状态来模拟事件。</p></details>
+  <details><summary>为什么测试里不直接读组件内部的 <code>query</code>、<code>activeKey</code>？</summary>
+    <p>那是实现细节。测试应该像使用者一样只通过接口（props、DOM、事件）交互，这样重构内部时测试不用改，还能证明行为没变。本篇把 <code>activeIndex</code> 改成 <code>activeKey</code> 时，测试一条都没动。</p></details>
+</div>
+
+<h3 id="pitfalls">后端出身容易踩的坑</h3>
+<ul>
+  <li><strong>默认请求按顺序返回</strong>：同步代码里“先调用先返回”，网络请求不是。凡是“输入 → 请求 → 显示”的地方，都要想一想竞态。</li>
+  <li><strong>组件知道得太多</strong>：在组件里写死接口地址、数据字段。组件的边界是“交互”，业务留给使用者。</li>
+  <li><strong>用布尔属性扩展外观</strong>：需求一多就失控，用插槽。</li>
+  <li><strong>只考虑鼠标</strong>：键盘和屏幕阅读器用户同样是用户，很多公司的产品有无障碍合规要求。</li>
+  <li><strong>用 v-html 拼 HTML</strong>：和 Django 里滥用 <code>|safe</code> 一样危险。</li>
+</ul>
+
+<div class="box key">
+  <div class="t">本篇新增的方法</div>
+  <ol>
+    <li>设计组件先写用法：接口是第五个格子，而且是第一个要填的格子。</li>
+    <li>按“谁知道什么”划分组件和使用者的职责；外观用插槽，行为用 props。</li>
+    <li>“上一次的副作用作废”：防抖、竞态、订阅，都用 <code>watch</code> + <code>onCleanup</code>。</li>
+    <li>给副作用一个精确的输入（派生数据），而不是在副作用里堆判断。</li>
+    <li>引用列表里的一项，存 key 不存下标。</li>
+    <li>交互控件先查 ARIA 模式，无障碍属性也是由状态派生的。</li>
+    <li>组件只通过接口测试；时间和顺序用假定时器、手动 Promise 控制。</li>
+  </ol>
+</div>
+
+<div class="exercise">
+  <h3>练习</h3>
+  <ol>
+    <li><strong>中文输入法</strong>：用拼音输入法打“耳机”时，拼写过程中的 “er”“erji” 也会触发搜索。监听 <code>compositionstart</code> / <code>compositionend</code>，拼写过程中不更新 <code>searchText</code>。这需要一个新状态吗？它属于哪一格？</li>
+    <li><strong>结果缓存</strong>：同一个关键字 1 分钟内不重复请求。缓存应该放在组件里、<code>useSearch</code> 里，还是使用者的 <code>search</code> 函数里？为什么？</li>
+    <li><strong>多选</strong>：做一个“选择多个标签”的版本，选中的项显示成输入框前面的小标签，退格键删除最后一个。v-model 变成什么？哪些逻辑可以复用 <code>useSearch</code>？</li>
+    <li><strong>受控的 query</strong>：有的使用者想拿到输入框的文字（比如回车时跳到搜索结果页）。设计一个 <code>v-model:query</code>，想一想它和内部的 <code>query</code> 状态是什么关系。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+<script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+<script>
+  if (window.Vue) {
+    const { createApp, ref, shallowRef, computed, watch, nextTick, toValue, useId, reactive } = Vue
+
+    // ---- 模拟接口（带请求记录） ----
+    const RAW = [['☕','手冲咖啡壶','shouchongkafeihu',12900],['☕','咖啡豆 · 埃塞俄比亚','kafeidou',8800],['☕','陶瓷咖啡杯','taocikafeibei',3900],
+      ['⚖️','咖啡电子秤','kafeidianzicheng',9900],['⌨️','机械键盘','jixiejianpan',39900],['⌨️','无线键盘','wuxianjianpan',19900],
+      ['🖱️','无线鼠标','wuxianshubiao',9900],['🎧','降噪耳机','jiangzaoerji',89900],['🎧','运动耳机','yundongerji',29900],
+      ['🎧','头戴式耳机','toudaishierji',49900],['🔈','蓝牙音箱','lanyayinxiang',19900],['👜','帆布托特包','fanbutuotebao',5900],
+      ['🎒','双肩电脑包','shuangjiandiannaobao',19900],['🪴','绿植盆栽','lvzhipenzai',3500],['📓','方格笔记本','fanggebijiben',1990],
+      ['📓','点阵笔记本','dianzhenbijiben',2490],['🖋️','钢笔','gangbi',15900],['💡','护眼台灯','huyantaideng',19900],
+      ['🔌','多口充电器','duokouchongdianqi',12900],['🔋','充电宝','chongdianbao',9900],['🧴','保温杯','baowenbei',8900]]
+    const PRODUCTS = RAW.map(([emoji, name, py, price], i) => ({ id: 'p' + (i + 1), emoji, name, py, price }))
+    const CITIES = [['110000','北京','beijing'],['310000','上海','shanghai'],['440100','广州','guangzhou'],['440300','深圳','shenzhen'],
+      ['330100','杭州','hangzhou'],['510100','成都','chengdu'],['500000','重庆','chongqing'],['320100','南京','nanjing'],
+      ['420100','武汉','wuhan'],['610100','西安','xian'],['320500','苏州','suzhou'],['340100','合肥','hefei']].map(([code, name, py]) => ({ code, name, py }))
+    const log = reactive([])
+    const slow = ref(false)
+    let seq = 0
+
+    // ---- useSearch：与示例工程相同，多了一个只为演示的 raceGuard 开关 ----
+    function useSearch(query, search, { debounce = 300, minLength = 1, raceGuard = true } = {}) {
+      const state = shallowRef({ status: 'idle', items: [], error: '' })
+      const attempt = ref(0)
+      watch([() => toValue(query).trim(), () => toValue(debounce), () => toValue(minLength), attempt], ([q, wait, min], _o, onCleanup) => {
+        if (q.length < min) { state.value = { status: 'idle', items: [], error: '' }; return }
+        state.value = { ...state.value, status: 'loading' }
+        const guard = toValue(raceGuard)
+        const ctrl = new AbortController()
+        const timer = setTimeout(async () => {
+          try {
+            const items = await search(q, { signal: guard ? ctrl.signal : undefined })
+            if (!guard || !ctrl.signal.aborted) {
+              state.value = { status: 'success', items, error: '' }
+              items.__entry && (items.__entry.applied = true)
+            }
+          } catch (e) {
+            if (!guard || !ctrl.signal.aborted) state.value = { status: 'error', items: [], error: e.message }
+          }
+        }, wait)
+        onCleanup(() => { clearTimeout(timer); if (guard) ctrl.abort() })
+      }, { immediate: true })
+      return { state, retry: () => attempt.value++ }
+    }
+
+    const HighlightText = {
+      props: { text: String, query: { type: String, default: '' } },
+      setup(props) {
+        const parts = computed(() => {
+          const q = props.query.trim().toLowerCase()
+          if (!q) return [{ text: props.text, hit: false }]
+          const lower = props.text.toLowerCase(), out = []
+          let from = 0
+          for (let i = lower.indexOf(q); i !== -1; i = lower.indexOf(q, from)) {
+            if (i > from) out.push({ text: props.text.slice(from, i), hit: false })
+            out.push({ text: props.text.slice(i, i + q.length), hit: true })
+            from = i + q.length
+          }
+          if (from < props.text.length) out.push({ text: props.text.slice(from), hit: false })
+          return out
+        })
+        return { parts }
+      },
+      template: `<span><template v-for="(p, i) in parts" :key="i"><mark v-if="p.hit">{{ p.text }}</mark><template v-else>{{ p.text }}</template></template></span>`,
+    }
+
+    const AutoComplete = {
+      components: { HighlightText },
+      props: {
+        modelValue: { default: null }, search: { type: Function, required: true },
+        itemKey: { type: String, default: 'id' }, itemLabel: { type: String, default: 'label' },
+        minLength: { type: Number, default: 1 }, debounce: { type: Number, default: 300 },
+        placeholder: String, raceGuard: { type: Boolean, default: true },
+      },
+      emits: ['update:modelValue', 'select'],
+      setup(props, { emit }) {
+        const keyOf = (it) => it[props.itemKey]
+        const labelOf = (it) => it[props.itemLabel]
+        const query = ref(props.modelValue ? labelOf(props.modelValue) : '')
+        const open = ref(false)
+        const activeKey = ref(null)
+        const searchText = computed(() => (open.value ? query.value : ''))
+        const { state: result, retry } = useSearch(searchText, (q, o) => props.search(q, o),
+          { debounce: () => props.debounce, minLength: () => props.minLength, raceGuard: () => props.raceGuard })
+        const items = computed(() => result.value.items)
+        const activeIndex = computed(() => items.value.findIndex((it) => keyOf(it) === activeKey.value))
+        const showList = computed(() => open.value && query.value.trim().length >= props.minLength)
+        const listId = useId()
+        const optionId = (i) => `${listId}-${i}`
+        const activeId = computed(() => (activeIndex.value >= 0 ? optionId(activeIndex.value) : undefined))
+        const listEl = ref(null)
+        const setModel = (v) => emit('update:modelValue', v)
+        function onInput(e) { query.value = e.target.value; open.value = true; activeKey.value = null; if (props.modelValue) setModel(null) }
+        function move(d) {
+          if (!open.value) return void (open.value = true)
+          const n = items.value.length
+          if (!n) return
+          const i = activeIndex.value
+          activeKey.value = keyOf(items.value[i === -1 ? (d > 0 ? 0 : n - 1) : (i + d + n) % n])
+        }
+        function choose(it) { setModel(it); query.value = labelOf(it); open.value = false; activeKey.value = null; emit('select', it) }
+        function onKeydown(e) {
+          if (e.key === 'ArrowDown') { e.preventDefault(); move(1) }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1) }
+          else if (e.key === 'Enter' && showList.value && activeIndex.value >= 0) { e.preventDefault(); choose(items.value[activeIndex.value]) }
+          else if (e.key === 'Escape') { if (showList.value) open.value = false; else if (query.value) { query.value = ''; setModel(null) } }
+        }
+        watch(() => props.modelValue, (m) => { if (m) query.value = labelOf(m); else if (!open.value) query.value = '' })
+        watch(activeIndex, async (i) => { await nextTick(); if (i >= 0) listEl.value?.children[i]?.scrollIntoView({ block: 'nearest' }) })
+        return { query, open, activeKey, result, retry, items, activeIndex, showList, listId, optionId, activeId, listEl,
+                 keyOf, labelOf, onInput, onKeydown, choose }
+      },
+      template: `
+        <div class="ac">
+          <input :value="query" role="combobox" aria-autocomplete="list" :aria-expanded="showList" :aria-controls="listId"
+                 :aria-activedescendant="activeId" :placeholder="placeholder" autocomplete="off"
+                 @input="onInput" @keydown="onKeydown" @focus="open = true" @blur="open = false">
+          <span v-if="result.status === 'loading' && showList" class="ac-spin" aria-hidden="true"></span>
+          <div v-show="showList" class="ac-pop">
+            <ul :id="listId" ref="listEl" role="listbox" :class="{ stale: result.status === 'loading' }">
+              <li v-for="(item, i) in items" :id="optionId(i)" :key="keyOf(item)" role="option" :aria-selected="i === activeIndex"
+                  :class="{ active: i === activeIndex }" @mousedown.prevent="choose(item)" @mousemove="activeKey = keyOf(item)">
+                <slot name="item" :item="item" :query="query" :active="i === activeIndex"><HighlightText :text="labelOf(item)" :query="query" /></slot>
+              </li>
+            </ul>
+            <p v-if="!items.length && result.status === 'loading'" class="ac-msg">搜索中…</p>
+            <p v-else-if="result.status === 'error'" class="ac-msg err">{{ result.error }} <button type="button" @mousedown.prevent="retry">重试</button></p>
+            <p v-else-if="!items.length && result.status === 'success'" class="ac-msg"><slot name="empty" :query="query.trim()">没有找到“{{ query.trim() }}”</slot></p>
+          </div>
+        </div>`,
+    }
+
+    createApp({
+      components: { AutoComplete, HighlightText },
+      setup() {
+        const product = ref(null), city = ref(null), lastSelect = ref('')
+        const noDebounce = ref(false), noGuard = ref(false)
+        const ac1 = ref(null)
+        function searchProducts(query, { signal } = {}) {
+          const entry = reactive({ id: ++seq, query, status: 'pending', ms: slow.value ? 300 + Math.floor(Math.random() * 1500) : 150 + Math.floor(Math.random() * 600), applied: false })
+          log.unshift(entry)
+          if (log.length > 6) log.pop()
+          return new Promise((resolve, reject) => {
+            const t = setTimeout(() => {
+              if (query.toLowerCase().includes('error')) { entry.status = 'error'; return reject(new Error('服务器开小差了')) }
+              entry.status = 'done'
+              const q = query.toLowerCase()
+              const items = PRODUCTS.filter((p) => p.name.toLowerCase().includes(q) || p.py.includes(q)).slice(0, 8)
+              items.__entry = entry
+              resolve(items)
+            }, entry.ms)
+            signal?.addEventListener('abort', () => { if (entry.status !== 'pending') return; clearTimeout(t); entry.status = 'aborted'; reject(new DOMException('Aborted', 'AbortError')) })
+          })
+        }
+        const searchCities = (q) => CITIES.filter((c) => c.name.includes(q) || c.py.startsWith(q.toLowerCase()))
+        const onSelect = (p) => { lastSelect.value = p.name }
+        // 读组件内部状态，显示在右侧面板（仅为教学；正常代码不要这样访问子组件内部）
+        function s(key) {
+          const c = ac1.value
+          if (!c) return ''
+          if (key === 'status') return c.result.status
+          if (key === 'count') return c.items.length
+          return c[key]
+        }
+        return { product, city, lastSelect, noDebounce, noGuard, slow, ac1, searchProducts, searchCities, onSelect, s, log }
+      },
+    }).mount('#demo-ac')
+  }
+</script>
+</body>
+</html>

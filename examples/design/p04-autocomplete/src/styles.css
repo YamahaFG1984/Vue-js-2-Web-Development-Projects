@@ -1,0 +1,33 @@
+:root { --accent: #3b5bdb; --fg: #24262b; --soft: #7c818b; --line: #e3e5ea; --bg: #f6f7f9; color-scheme: light; }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; color: var(--fg); background: var(--bg); }
+.page { max-width: 640px; margin: 0 auto; padding: 24px 16px 80px; }
+.box { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+.box h2 { font-size: 15px; margin: 0 0 10px; }
+.muted { color: var(--soft); font-size: 13px; }
+button.link { border: none; background: none; color: var(--accent); cursor: pointer; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---- 组件 ---- */
+.ac { position: relative; }
+.ac input { width: 100%; font: inherit; padding: 9px 36px 9px 12px; border: 1px solid var(--line); border-radius: 8px; outline: none; }
+.ac input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px #3b5bdb22; }
+.ac-spin { position: absolute; right: 12px; top: 12px; width: 16px; height: 16px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.ac-pop { position: absolute; z-index: 10; left: 0; right: 0; top: calc(100% + 4px); background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px #0000001a; overflow: hidden; }
+.ac-pop ul { list-style: none; margin: 0; padding: 4px; max-height: 260px; overflow-y: auto; }
+.ac-pop ul:empty { display: none; }
+.ac-pop ul.stale { opacity: .55; }
+.ac-pop li { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 6px; cursor: pointer; }
+.ac-pop li.active { background: #edf2ff; }
+.ac-pop mark { background: #ffe066; color: inherit; border-radius: 2px; }
+.ac-msg { margin: 0; padding: 12px; color: var(--soft); font-size: 14px; }
+.ac-msg.err { color: #c92a2a; }
+
+/* ---- 演示页 ---- */
+.emoji { font-size: 18px; }
+.price { margin-left: auto; color: var(--soft); font-variant-numeric: tabular-nums; } .price.active { color: var(--accent); }
+.picked { padding-left: 18px; font-size: 13px; }
+.log { width: 100%; border-collapse: collapse; font-size: 13px; }
+.log td, .log th { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+.log .aborted { color: var(--soft); text-decoration: line-through; } .log .done { color: #2b8a3e; } .log .error { color: #c92a2a; }

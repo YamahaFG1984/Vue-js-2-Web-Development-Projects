@@ -189,3 +189,30 @@
 .shop-sum .save { color: var(--green); }
 .shop-go { align-self: flex-end; background: var(--accent); color: #fff !important; border-radius: 7px; padding: 5px 16px; text-decoration: none; }
 .dgm text.mono { white-space: pre; }
+
+/* ---------- 搜索补全演示 ---------- */
+.acd { display: grid; grid-template-columns: 1fr 250px; gap: 18px; align-items: start; }
+@media (width <= 760px) { .acd { grid-template-columns: 1fr; } }
+.acd-main { min-width: 0; font-size: 14px; }
+.acd-switch { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 6px 10px; border: 1px dashed var(--red); border-radius: 8px; background: var(--red-bg); font-size: 13px; }
+.acd-label { display: block; font-weight: 700; font-size: 13px; margin: 14px 0 6px; }
+.acd-price { margin-left: auto; color: var(--fg-faint); font-variant-numeric: tabular-nums; } .acd-price.active { color: var(--accent-2); }
+.acd-log { margin-top: 14px; font-family: var(--mono); font-size: 12px; line-height: 1.7; border-top: 1px solid var(--line); padding-top: 8px; }
+.acd-log .muted { font-family: var(--sans); }
+.acd-done { color: var(--green); } .acd-error { color: var(--red); } .acd-pending { color: var(--fg-soft); }
+.acd-aborted { color: var(--fg-faint); text-decoration: line-through; }
+.ac { position: relative; }
+.ac input { width: 100%; box-sizing: border-box; padding: 8px 34px 8px 12px !important; }
+.ac input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.ac-spin { position: absolute; right: 12px; top: 11px; width: 14px; height: 14px; border: 2px solid var(--line-2); border-top-color: var(--accent); border-radius: 50%; animation: acspin .7s linear infinite; }
+@keyframes acspin { to { transform: rotate(360deg); } }
+.ac-pop { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 4px); background: var(--panel); border: 1px solid var(--line-2); border-radius: 8px; box-shadow: 0 8px 24px #0000002a; overflow: hidden; }
+.ac-pop ul { list-style: none; margin: 0; padding: 4px; max-height: 230px; overflow-y: auto; }
+.ac-pop ul:empty { display: none; }
+.ac-pop ul.stale { opacity: .5; }
+.ac-pop li { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+.ac-pop li.active { background: var(--accent-bg); }
+.ac-pop mark { background: light-dark(#ffe066, #6b5a00); color: inherit; border-radius: 2px; }
+.ac-msg { margin: 0; padding: 10px 12px; color: var(--fg-faint); }
+.ac-msg.err { color: var(--red); }
+.ac-msg button { padding: 1px 10px !important; font-size: 12px !important; }
