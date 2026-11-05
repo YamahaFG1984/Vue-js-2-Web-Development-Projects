@@ -1,0 +1,1481 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>项目 3 · 购物车 — 从设计到实现</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="assets/design.css">
+</head>
+<body data-chapter="3">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">项目 3 · 第一阶段 · 状态思维</span>
+<h1>购物车</h1>
+<p class="lede">
+  从这一篇开始进入“小商城”业务场景。购物车是电商里最经典的功能，也是第一个<strong>跨页面</strong>的状态：
+  顶部的角标、商品列表、商品详情、购物车页、结算页，五个地方都要读写同一份数据。
+  这一篇要回答三个问题：跨页面的状态放在哪？购物车里该存什么、不该存什么？前端算出来的金额，能不能直接拿去收钱？
+</p>
+
+<div class="goals">
+  <h4>本篇目标</h4>
+  <ul>
+    <li>判断状态的<strong>作用范围</strong>：组件内、父子之间、还是全局共享</li>
+    <li>分清<strong>意图和事实</strong>：购物车存引用，订单存快照</li>
+    <li>把业务计算写成<strong>纯函数</strong>，并用单元测试守住它</li>
+    <li><strong>以服务器为准</strong>：前端的金额只是预览，提交时由服务器重新核算</li>
+    <li>Vue 生态：Vue Router（路由参数、<code>props: true</code>、导航守卫）、Pinia（setup store、store 之间互相使用）、Vitest</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="demo">先看成品</h2>
+
+<p>
+  这是一个真正带路由和 Pinia 的迷你商城（用的是内存路由，所以上面那条“地址栏”是模拟的）。试试这个流程：
+  加几件商品 → 去购物车改数量、取消勾选、输入优惠码 <code>SAVE15</code> → 点右边的<strong>“服务器给咖啡壶涨价”</strong> →
+  去结算提交，看看会发生什么。
+</p>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · 小商城（右侧为 Pinia 里的实时状态）</div>
+  <div class="body">
+    <div id="demo-shop" v-cloak class="shop">
+      <div class="shop-main">
+        <div class="shop-bar">
+          <button class="ghost" @click="$router.back()" aria-label="后退">←</button>
+          <span class="shop-url">{{ $route.fullPath }}</span>
+        </div>
+        <div class="shop-head">
+          <router-link to="/">小商城</router-link>
+          <router-link to="/cart">购物车 <b v-if="cart.count" class="shop-badge">{{ cart.count }}</b></router-link>
+        </div>
+        <router-view></router-view>
+      </div>
+      <div class="pomo-state">
+        <div class="h st">cart store · 状态</div>
+        <div class="ldg-json">items: {{ JSON.stringify(cart.items) }}</div>
+        <div><span class="k">couponCode:</span> "{{ cart.couponCode }}"</div>
+        <div class="h dv">cart store · 派生</div>
+        <div><span class="k">count:</span> {{ cart.count }}</div>
+        <div><span class="k">allSelected:</span> {{ cart.allSelected }}</div>
+        <div><span class="k">checkoutLines:</span> {{ cart.checkoutLines.length }} 行</div>
+        <div><span class="k">summary.total:</span> {{ cart.summary.total }}</div>
+        <div class="h" style="color:var(--purple)">catalog store vs 服务器</div>
+        <div><span class="k">前端缓存的咖啡壶价格:</span> {{ catalog.byId.p1?.price }}</div>
+        <div><span class="k">服务器上的咖啡壶价格:</span> {{ serverPrice }}</div>
+        <button class="ghost" style="margin-top:6px;font-size:12px" @click="bump">服务器给咖啡壶涨价 10 元</button>
+        <div class="h" style="color:var(--fg-faint)">路由</div>
+        <div><span class="k">path:</span> "{{ $route.path }}"</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p>
+  如果你在结算前点了“涨价”，提交会被拒绝，提示价格有变动，同时金额<strong>自动</strong>更新成新价格。
+  注意右边：服务器涨价的那一刻，前端缓存的价格并没有变，前端根本不知道；直到提交时服务器核对出不一致，前端才重新拉取商品目录。
+  而购物车 <code>items</code> 里从头到尾只有 <code>productId</code>、<code>qty</code>、<code>selected</code>，没有价格，所以重新拉取之后所有金额自动就对了。
+</p>
+
+<div class="box dj">
+  <div class="t">Django 对照</div>
+  <p>
+    Django 里做购物车，经典写法是把它存在 <code>request.session['cart']</code> 里，再包一个 <code>Cart(request)</code> 类，任何视图都能用。
+    session 里存的也只是 <code>{product_id: quantity}</code>，显示时再查 Product 拿价格；下单时，OrderItem 把当时的价格存成一个字段。
+    这一篇的设计和它一模一样，只是“session”换成了前端的 Pinia store 和 localStorage。
+  </p>
+</div>
+
+<h2 id="req">第 1 步：需求与草图</h2>
+
+<ul>
+  <li>商品列表：每个商品可以直接“加入购物车”；售罄的不能加；顶部角标显示购物车里一共几件</li>
+  <li>商品详情：选数量后加入购物车，数量不能超过库存</li>
+  <li>购物车：修改数量、删除、勾选要结算的商品、全选；满 99 元包邮，否则运费 10 元</li>
+  <li>结算：确认商品和金额，提交订单；成功后从购物车移除已购买的商品</li>
+  <li>刷新页面、关掉浏览器再打开，购物车还在</li>
+</ul>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 312" role="img" aria-label="四个页面：商品列表、商品详情、购物车、结算，每个页面顶部都有购物车角标，高亮部分都读写同一份购物车数据">
+  <text class="mono sm" x="98" y="28" text-anchor="middle">/</text>
+  <text class="mono sm" x="282" y="28" text-anchor="middle">/product/p1</text>
+  <text class="mono sm" x="466" y="28" text-anchor="middle">/cart</text>
+  <text class="mono sm" x="650" y="28" text-anchor="middle">/checkout</text>
+
+  <g>
+    <rect class="bx" x="14" y="38" width="168" height="204" rx="10"/>
+    <path class="ln" d="M14 62 H182"/>
+    <text class="sm" x="24" y="55" style="fill:var(--fg)">小商城</text>
+    <circle cx="166" cy="50" r="8" class="bx-a"/><text class="sm on-a" x="166" y="54" text-anchor="middle">3</text>
+    <text class="ttl" x="98" y="84" text-anchor="middle">商品列表</text>
+    <rect class="bx-d" x="26" y="96" width="68" height="62" rx="6"/>
+    <rect class="bx-d" x="102" y="96" width="68" height="62" rx="6"/>
+    <rect class="bx-a" x="32" y="140" width="56" height="12" rx="3"/>
+    <rect class="bx-a" x="108" y="140" width="56" height="12" rx="3"/>
+    <rect class="bx-d" x="26" y="166" width="68" height="62" rx="6"/>
+    <rect class="bx-d" x="102" y="166" width="68" height="62" rx="6"/>
+    <rect class="bx-a" x="32" y="210" width="56" height="12" rx="3"/>
+    <text class="sm" x="136" y="214" text-anchor="middle">已售罄</text>
+  </g>
+  <g>
+    <rect class="bx" x="198" y="38" width="168" height="204" rx="10"/>
+    <path class="ln" d="M198 62 H366"/>
+    <text class="sm" x="208" y="55" style="fill:var(--fg)">小商城</text>
+    <circle cx="350" cy="50" r="8" class="bx-a"/><text class="sm on-a" x="350" y="54" text-anchor="middle">3</text>
+    <text class="ttl" x="282" y="84" text-anchor="middle">商品详情</text>
+    <rect class="bx-d" x="210" y="96" width="144" height="60" rx="6"/>
+    <text class="sm" x="210" y="174" style="fill:var(--fg)">手冲咖啡壶 ¥129</text>
+    <text class="sm" x="210" y="192">库存 5 件，购物车已有 2 件</text>
+    <rect class="bx" x="210" y="204" width="60" height="22" rx="4"/>
+    <text class="sm" x="240" y="219" text-anchor="middle">− 1 +</text>
+    <rect class="bx-a" x="278" y="204" width="76" height="22" rx="4"/>
+    <text class="sm on-a" x="316" y="219" text-anchor="middle">加入购物车</text>
+  </g>
+  <g>
+    <rect class="bx" x="382" y="38" width="168" height="204" rx="10"/>
+    <path class="ln" d="M382 62 H550"/>
+    <text class="sm" x="392" y="55" style="fill:var(--fg)">小商城</text>
+    <circle cx="534" cy="50" r="8" class="bx-a"/><text class="sm on-a" x="534" y="54" text-anchor="middle">3</text>
+    <text class="ttl" x="466" y="84" text-anchor="middle">购物车</text>
+    <rect class="bx-a" x="394" y="96" width="144" height="24" rx="4"/>
+    <text class="sm on-a" x="402" y="112">☑ 咖啡壶 × 2　¥258</text>
+    <rect class="bx-a" x="394" y="124" width="144" height="24" rx="4"/>
+    <text class="sm on-a" x="402" y="140">☐ 笔记本 × 1　¥19.9</text>
+    <text class="sm" x="394" y="170">商品 ¥258 · 包邮</text>
+    <text class="ttl" x="394" y="192" style="font-size:12px">合计 ¥258.00</text>
+    <rect class="bx-a" x="394" y="204" width="144" height="22" rx="4"/>
+    <text class="sm on-a" x="466" y="219" text-anchor="middle">去结算</text>
+  </g>
+  <g>
+    <rect class="bx" x="566" y="38" width="168" height="204" rx="10"/>
+    <path class="ln" d="M566 62 H734"/>
+    <text class="sm" x="576" y="55" style="fill:var(--fg)">小商城</text>
+    <circle cx="718" cy="50" r="8" class="bx-a"/><text class="sm on-a" x="718" y="54" text-anchor="middle">3</text>
+    <text class="ttl" x="650" y="84" text-anchor="middle">结算</text>
+    <text class="sm on-a" x="578" y="112">咖啡壶 × 2　¥258</text>
+    <text class="sm" x="578" y="140">运费：包邮</text>
+    <text class="ttl" x="578" y="170" style="font-size:12px">合计 ¥258.00</text>
+    <rect class="bx-a" x="578" y="204" width="144" height="22" rx="4"/>
+    <text class="sm on-a" x="650" y="219" text-anchor="middle">提交订单</text>
+  </g>
+  <path class="ln" d="M98 246 Q190 280 278 248" marker-end="url(#ar)"/>
+  <text class="halo sm" x="190" y="276" text-anchor="middle">点商品</text>
+  <path class="ln" d="M282 246 Q374 280 462 248" marker-end="url(#ar)"/>
+  <text class="halo sm" x="374" y="276" text-anchor="middle">去购物车</text>
+  <path class="ln" d="M466 246 Q558 280 646 248" marker-end="url(#ar)"/>
+  <text class="halo sm" x="558" y="276" text-anchor="middle">去结算</text>
+  <text class="sm on-a" x="380" y="304" text-anchor="middle">高亮的部分，都在读写同一份购物车数据</text>
+</svg>
+<figcaption>图 3-1　四个页面，一份购物车</figcaption>
+</figure>
+
+<div class="box tip">
+  <div class="t">停一下：先自己填设计卡</div>
+  <p>
+    这次多回答两个问题：<strong>购物车里的一项应该存哪些字段？</strong>要不要存价格？
+    以及：<strong>这份状态放在哪个组件上？</strong>
+  </p>
+</div>
+
+<h2 id="card">第 2 步：设计卡（第一版）</h2>
+
+<p>
+  前两篇的问题“要记住还是能算出来”照问不误。这一篇再加一个问题：<strong>这份状态有谁在用？</strong>把用到它的地方列成一张表：
+</p>
+
+<div class="tw"><table>
+  <tr><th>状态</th><th>谁在用</th><th>作用范围</th></tr>
+  <tr><td>购物车条目</td><td>角标、商品卡、详情页、购物车页、结算页</td><td><strong>全局</strong>，跨页面</td></tr>
+  <tr><td>商品目录（名称、价格、库存）</td><td>列表、详情、购物车（显示价格）、结算</td><td><strong>全局</strong>，而且来自服务器</td></tr>
+  <tr><td>详情页上选的数量</td><td>只有详情页</td><td>组件内</td></tr>
+  <tr><td>优惠码输入框里的文字</td><td>只有购物车页</td><td>组件内（草稿）</td></tr>
+  <tr><td>结算页的“提交中 / 失败”</td><td>只有结算页</td><td>组件内</td></tr>
+</table></div>
+
+<p>
+  作用范围决定了状态放在哪：组件内的放在组件里，父子共用的放在共同父组件，<strong>跨页面的放进全局 store</strong>。
+  前两篇的状态都在一个页面里，所以“最近公共祖先”就够了；这一篇的购物车，最近公共祖先是整个 App，而页面是由路由渲染的，这就需要新工具了（第 3 步）。
+</p>
+
+<p>先写出第一版设计卡。照着订单的样子，购物车里的每一项都记下商品的名称和价格，看起来很自然：</p>
+
+<div class="dcard">
+  <div class="title">购物车 · 设计卡 v1<small>有两处会在第 5 步被推翻</small></div>
+  <div class="st"><h5>状态</h5><pre><b>全局</b>
+products  商品目录（从服务器加载）
+cartItems [{ productId, name, price, qty, selected }]
+<b>组件内</b>
+详情页：qty · 结算页：提交状态</pre></div>
+  <div class="dv"><h5>派生</h5><pre>count      = 所有条目 qty 之和（角标）
+allSelected = 每一项都勾选了
+subtotal   = 勾选条目的 price × qty 之和
+shipping   = subtotal ≥ 99 元 ? 0 : 10 元
+total      = subtotal + shipping</pre></div>
+  <div class="ev"><h5>事件</h5><pre>加入购物车 → 有就加数量，没有就新增一项（抄下名称、价格）
+改数量 / 删除 / 勾选 / 全选
+提交订单 → 把 total 发给服务器下单；成功后移除已购项</pre></div>
+  <div class="fx"><h5>副作用</h5><pre>启动时加载商品目录
+cartItems 变化 → 存 localStorage</pre></div>
+</div>
+
+<h2 id="components">第 3 步：状态放在哪</h2>
+
+<p>按前两篇的做法，购物车放在 App 上，再用 props 往下传。画出来就会发现走不通：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 330" role="img" aria-label="三种放置共享状态的方式：放在 App 用 props 层层传递；模块级的 ref；Pinia store">
+  <rect class="bx-d" x="14" y="8" width="236" height="314" rx="12" style="fill:none"/>
+  <text class="ttl on-r" x="132" y="32" text-anchor="middle">✗ 放在 App，props 层层传</text>
+  <rect class="bx-a" x="87" y="48" width="90" height="28" rx="6"/><text class="sm on-a" x="132" y="66" text-anchor="middle">App（cart）</text>
+  <rect class="bx" x="25" y="106" width="90" height="28" rx="6"/><text class="sm" x="70" y="124" text-anchor="middle" style="fill:var(--fg)">AppHeader</text>
+  <rect class="bx" x="140" y="106" width="100" height="28" rx="6"/><text class="sm" x="190" y="124" text-anchor="middle" style="fill:var(--fg)">RouterView</text>
+  <rect class="bx" x="140" y="158" width="100" height="28" rx="6"/><text class="sm" x="190" y="176" text-anchor="middle" style="fill:var(--fg)">ProductList</text>
+  <rect class="bx" x="140" y="210" width="100" height="28" rx="6"/><text class="sm" x="190" y="228" text-anchor="middle" style="fill:var(--fg)">ProductCard</text>
+  <path class="ln" d="M110 76 L72 104"/><path class="ln" d="M154 76 L188 104"/>
+  <path class="ln" d="M190 134 V156"/><path class="ln" d="M190 186 V208"/>
+  <path class="ln-r" d="M177 66 Q236 70 236 120 V200 Q236 222 242 224" style="stroke-dasharray:4 3"/>
+  <text class="sm on-r" x="132" y="268" text-anchor="middle">props 要穿过每一层中间组件</text>
+  <text class="sm on-r" x="132" y="292" text-anchor="middle">而 RouterView 渲染的页面，</text>
+  <text class="sm on-r" x="132" y="310" text-anchor="middle">你没法给它逐个传 props</text>
+
+  <rect class="bx-d" x="262" y="8" width="236" height="314" rx="12" style="fill:none"/>
+  <text class="ttl" x="380" y="32" text-anchor="middle">△ 模块级的 ref</text>
+  <rect class="bx" x="272" y="46" width="216" height="46" rx="8"/>
+  <text class="sm" x="380" y="64" text-anchor="middle">cart.js 模块顶层</text>
+  <text class="mono sm" x="380" y="82" text-anchor="middle" style="fill:var(--fg)">const items = ref([])</text>
+  <g>
+    <rect class="bx" x="270" y="140" width="52" height="28" rx="5"/><text class="sm" x="296" y="158" text-anchor="middle">头部</text>
+    <rect class="bx" x="328" y="140" width="52" height="28" rx="5"/><text class="sm" x="354" y="158" text-anchor="middle">商品卡</text>
+    <rect class="bx" x="386" y="140" width="52" height="28" rx="5"/><text class="sm" x="412" y="158" text-anchor="middle">购物车</text>
+    <rect class="bx" x="444" y="140" width="52" height="28" rx="5"/><text class="sm" x="470" y="158" text-anchor="middle">结算</text>
+  </g>
+  <path class="ln" d="M330 92 L298 136" marker-end="url(#ar)"/><path class="ln" d="M364 92 L356 136" marker-end="url(#ar)"/>
+  <path class="ln" d="M396 92 L410 136" marker-end="url(#ar)"/><path class="ln" d="M430 92 L466 136" marker-end="url(#ar)"/>
+  <text class="sm on-g" x="380" y="204" text-anchor="middle">✓ 写法简单，到处都能 import</text>
+  <text class="sm on-r" x="380" y="228" text-anchor="middle">✗ 服务端渲染时所有用户共用一份</text>
+  <text class="sm on-r" x="380" y="252" text-anchor="middle">✗ DevTools 里看不到</text>
+  <text class="sm on-r" x="380" y="276" text-anchor="middle">✗ 测试之间难以重置</text>
+
+  <rect class="bx-a" x="510" y="8" width="236" height="314" rx="12" style="fill:none"/>
+  <text class="ttl on-a" x="628" y="32" text-anchor="middle">✓ Pinia store</text>
+  <rect class="bx-a" x="520" y="46" width="216" height="46" rx="8"/>
+  <text class="sm on-a" x="628" y="64" text-anchor="middle">stores/cart.js</text>
+  <text class="mono sm on-a" x="628" y="82" text-anchor="middle">defineStore('cart', …)</text>
+  <g>
+    <rect class="bx" x="518" y="140" width="52" height="28" rx="5"/><text class="sm" x="544" y="158" text-anchor="middle">头部</text>
+    <rect class="bx" x="576" y="140" width="52" height="28" rx="5"/><text class="sm" x="602" y="158" text-anchor="middle">商品卡</text>
+    <rect class="bx" x="634" y="140" width="52" height="28" rx="5"/><text class="sm" x="660" y="158" text-anchor="middle">购物车</text>
+    <rect class="bx" x="692" y="140" width="52" height="28" rx="5"/><text class="sm" x="718" y="158" text-anchor="middle">结算</text>
+  </g>
+  <path class="ln-a" d="M578 92 L546 136" marker-end="url(#ar-a)"/><path class="ln-a" d="M612 92 L604 136" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M644 92 L658 136" marker-end="url(#ar-a)"/><path class="ln-a" d="M678 92 L714 136" marker-end="url(#ar-a)"/>
+  <text class="sm on-g" x="628" y="204" text-anchor="middle">✓ 写法和组合式函数几乎一样</text>
+  <text class="sm on-g" x="628" y="228" text-anchor="middle">✓ 每个应用实例一份</text>
+  <text class="sm on-g" x="628" y="252" text-anchor="middle">✓ DevTools 可查看、可回溯</text>
+  <text class="sm on-g" x="628" y="276" text-anchor="middle">✓ 插件：持久化、日志……</text>
+</svg>
+<figcaption>图 3-2　跨页面共享状态的三种放法</figcaption>
+</figure>
+
+<p>
+  中间的“模块级 ref”值得多说一句：把 <code>const items = ref([])</code> 写在组合式函数<strong>外面</strong>（模块顶层），所有调用这个函数的组件拿到的就是同一个 ref。
+  小项目里这完全能用，很多人也确实这么写。Pinia 本质上就是把这个做法规范化了，并补上了它的几个短板。
+  而且 Pinia 的 setup store 写法和组合式函数几乎一模一样，你在番茄钟、记账本里写的 <code>usePomodoro</code>、<code>useLedger</code>，换个外壳就是 store。
+</p>
+
+<div class="box key">
+  <div class="t">store 不是“放所有状态的地方”</div>
+  <p>
+    有了 store，很容易把什么都往里放。规则不变：<strong>只有跨页面、跨组件树共享的状态才进 store</strong>。
+    详情页选的数量、优惠码输入框的草稿、结算页的提交状态，都只属于各自的组件，放进 store 反而要操心“离开页面时要不要清空”。
+  </p>
+</div>
+
+<p>于是这个应用有两个 store：</p>
+<ul>
+  <li><strong>catalog</strong>：商品目录。它是<strong>服务器数据在前端的缓存</strong>，有“加载中 / 成功 / 失败”几种状态。</li>
+  <li><strong>cart</strong>：购物车。它是用户在这台设备上的数据，要持久化到 localStorage；计算金额时要查 catalog，所以 cart store 会<strong>使用</strong> catalog store。</li>
+</ul>
+
+<h2 id="static">第 4 步：静态原型</h2>
+
+<p>购物车页的对照表（其他页面同理）：</p>
+
+<div class="tw"><table>
+  <tr><th>原型里写死的值</th><th>将来从哪里来</th></tr>
+  <tr><td>角标上的 “3”</td><td><code>cart.count</code>（派生）</td></tr>
+  <tr><td>“☑ 咖啡壶” 的勾</td><td>条目的 <code>selected</code>（状态）</td></tr>
+  <tr><td>“全选”框的勾</td><td><code>cart.allSelected</code>（派生）</td></tr>
+  <tr><td>“咖啡壶”这几个字</td><td>v1：条目上抄来的 <code>name</code>；还是 catalog 里的商品？</td></tr>
+  <tr><td>“¥129.00” 单价</td><td>v1：条目上抄来的 <code>price</code>；还是 catalog 里的商品？</td></tr>
+  <tr><td>“× 2”</td><td>条目的 <code>qty</code>（状态）</td></tr>
+  <tr><td>“合计 ¥258.00”</td><td><code>total</code>（派生）</td></tr>
+</table></div>
+
+<p>
+  名称和单价那两行出现了“两个可能的来源”：条目上存了一份，catalog 里也有一份。<strong>同一个值有两个来源，就一定会有对不上的那天。</strong>
+  记账本里我们已经见过一次了，5.3 节再来解决。
+</p>
+
+<h2 id="impl">第 5 步：逐步实现</h2>
+
+<h3 id="s1">5.1 路由：一个应用，多个“页面”</h3>
+<div class="flow"><span>需求：列表、详情、购物车、结算四个页面</span><i>→</i><span class="on">路由表</span><i>→</i><span>代码</span></div>
+
+<p>
+  单页应用里的“页面”只是组件：地址变了，<code>&lt;RouterView&gt;</code> 换一个组件来显示，浏览器并不会真的重新加载。路由表就是前端的 <code>urls.py</code>：
+</p>
+
+<div class="code" data-lang="js" data-file="src/router.js"><pre>
+import { createRouter, createWebHistory } from 'vue-router'
+import { useCartStore } from './stores/cart'
+import ProductList from './views/ProductList.vue'
+import ProductDetail from './views/ProductDetail.vue'
+import CartView from './views/CartView.vue'
+import CheckoutView from './views/CheckoutView.vue'
+
+export const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    { path: '/', name: 'home', component: ProductList },
+    // props: true 把路由参数 id 作为 prop 传给组件，组件不必知道自己被路由使用
+    { path: '/product/:id', name: 'product', component: ProductDetail, props: true },
+    { path: '/cart', name: 'cart', component: CartView },
+    {
+      path: '/checkout',
+      name: 'checkout',
+      component: CheckoutView,
+      // 路由守卫：没有可结算的商品就不让进，类似 Django 视图开头的 redirect
+      beforeEnter: () =&gt; {
+        const cart = useCartStore()
+        if (!cart.checkoutLines.length) return { name: 'cart' }
+      },
+    },
+  ],
+})
+</pre></div>
+
+<div class="tw"><table>
+  <tr><th>Django</th><th>Vue Router</th></tr>
+  <tr><td><code>path('product/&lt;str:id&gt;/', views.detail, name='product')</code></td><td><code>{ path: '/product/:id', name: 'product', component: ProductDetail }</code></td></tr>
+  <tr><td><code>{% url 'product' id=p.id %}</code></td><td><code>&lt;RouterLink :to="{ name: 'product', params: { id: p.id } }"&gt;</code></td></tr>
+  <tr><td>视图函数的参数 <code>id</code></td><td><code>props: true</code> 后，组件的 prop <code>id</code></td></tr>
+  <tr><td><code>redirect('cart')</code>、<code>@login_required</code></td><td>导航守卫 <code>beforeEnter</code> 返回 <code>{ name: 'cart' }</code></td></tr>
+</table></div>
+
+<p>
+  详情页里，“当前是哪个商品”不是状态，而是由<strong>路由参数</strong>和商品目录派生出来的：
+</p>
+
+<div class="code" data-lang="js" data-file="src/views/ProductDetail.vue（节选）"><pre>
+const props = defineProps({ id: { type: String, required: true } }) // 来自路由参数
+const product = computed(() =&gt; catalog.byId[props.id] ?? null)
+const qty = ref(1) // 选了几件：只属于这个页面的局部状态
+</pre></div>
+
+<p>
+  这是一个重要的认识：<strong>URL 也是一种状态</strong>，而且是最特别的一种。它能被收藏、分享、刷新后保留，浏览器的前进后退会改变它。
+  详情页如果把“当前商品”另存一个 <code>ref</code>，就要操心它和地址栏同步；直接从参数派生，就不会有这个问题。第 6 个项目（后台数据表格）会把这个思路用到极致。
+</p>
+
+<h3 id="s2">5.2 撞墙：状态要跨页面共享</h3>
+<div class="flow"><span>问题：五个地方要用购物车</span><i>→</i><span class="on">改变状态的位置</span><i>→</i><span>代码</span></div>
+
+<p>
+  图 3-2 已经说明了 props 走不通。换成 Pinia：在 <code>main.js</code> 里装上，然后用 <code>defineStore</code> 定义 store。
+  setup store 的函数体和组合式函数一样：<code>ref</code> 是状态，<code>computed</code> 是派生（Pinia 叫 getter），普通函数是事件（Pinia 叫 action），最后 <code>return</code> 出去。
+</p>
+
+<div class="code" data-lang="js" data-file="src/main.js"><pre>
+import { createApp } from 'vue'
+import { createPinia } from 'pinia'
+import App from './App.vue'
+import { router } from './router'
+import './styles.css'
+
+createApp(App)
+  .use(createPinia()) // 先装 Pinia：路由守卫里要用 store
+  .use(router)
+  .mount('#app')
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/stores/catalog.js"><pre>
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
+import { fetchProducts } from '../api/shop'
+
+// 商品目录：服务器数据在前端的一份缓存
+export const useCatalogStore = defineStore('catalog', () =&gt; {
+  const products = ref([])
+  const status = ref('idle') // 'idle' | 'loading' | 'ready' | 'error'
+  const error = ref('')
+
+  const byId = computed(() =&gt; Object.fromEntries(products.value.map((p) =&gt; [p.id, p])))
+
+  async function load() {
+    status.value = 'loading'
+    try {
+      products.value = await fetchProducts()
+      status.value = 'ready'
+    } catch (e) {
+      error.value = e.message
+      status.value = 'error'
+    }
+  }
+
+  return { products, status, error, byId, load }
+})
+</pre></div>
+
+<p>
+  <code>status</code> 又是一个状态机：<code>'idle' | 'loading' | 'ready' | 'error'</code>。服务器数据天生就有这几种状态，界面要为每一种都准备好显示什么。
+  任何组件里调用 <code>useCatalogStore()</code>，拿到的都是同一个 store：
+</p>
+
+<div class="code" data-lang="vue" data-file="src/components/AppHeader.vue"><pre>
+&lt;script setup&gt;
+import { useCartStore } from '../stores/cart'
+
+const cart = useCartStore()
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;header class="app-header"&gt;
+    &lt;RouterLink to="/" class="logo"&gt;小商城&lt;/RouterLink&gt;
+    &lt;RouterLink to="/cart" class="cart-link"&gt;
+      购物车
+      &lt;span v-if="cart.count" class="badge" aria-live="polite"&gt;{{ cart.count }}&lt;/span&gt;
+    &lt;/RouterLink&gt;
+  &lt;/header&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="box warn">
+  <div class="t">不要直接解构 store</div>
+  <p>
+    <code>const { count } = useCartStore()</code> 会丢失响应性：解构出来的只是那一刻的值，以后不会更新。
+    要么像上面这样整体使用 <code>cart.count</code>，要么用 <code>storeToRefs(cart)</code> 解构状态和 getter（action 可以直接解构）。
+  </p>
+</div>
+
+<h3 id="s3">5.3 购物车里存什么：意图和事实</h3>
+<div class="flow"><span>问题：价格存在哪</span><i>→</i><span class="on">改设计卡</span><i>→</i><span>代码</span></div>
+
+<p>
+  回到第 4 步的伏笔。v1 在购物车条目里抄了一份 <code>name</code> 和 <code>price</code>。设想：用户周一把咖啡壶加进购物车，当时 129 元；周三商家调价到 139 元；
+  周五用户打开购物车，看到的还是 129 元，结算时却发现要付 139 元（或者更糟：系统按 129 元收了钱）。
+</p>
+
+<p>
+  可订单里明明就是要存价格的。区别在哪？
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 262" role="img" aria-label="购物车条目只存商品 id 和数量，价格从商品目录实时查；订单行在下单那一刻把价格抄下来，以后不再改变">
+  <text class="ttl on-a" x="140" y="28" text-anchor="middle">购物车条目：意图</text>
+  <rect class="bx-a" x="20" y="40" width="240" height="96" rx="10"/>
+  <text class="mono sm" x="36" y="66" style="fill:var(--fg)">{ productId: 'p1',</text>
+  <text class="mono sm" x="36" y="88" style="fill:var(--fg)">  qty: 2,</text>
+  <text class="mono sm" x="36" y="110" style="fill:var(--fg)">  selected: true }</text>
+  <path class="ln-a" d="M140 136 V166" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="148" y="156">显示时去查</text>
+  <rect class="bx" x="20" y="170" width="240" height="44" rx="10"/>
+  <text class="sm" x="140" y="190" text-anchor="middle" style="fill:var(--fg)">商品目录 p1：price 12900 → 13900</text>
+  <text class="sm" x="140" y="206" text-anchor="middle">价格变了，购物车立刻显示新价格</text>
+  <text class="sm on-a" x="140" y="244" text-anchor="middle">还没发生的事：以最新数据为准</text>
+
+  <path class="ln-p" d="M264 88 H494" marker-end="url(#ar)"/>
+  <text class="halo sm on-p" x="380" y="80" text-anchor="middle">下单那一刻：把当时的名称、价格抄进订单</text>
+
+  <text class="ttl on-p" x="620" y="28" text-anchor="middle">订单行：事实</text>
+  <rect class="bx-p" x="500" y="40" width="240" height="118" rx="10"/>
+  <text class="mono sm" x="516" y="66" style="fill:var(--fg)">{ productId: 'p1',</text>
+  <text class="mono sm" x="516" y="88" style="fill:var(--fg)">  name: '手冲咖啡壶',</text>
+  <text class="mono sm" x="516" y="110" style="fill:var(--fg)">  price: 12900,</text>
+  <text class="mono sm" x="516" y="132" style="fill:var(--fg)">  qty: 2 }</text>
+  <text class="sm" x="620" y="186" text-anchor="middle">以后商品改价、改名、下架，</text>
+  <text class="sm" x="620" y="204" text-anchor="middle">订单里的记录都不变</text>
+  <text class="sm on-p" x="620" y="244" text-anchor="middle">已经发生的事：保留当时的值</text>
+</svg>
+<figcaption>图 3-3　购物车存引用，订单存快照</figcaption>
+</figure>
+
+<p>
+  这和番茄钟的“存事实，不存结果”是同一条原则的另一面：<strong>订单的价格是一个已经发生的事实</strong>，必须原样保留，否则改价会篡改历史账单；
+  而<strong>购物车只是一个意图</strong>，“我想买两个 p1”，此刻价格多少应该随时去查。Django 里，<code>OrderItem</code> 有自己的 <code>price</code> 字段，
+  而 session 里的购物车只存 <code>product_id</code> 和数量，道理完全相同。
+</p>
+
+<div class="dcard">
+  <div class="title">设计卡 v2 · 购物车条目<small>推翻第一处</small></div>
+  <div class="st"><h5>状态</h5><pre>cartItems [{ productId, <del>name, price,</del> qty, selected }]</pre></div>
+  <div class="dv"><h5>派生</h5><pre><ins>lines = cartItems 逐项拼上 catalog 里的商品</ins>（相当于 JOIN）
+<ins>每行的 problem：已下架 / 已售罄 / 库存不足</ins>
+subtotal 改为基于 <ins>lines 里商品的当前价格</ins></pre></div>
+  <div class="ev"><h5>事件</h5><pre>加入购物车 → 有就加数量，没有就新增 <ins>{ productId, qty: 1, selected: true }</ins></pre></div>
+  <div class="fx"><h5>副作用</h5><pre>不变</pre></div>
+</div>
+
+<p>
+  <code>lines</code> 这个派生数据把“购物车条目”和“商品目录”拼在一起，顺便检查每一行有没有问题（下架、售罄、库存不足）。
+  展示一行购物车的组件只接收拼好的 <code>line</code>：
+</p>
+
+<div class="code" data-lang="vue" data-file="src/components/CartLine.vue"><pre>
+&lt;script setup&gt;
+import QtyStepper from './QtyStepper.vue'
+import { formatCents } from '../lib/money'
+
+defineProps({
+  line: { type: Object, required: true }, // { productId, qty, selected, product, problem }
+})
+const emit = defineEmits(['toggle', 'set-qty', 'remove'])
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;li class="line" :class="{ bad: line.problem }"&gt;
+    &lt;input type="checkbox" :checked="line.selected" :aria-label="`选择 ${line.product?.name ?? ''}`"
+           @change="emit('toggle', line.productId)"&gt;
+    &lt;template v-if="line.product"&gt;
+      &lt;span class="pic sm"&gt;{{ line.product.emoji }}&lt;/span&gt;
+      &lt;span class="name"&gt;
+        &lt;RouterLink :to="{ name: 'product', params: { id: line.productId } }"&gt;{{ line.product.name }}&lt;/RouterLink&gt;
+        &lt;small&gt;{{ formatCents(line.product.price) }}&lt;/small&gt;
+        &lt;small v-if="line.problem" class="warn"&gt;{{ line.problem }}&lt;/small&gt;
+      &lt;/span&gt;
+      &lt;QtyStepper :model-value="line.qty" :max="Math.max(line.product.stock, 1)"
+                  @update:model-value="emit('set-qty', line.productId, $event)" /&gt;
+      &lt;b class="sub"&gt;{{ formatCents(line.product.price * line.qty) }}&lt;/b&gt;
+    &lt;/template&gt;
+    &lt;span v-else class="name muted"&gt;{{ line.problem || '加载中…' }}&lt;/span&gt;
+    &lt;button class="link danger" @click="emit('remove', line.productId)"&gt;删除&lt;/button&gt;
+  &lt;/li&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>数量调节器是一个可复用的小组件，用 <code>defineModel</code> 实现 <code>v-model</code>，并负责把输入限制在 <code>min</code> 到 <code>max</code> 之间：</p>
+
+<div class="code" data-lang="vue" data-file="src/components/QtyStepper.vue"><pre>
+&lt;script setup&gt;
+const qty = defineModel({ type: Number, required: true })
+const props = defineProps({
+  min: { type: Number, default: 1 },
+  max: { type: Number, default: Infinity },
+})
+
+function set(n) {
+  if (Number.isFinite(n)) qty.value = Math.min(props.max, Math.max(props.min, Math.round(n)))
+}
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;span class="stepper"&gt;
+    &lt;button type="button" aria-label="减少" :disabled="qty &lt;= min" @click="set(qty - 1)"&gt;−&lt;/button&gt;
+    &lt;input :value="qty" inputmode="numeric" aria-label="数量" @change="set(Number($event.target.value)); $event.target.value = qty"&gt;
+    &lt;button type="button" aria-label="增加" :disabled="qty &gt;= max" @click="set(qty + 1)"&gt;+&lt;/button&gt;
+  &lt;/span&gt;
+&lt;/template&gt;
+</pre></div>
+
+<h3 id="s4">5.4 金额：写成纯函数</h3>
+<div class="flow"><span>需求：小计、运费、合计</span><i>→</i><span class="on">派生格</span><i>→</i><span>代码</span></div>
+
+<p>
+  金额计算会在好几个地方用到：购物车页、结算页，还有服务器下单时核算。如果写成 store 里的一个 <code>computed</code>，它就和 store 绑死了。
+  更好的做法是写成一个<strong>纯函数</strong>：输入商品行，输出各项金额；不读响应式数据，不改任何东西。store 里的 <code>computed</code> 只负责调用它：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 214" role="img" aria-label="金额派生链：购物车条目和商品目录拼成 lines，筛选出 checkoutLines，交给纯函数 priceOrder 计算小计、优惠、运费、合计，得到 summary">
+  <rect class="bx-a" x="14" y="40" width="104" height="36" rx="8"/>
+  <text class="mono sm on-a" x="66" y="63" text-anchor="middle">items</text>
+  <rect class="bx" x="14" y="96" width="104" height="36" rx="8"/>
+  <text class="mono sm" x="66" y="119" text-anchor="middle" style="fill:var(--fg)">catalog.byId</text>
+  <path class="ln" d="M118 58 Q134 58 138 72" marker-end="url(#ar)"/>
+  <path class="ln" d="M118 114 Q134 114 138 100" marker-end="url(#ar)"/>
+  <rect class="bx-b" x="142" y="60" width="110" height="52" rx="8"/>
+  <text class="mono on-b" x="197" y="82" text-anchor="middle">lines</text>
+  <text class="sm" x="197" y="100" text-anchor="middle">JOIN + 检查问题</text>
+  <path class="ln-b" d="M252 86 H284" marker-end="url(#ar)"/>
+  <rect class="bx-b" x="288" y="60" width="140" height="52" rx="8"/>
+  <text class="mono on-b" x="358" y="82" text-anchor="middle">checkoutLines</text>
+  <text class="sm" x="358" y="100" text-anchor="middle">已勾选且没问题的</text>
+  <path class="ln-b" d="M428 86 H458" marker-end="url(#ar)"/>
+  <text class="sm on-p" x="552" y="22" text-anchor="middle">纯函数，可单独测试</text>
+  <rect class="bx-p" x="462" y="30" width="180" height="114" rx="10"/>
+  <text class="mono on-p" x="552" y="52" text-anchor="middle">priceOrder()</text>
+  <text class="mono sm" x="480" y="76" style="fill:var(--fg)">  subtotal</text>
+  <text class="mono sm" x="480" y="96" style="fill:var(--fg)">− discount</text>
+  <text class="mono sm" x="480" y="116" style="fill:var(--fg)">+ shipping</text>
+  <text class="mono sm" x="480" y="136" style="fill:var(--fg)">= total</text>
+  <rect class="bx-d" x="472" y="166" width="160" height="30" rx="6"/>
+  <text class="mono sm" x="552" y="185" text-anchor="middle">couponCode（变更一）</text>
+  <path class="ln" d="M552 166 V148" marker-end="url(#ar)"/>
+  <path class="ln-b" d="M642 86 H668" marker-end="url(#ar)"/>
+  <rect class="bx-b" x="672" y="60" width="76" height="52" rx="8"/>
+  <text class="mono on-b" x="710" y="91" text-anchor="middle">summary</text>
+  <text class="sm" x="710" y="134" text-anchor="middle">→ 购物车页</text>
+  <text class="sm" x="710" y="152" text-anchor="middle">→ 结算页</text>
+  <text class="sm" x="710" y="170" text-anchor="middle">→ 服务器核算</text>
+</svg>
+<figcaption>图 3-4　金额的派生链：响应式的部分只负责准备输入，计算交给纯函数</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="src/lib/pricing.js"><pre>
+// 纯函数：输入商品行和优惠码，输出各项金额（单位：分）。
+// 不读任何响应式数据、不改任何东西，所以可以在购物车、结算页、服务器、单元测试里随处复用。
+
+export const COUPONS = {
+  SAVE15: { label: '满 100 减 15', min: 10000, discount: () =&gt; 1500 },
+  VIP90: { label: '9 折，最多减 50 元', min: 0, discount: (subtotal) =&gt; Math.min(5000, Math.round(subtotal * 0.1)) },
+}
+export const FREE_SHIPPING_MIN = 9900 // 满 99 包邮（按优惠后的金额算）
+export const SHIPPING_FEE = 1000
+
+/**
+ * @param {{ price: number, qty: number }[]} lines
+ * @param {string} [couponCode]
+ */
+export function priceOrder(lines, couponCode = '') {
+  const subtotal = lines.reduce((sum, l) =&gt; sum + l.price * l.qty, 0)
+
+  const coupon = COUPONS[couponCode]
+  let discount = 0
+  let shortfall = 0 // 还差多少能用券
+  if (coupon) {
+    if (subtotal &gt;= coupon.min) discount = Math.min(subtotal, coupon.discount(subtotal))
+    else shortfall = coupon.min - subtotal
+  }
+
+  const afterDiscount = subtotal - discount
+  const shipping = lines.length === 0 || afterDiscount &gt;= FREE_SHIPPING_MIN ? 0 : SHIPPING_FEE
+  return { subtotal, discount, shortfall, shipping, total: afterDiscount + shipping }
+}
+</pre></div>
+
+<p>纯函数最大的好处是好测。不需要浏览器、不需要挂载组件，给输入、断言输出：</p>
+
+<div class="code" data-lang="js" data-file="src/lib/pricing.test.js"><pre>
+import { describe, it, expect } from 'vitest'
+import { priceOrder } from './pricing'
+
+const coffee = { price: 12900, qty: 1 }
+const notebook = { price: 1990, qty: 2 }
+
+describe('priceOrder', () =&gt; {
+  it('空购物车一切为 0，也不收运费', () =&gt; {
+    expect(priceOrder([])).toEqual({ subtotal: 0, discount: 0, shortfall: 0, shipping: 0, total: 0 })
+  })
+
+  it('不满 99 收 10 元运费', () =&gt; {
+    expect(priceOrder([notebook])).toMatchObject({ subtotal: 3980, shipping: 1000, total: 4980 })
+  })
+
+  it('满减券：达到门槛才减', () =&gt; {
+    expect(priceOrder([coffee], 'SAVE15')).toMatchObject({ discount: 1500, total: 11400 })
+    expect(priceOrder([notebook], 'SAVE15')).toMatchObject({ discount: 0, shortfall: 6020 })
+  })
+
+  it('打折券四舍五入到分，并且有封顶', () =&gt; {
+    expect(priceOrder([{ price: 1999, qty: 1 }], 'VIP90').discount).toBe(200) // 199.9 分 → 200 分
+    expect(priceOrder([{ price: 89900, qty: 1 }], 'VIP90').discount).toBe(5000)
+  })
+
+  it('包邮按优惠后的金额判断', () =&gt; {
+    // 108 元，减 15 后 93 元，不再包邮
+    expect(priceOrder([{ price: 10800, qty: 1 }], 'SAVE15')).toMatchObject({ shipping: 1000, total: 10300 })
+  })
+
+  it('无效的优惠码当作没有', () =&gt; {
+    expect(priceOrder([coffee], 'NOPE')).toMatchObject({ discount: 0, total: 12900 })
+  })
+})
+</pre></div>
+
+<div class="code" data-lang="bash"><pre>
+npm test
+#  ✓ src/lib/pricing.test.js (6 tests)
+</pre></div>
+
+<div class="box dj">
+  <div class="t">Django 对照</div>
+  <p>
+    你大概也会把这类计算从视图里抽出来，写成 <code>services.py</code> 里的一个函数，再用 pytest 覆盖各种边界：门槛刚好够、刚好差一分、四舍五入。
+    前端完全一样：<strong>业务规则写成纯函数，框架代码只负责把数据喂给它</strong>。涉及钱的逻辑，没有测试不要上线。
+  </p>
+</div>
+
+<h3 id="s5">5.5 勾选与全选</h3>
+<div class="flow"><span>需求：勾选要结算的商品、全选</span><i>→</i><span class="on">设计卡</span><i>→</i><span>代码</span></div>
+
+<p>
+  每一项“勾没勾”是状态，存在条目的 <code>selected</code> 上。（它算领域数据还是界面状态？各大电商的做法是把勾选状态也保存下来，换台设备打开还是勾着的，所以这里把它当作购物车数据的一部分。）
+  “全选框勾没勾”则是派生：<strong>当且仅当每一项都勾上了</strong>。点击全选框是一个事件，它把所有条目设成同一个值：
+</p>
+
+<div class="code" data-lang="js" data-file="src/stores/cart.js（节选）"><pre>
+const allSelected = computed(() =&gt; items.value.length &gt; 0 &amp;&amp; items.value.every((i) =&gt; i.selected))
+
+function toggleAll() {
+  const next = !allSelected.value // 先算出目标值，再统一设置
+  for (const i of items.value) i.selected = next
+}
+</pre></div>
+
+<p>
+  为什么要先存 <code>next</code>？如果在循环里每次都读 <code>!allSelected.value</code>，第一项改完之后 <code>allSelected</code> 的值就变了，后面几项会得到相反的结果。
+  这和番茄钟 <code>finish()</code> 里“先读 <code>nextPhase</code> 再改 <code>completed</code>”是同一个坑：<strong>派生数据会在同一个函数里立刻变化</strong>。
+</p>
+
+<h3 id="s6">5.6 结算：以服务器为准</h3>
+<div class="flow"><span>需求：提交订单</span><i>→</i><span class="on">推翻第二处</span><i>→</i><span>代码</span></div>
+
+<p>
+  v1 的事件格写的是“把 total 发给服务器下单”。如果你在 Django 里看到一个表单把价格放在隐藏字段 <code>&lt;input type="hidden" name="price"&gt;</code> 里提交，
+  而视图直接拿它来扣款，你一定会拦下来：用户打开开发者工具就能把价格改成 1 分钱。前端算出来的金额同理，<strong>只是给用户看的预览</strong>。
+</p>
+
+<p>正确的分工是：</p>
+<ul>
+  <li>前端只提交“买什么、买几个、用什么券”，另外附上它显示给用户的金额 <code>expectedTotal</code>；</li>
+  <li>服务器用<strong>自己的</strong>价格和库存重新算一遍；如果和 <code>expectedTotal</code> 不一致，说明前端的商品目录过时了，拒绝下单；</li>
+  <li>前端收到拒绝，重新拉取商品目录，让用户看到新金额后再确认。</li>
+</ul>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 350" role="img" aria-label="下单时序：前端提交商品和预期金额，服务器按最新价格重算发现不一致而拒绝，前端重新加载商品目录后显示新金额，用户确认后再次提交成功">
+  <text class="ttl" x="80" y="24" text-anchor="middle">用户</text>
+  <text class="ttl on-a" x="380" y="24" text-anchor="middle">结算页（前端）</text>
+  <text class="ttl on-p" x="680" y="24" text-anchor="middle">服务器</text>
+  <path class="ln-d" d="M80 34 V340"/><path class="ln-d" d="M380 34 V340"/><path class="ln-d" d="M680 34 V340"/>
+
+  <path class="ln" d="M80 56 H376" marker-end="url(#ar)"/>
+  <text class="halo sm" x="230" y="50" text-anchor="middle">点“提交订单 ¥302.70”</text>
+  <text class="halo sm on-a" x="390" y="76">state = submitting（按钮禁用，防重复提交）</text>
+  <path class="ln-a" d="M380 98 H676" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="530" y="92" text-anchor="middle">items + couponCode + expectedTotal: 30270</text>
+  <text class="halo sm on-p" x="672" y="120" text-anchor="end">按服务器价格重算 = 32270 ≠ 30270</text>
+  <path class="ln-p" d="M680 136 H384" marker-end="url(#ar)"/>
+  <text class="halo sm on-p" x="530" y="152" text-anchor="middle">拒绝：PRICE_CHANGED</text>
+  <path class="ln-a" d="M380 186 H676" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="530" y="180" text-anchor="middle">catalog.load() 重新拉商品目录</text>
+  <path class="ln-p" d="M680 210 H384" marker-end="url(#ar)"/>
+  <text class="halo sm on-p" x="530" y="204" text-anchor="middle">最新价格</text>
+  <text class="halo sm on-a" x="390" y="234">购物车只存 id → 金额自动按新价重算</text>
+  <path class="ln" d="M376 256 H84" marker-end="url(#ar)"/>
+  <text class="halo sm" x="230" y="250" text-anchor="middle">“价格有变动，请确认” ¥322.70</text>
+  <path class="ln" d="M80 282 H376" marker-end="url(#ar)"/>
+  <text class="halo sm" x="230" y="276" text-anchor="middle">确认，再次提交</text>
+  <path class="ln-a" d="M380 304 H676" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="530" y="298" text-anchor="middle">expectedTotal: 32270</text>
+  <path class="ln-p" d="M680 330 H384" marker-end="url(#ar)"/>
+  <text class="halo sm on-p" x="530" y="324" text-anchor="middle">✓ 一致：创建订单（价格快照），扣库存</text>
+</svg>
+<figcaption>图 3-5　提交订单：服务器重新核算，前端负责“发现不一致后刷新”</figcaption>
+</figure>
+
+<p>
+  注意图里那一句“购物车只存 id，金额自动按新价重算”。这正是 5.3 节规范化的回报：处理“价格变了”这种情况，前端只需要重新拉一次商品目录，一行修正金额的代码都不用写。
+  如果购物车里抄了价格，这里就要逐条去改。
+</p>
+
+<p>
+  结算页的提交过程又是一个状态机：<code>idle → submitting → done | failed</code>。用一个 <code>state</code> 表示，按钮的禁用、文字、错误提示都从它派生：
+</p>
+
+<div class="code" data-lang="vue" data-file="src/views/CheckoutView.vue"><pre>
+&lt;script setup&gt;
+import { ref } from 'vue'
+import { useCartStore } from '../stores/cart'
+import { useCatalogStore } from '../stores/catalog'
+import { submitOrder } from '../api/shop'
+import { priceOrder } from '../lib/pricing'
+import { formatCents } from '../lib/money'
+import PriceSummary from '../components/PriceSummary.vue'
+
+const cart = useCartStore()
+const catalog = useCatalogStore()
+
+// 提交过程是一个状态机：
+//   { status: 'idle' } | { status: 'submitting' } | { status: 'done', order } | { status: 'failed', message }
+const state = ref({ status: 'idle' })
+
+async function placeOrder() {
+  if (state.value.status === 'submitting') return // 防止重复提交
+  state.value = { status: 'submitting' }
+  const items = cart.checkoutLines.map((l) =&gt; ({ productId: l.productId, qty: l.qty }))
+  try {
+    const order = await submitOrder({ items, couponCode: cart.couponCode, expectedTotal: cart.summary.total }, priceOrder)
+    cart.removePurchased(order.lines.map((l) =&gt; l.productId))
+    state.value = { status: 'done', order }
+  } catch (e) {
+    // 价格或库存变了：重新拉商品目录。购物车只存了 id，所以所有金额会自动按新价格重算
+    if (e.code === 'PRICE_CHANGED' || e.code === 'OUT_OF_STOCK' || e.code === 'NOT_FOUND') await catalog.load()
+    const hint = e.code === 'PRICE_CHANGED' ? '，已更新为最新价格，请确认后重新提交' : ''
+    state.value = { status: 'failed', message: e.message + hint }
+  }
+}
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;section v-if="state.status === 'done'" class="panel done"&gt;
+    &lt;h1&gt;下单成功&lt;/h1&gt;
+    &lt;p&gt;订单号 #{{ state.order.id }}&lt;/p&gt;
+    &lt;ul&gt;
+      &lt;!-- 订单显示的是快照价格：以后商品改价，这里不会变 --&gt;
+      &lt;li v-for="l in state.order.lines" :key="l.productId"&gt;{{ l.emoji }} {{ l.name }} × {{ l.qty }}　{{ formatCents(l.price * l.qty) }}&lt;/li&gt;
+    &lt;/ul&gt;
+    &lt;p&gt;实付 &lt;b&gt;{{ formatCents(state.order.total) }}&lt;/b&gt;&lt;/p&gt;
+    &lt;RouterLink to="/"&gt;继续购物&lt;/RouterLink&gt;
+  &lt;/section&gt;
+
+  &lt;section v-else class="checkout"&gt;
+    &lt;h1&gt;确认订单&lt;/h1&gt;
+    &lt;ul class="lines plain"&gt;
+      &lt;li v-for="l in cart.checkoutLines" :key="l.productId"&gt;
+        {{ l.product.emoji }} {{ l.product.name }} × {{ l.qty }}&lt;span&gt;{{ formatCents(l.product.price * l.qty) }}&lt;/span&gt;
+      &lt;/li&gt;
+    &lt;/ul&gt;
+    &lt;p v-if="!cart.checkoutLines.length" class="muted"&gt;没有可结算的商品了，&lt;RouterLink to="/cart"&gt;回购物车&lt;/RouterLink&gt;&lt;/p&gt;
+    &lt;PriceSummary :summary="cart.summary" /&gt;
+    &lt;p v-if="state.status === 'failed'" class="warn" role="alert"&gt;{{ state.message }}&lt;/p&gt;
+    &lt;button :disabled="state.status === 'submitting' || !cart.checkoutLines.length" @click="placeOrder"&gt;
+      {{ state.status === 'submitting' ? '提交中…' : `提交订单 ${formatCents(cart.summary.total)}` }}
+    &lt;/button&gt;
+  &lt;/section&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>
+  还剩一个问题：用户如果直接在地址栏输入 <code>/checkout</code>，或者购物车里一件都没勾选就进入结算页，怎么办？
+  router.js 里的 <code>beforeEnter</code> 守卫负责把他送回购物车，作用就像 Django 视图开头的 <code>if not cart: return redirect('cart')</code>。
+</p>
+
+<div class="code" data-lang="js" data-file="src/api/shop.js（模拟服务器）"><pre>
+// 一个假的“服务器”：数据只存在这个模块的内存里，每个请求都有网络延迟。
+// 第三阶段会换成真正的 Django 后端，前端调用方式（返回 Promise）不变。
+
+const db = {
+  products: [
+    { id: 'p1', name: '手冲咖啡壶', emoji: '☕', price: 12900, stock: 5, desc: '600ml 细口壶，控水稳定。' },
+    { id: 'p2', name: '机械键盘', emoji: '⌨️', price: 39900, stock: 3, desc: '87 键，热插拔轴体。' },
+    { id: 'p3', name: '降噪耳机', emoji: '🎧', price: 89900, stock: 2, desc: '主动降噪，续航 30 小时。' },
+    { id: 'p4', name: '帆布托特包', emoji: '👜', price: 5900, stock: 20, desc: '12 盎司帆布，能装下 14 寸电脑。' },
+    { id: 'p5', name: '绿植盆栽', emoji: '🪴', price: 3500, stock: 0, desc: '好养活的龟背竹。' },
+    { id: 'p6', name: '方格笔记本', emoji: '📓', price: 1990, stock: 50, desc: 'A5，160 页，可平摊。' },
+  ],
+  nextOrder: 1001,
+}
+
+const delay = (ms = 400) =&gt; new Promise((r) =&gt; setTimeout(r, ms))
+const clone = (x) =&gt; structuredClone(x)
+
+export async function fetchProducts() {
+  await delay()
+  return clone(db.products)
+}
+
+/**
+ * 下单。服务器不相信客户端算的金额：它用自己的价格和库存重新算一遍，
+ * 和客户端看到的金额（expectedTotal）不一致就拒绝。
+ */
+export async function submitOrder({ items, couponCode, expectedTotal }, priceOrder) {
+  await delay(600)
+  const lines = []
+  for (const { productId, qty } of items) {
+    const p = db.products.find((p) =&gt; p.id === productId)
+    if (!p) throw Object.assign(new Error('商品已下架'), { code: 'NOT_FOUND', productId })
+    if (p.stock &lt; qty) throw Object.assign(new Error(`「${p.name}」库存不足`), { code: 'OUT_OF_STOCK', productId })
+    lines.push({ productId, name: p.name, emoji: p.emoji, price: p.price, qty })
+  }
+  // 真实项目里服务器用自己的代码计算；这里为了演示，复用同一个纯函数
+  const summary = priceOrder(lines, couponCode)
+  if (summary.total !== expectedTotal) {
+    throw Object.assign(new Error('商品价格有变动'), { code: 'PRICE_CHANGED', total: summary.total })
+  }
+  for (const l of lines) db.products.find((p) =&gt; p.id === l.productId).stock -= l.qty
+  // 订单里的价格是“下单那一刻”的快照，以后商品改价也不影响
+  return { id: db.nextOrder++, lines, ...summary, createdAt: new Date().toISOString() }
+}
+
+// ---- 只为演示：模拟“后台运营改了价格 / 库存”，客户端不会自动知道 ----
+export function adminUpdateProduct(id, patch) {
+  Object.assign(db.products.find((p) =&gt; p.id === id), patch)
+}
+export function adminPeek(id) {
+  return clone(db.products.find((p) =&gt; p.id === id))
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">模拟服务器只是过渡</div>
+  <p>
+    <code>api/shop.js</code> 用内存里的数据假装服务器，每个函数都返回 Promise 并带上网络延迟，所以调用它的代码和调用真接口时写法完全一样。
+    第三阶段会换成 Django + DRF，届时只需要把这个文件里的函数改成 <code>fetch</code>。示例工程右下角的“模拟服务器”面板可以随时改价、改库存，方便你复现各种情况。
+  </p>
+</div>
+
+<h2 id="change">第 6 步：需求变更演练</h2>
+
+<h3 id="c1">变更一：优惠券</h3>
+
+<div class="dcard">
+  <div class="title">设计卡 · 变更一<small>状态加一项，计算只改纯函数</small></div>
+  <div class="st"><h5>状态</h5><pre><ins>couponCode  已使用的优惠码（store，持久化）</ins>
+<ins>优惠码输入框的文字（CartView 局部草稿）</ins></pre></div>
+  <div class="dv"><h5>派生</h5><pre>priceOrder 里 <ins>subtotal → 减优惠 → 判断包邮 → total</ins>
+<ins>shortfall：还差多少能用券</ins></pre></div>
+  <div class="ev"><h5>事件</h5><pre><ins>使用优惠码 → 有效则 couponCode = 码；无效则提示</ins>
+<ins>取消优惠码</ins>　<ins>下单成功 → 清空 couponCode</ins></pre></div>
+  <div class="fx"><h5>副作用</h5><pre>couponCode 也要持久化</pre></div>
+</div>
+
+<p>
+  有两个业务问题必须先回答，再写代码：<strong>包邮按优惠前还是优惠后的金额判断？</strong>（本篇：优惠后。）<strong>打折的结果不是整分怎么办？</strong>（本篇：四舍五入到分。）
+  这些答案直接写进了 <code>priceOrder</code> 和它的测试用例里。测试的意义之一，就是把这些业务决定<strong>记录下来</strong>，以后有人改代码时不会无意中改变它们。
+</p>
+
+<p>
+  另外注意优惠码的两种状态：输入框里正在打的字是 CartView 的局部草稿，点了“使用”并且校验通过，才写进 store 的 <code>couponCode</code>。
+  和记账本的表单草稿是同一个道理。
+</p>
+
+<div class="code" data-lang="vue" data-file="src/views/CartView.vue"><pre>
+&lt;script setup&gt;
+import { ref } from 'vue'
+import { useCartStore } from '../stores/cart'
+import CartLine from '../components/CartLine.vue'
+import PriceSummary from '../components/PriceSummary.vue'
+import { formatCents } from '../lib/money'
+
+const cart = useCartStore()
+
+// 优惠码输入框是草稿：点“使用”之前，和购物车里的 couponCode 无关
+const couponInput = ref('')
+const couponError = ref('')
+function onApply() {
+  couponError.value = cart.applyCoupon(couponInput.value) ? '' : '优惠码无效'
+  if (!couponError.value) couponInput.value = ''
+}
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;h1&gt;购物车&lt;/h1&gt;
+  &lt;p v-if="!cart.items.length" class="empty"&gt;购物车是空的，&lt;RouterLink to="/"&gt;去逛逛&lt;/RouterLink&gt;&lt;/p&gt;
+  &lt;div v-else class="cart"&gt;
+    &lt;section&gt;
+      &lt;label class="select-all"&gt;
+        &lt;input type="checkbox" :checked="cart.allSelected" @change="cart.toggleAll()"&gt; 全选
+      &lt;/label&gt;
+      &lt;ul class="lines"&gt;
+        &lt;CartLine v-for="line in cart.lines" :key="line.productId" :line="line"
+                  @toggle="cart.toggle" @set-qty="cart.setQty" @remove="cart.remove" /&gt;
+      &lt;/ul&gt;
+    &lt;/section&gt;
+    &lt;aside class="panel"&gt;
+      &lt;form v-if="!cart.coupon" class="coupon" @submit.prevent="onApply"&gt;
+        &lt;input v-model="couponInput" placeholder="优惠码：SAVE15 / VIP90" aria-label="优惠码"&gt;
+        &lt;button class="ghost"&gt;使用&lt;/button&gt;
+      &lt;/form&gt;
+      &lt;p v-else class="coupon-on"&gt;
+        已使用「{{ cart.couponCode }}」{{ cart.coupon.label }}
+        &lt;button class="link" @click="cart.clearCoupon()"&gt;取消&lt;/button&gt;
+      &lt;/p&gt;
+      &lt;p v-if="couponError" class="warn"&gt;{{ couponError }}&lt;/p&gt;
+      &lt;p v-if="cart.summary.shortfall" class="muted"&gt;还差 {{ formatCents(cart.summary.shortfall) }} 可用此券&lt;/p&gt;
+      &lt;PriceSummary :summary="cart.summary" /&gt;
+      &lt;RouterLink v-if="cart.checkoutLines.length" to="/checkout" class="btn"&gt;去结算（{{ cart.checkoutLines.length }} 种）&lt;/RouterLink&gt;
+      &lt;button v-else disabled class="btn"&gt;请选择商品&lt;/button&gt;
+    &lt;/aside&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<h3 id="c2">变更二：库存不足、售罄、下架</h3>
+
+<p>
+  购物车里的商品，几天后再看可能已经卖完或下架了。直觉的做法是写一个 <code>watch</code>：发现库存不够，就自动把数量改小，或者把条目删掉。<strong>不要这样做。</strong>
+</p>
+<ul>
+  <li>自动修改用户的数据，用户会困惑：“我明明加了 3 个，怎么变成 1 个了？”</li>
+  <li>商品目录还在加载时，所有商品都“找不到”，自动删除会把购物车清空。</li>
+  <li>“状态变了就去改另一个状态”的 watch，会让数据流变得难以追踪。</li>
+</ul>
+<p>
+  更好的做法是：<strong>问题是派生出来的，修正由用户的事件完成</strong>。<code>lines</code> 里每一行都带一个 <code>problem</code>（只在商品目录加载完成后才判断），
+  有问题的行标红、不参与结算，用户自己决定是减少数量还是删除。<code>checkoutLines</code> 天然排除了它们，合计也就自动正确了。
+</p>
+
+<h3 id="c3">变更三：多个标签页同步</h3>
+
+<p>
+  用户在两个标签页里都打开了商城，在一个里加了商品，另一个的角标没变。localStorage 被修改时，浏览器会在<strong>其他</strong>同源标签页里触发 <code>storage</code> 事件，监听它，再从存储里重新读一次就行：
+</p>
+
+<div class="code" data-lang="js"><pre>
+// App.vue
+function onStorage(e) {
+  if (e.key === CART_STORAGE_KEY) cart.syncFromStorage()
+}
+onMounted(() =&gt; window.addEventListener('storage', onStorage))
+onUnmounted(() =&gt; window.removeEventListener('storage', onStorage))
+</pre></div>
+
+<p>
+  因为购物车的所有读写都经过 cart store 这<strong>一个入口</strong>，同步只需要在一处替换 <code>items</code>，角标、列表、金额全部自动更新。
+  如果购物车数据散落在各个组件里，这个需求会难得多。
+</p>
+
+<h2 id="final">第 7 步：收尾</h2>
+
+<div class="code" data-lang="js" data-file="src/stores/cart.js"><pre>
+import { defineStore } from 'pinia'
+import { ref, computed, watch } from 'vue'
+import { useCatalogStore } from './catalog'
+import { priceOrder, COUPONS } from '../lib/pricing'
+
+const STORAGE_KEY = 'cart-v1'
+
+function load() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY)) ?? {}
+  } catch {
+    return {}
+  }
+}
+
+export const useCartStore = defineStore('cart', () =&gt; {
+  const catalog = useCatalogStore() // 一个 store 可以直接使用另一个 store
+  const saved = load()
+
+  // ---------------- 状态 ----------------
+  // 只存“想买什么、买几个、勾没勾”，不存名称和价格：那些以商品目录为准
+  const items = ref(saved.items ?? []) // [{ productId, qty, selected }]
+  const couponCode = ref(saved.couponCode ?? '')
+
+  // ---------------- 派生 ----------------
+  // 购物车条目 + 商品目录 = 可以显示的商品行（相当于一次 JOIN）
+  const lines = computed(() =&gt; items.value.map((item) =&gt; {
+    const product = catalog.byId[item.productId] ?? null
+    let problem = ''
+    if (catalog.status === 'ready') {
+      if (!product) problem = '商品已下架'
+      else if (product.stock === 0) problem = '已售罄'
+      else if (product.stock &lt; item.qty) problem = `库存仅剩 ${product.stock} 件`
+    }
+    return { ...item, product, problem }
+  }))
+  const count = computed(() =&gt; items.value.reduce((n, i) =&gt; n + i.qty, 0))
+  const allSelected = computed(() =&gt; items.value.length &gt; 0 &amp;&amp; items.value.every((i) =&gt; i.selected))
+  // 真正要结算的：勾选了、商品信息已加载、而且没有问题
+  const checkoutLines = computed(() =&gt; lines.value.filter((l) =&gt; l.selected &amp;&amp; l.product &amp;&amp; !l.problem))
+  const summary = computed(() =&gt;
+    priceOrder(checkoutLines.value.map((l) =&gt; ({ price: l.product.price, qty: l.qty })), couponCode.value))
+  const coupon = computed(() =&gt; COUPONS[couponCode.value] ?? null)
+
+  // ---------------- 事件 ----------------
+  const find = (productId) =&gt; items.value.find((i) =&gt; i.productId === productId)
+  const qtyOf = (productId) =&gt; find(productId)?.qty ?? 0
+
+  function add(productId, qty = 1) {
+    const stock = catalog.byId[productId]?.stock ?? 0
+    const item = find(productId)
+    if (item) item.qty = Math.min(stock, item.qty + qty)
+    else if (stock &gt; 0) items.value.push({ productId, qty: Math.min(stock, qty), selected: true })
+  }
+  function setQty(productId, qty) {
+    const item = find(productId)
+    if (item) item.qty = Math.max(1, qty)
+  }
+  function remove(productId) {
+    items.value = items.value.filter((i) =&gt; i.productId !== productId)
+  }
+  function toggle(productId) {
+    const item = find(productId)
+    if (item) item.selected = !item.selected
+  }
+  function toggleAll() {
+    const next = !allSelected.value // 先算出目标值，再统一设置
+    for (const i of items.value) i.selected = next
+  }
+  function applyCoupon(code) {
+    const c = code.trim().toUpperCase()
+    if (!COUPONS[c]) return false
+    couponCode.value = c
+    return true
+  }
+  function clearCoupon() {
+    couponCode.value = ''
+  }
+  function removePurchased(productIds) {
+    items.value = items.value.filter((i) =&gt; !productIds.includes(i.productId))
+    couponCode.value = '' // 优惠券用掉了
+  }
+  // 其他标签页改了购物车：用存储里的新值替换内存里的
+  function syncFromStorage() {
+    const s = load()
+    items.value = s.items ?? []
+    couponCode.value = s.couponCode ?? ''
+  }
+
+  // ---------------- 副作用：持久化 ----------------
+  watch([items, couponCode], () =&gt; {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: 1, items: items.value, couponCode: couponCode.value }))
+  }, { deep: true })
+
+  return {
+    items, couponCode,
+    lines, count, allSelected, checkoutLines, summary, coupon,
+    qtyOf, add, setQty, remove, toggle, toggleAll, applyCoupon, clearCoupon, removePurchased, syncFromStorage,
+  }
+})
+
+export { STORAGE_KEY as CART_STORAGE_KEY }
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="src/App.vue"><pre>
+&lt;script setup&gt;
+import { onMounted, onUnmounted } from 'vue'
+import { useCatalogStore } from './stores/catalog'
+import { useCartStore, CART_STORAGE_KEY } from './stores/cart'
+import AppHeader from './components/AppHeader.vue'
+import DevServerPanel from './components/DevServerPanel.vue'
+
+const catalog = useCatalogStore()
+const cart = useCartStore()
+onMounted(() =&gt; catalog.load())
+
+// 另一个标签页改了购物车，这里同步过来（storage 事件只在“其他”标签页触发）
+function onStorage(e) {
+  if (e.key === CART_STORAGE_KEY) cart.syncFromStorage()
+}
+onMounted(() =&gt; window.addEventListener('storage', onStorage))
+onUnmounted(() =&gt; window.removeEventListener('storage', onStorage))
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;AppHeader /&gt;
+  &lt;main class="page"&gt;
+    &lt;RouterView /&gt;
+  &lt;/main&gt;
+  &lt;DevServerPanel /&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="dcard">
+  <div class="title">购物车 · 设计卡（最终版）<small>对照 v1 看看变了哪些</small></div>
+  <div class="st"><h5>状态</h5><pre><b>catalog store</b>（服务器数据的缓存）
+products · status · error
+<b>cart store</b>（持久化）
+items [{ productId, qty, selected }] · couponCode
+<b>组件内</b>
+详情页 qty · 优惠码草稿 · 结算页 state
+<b>URL</b>
+/product/:id 的 id</pre></div>
+  <div class="dv"><h5>派生</h5><pre>catalog.byId
+lines = items JOIN 商品 + problem
+count · allSelected · checkoutLines
+summary = priceOrder(checkoutLines, couponCode)
+详情页：product = byId[路由参数 id]</pre></div>
+  <div class="ev"><h5>事件</h5><pre>add · setQty · remove · toggle · toggleAll
+applyCoupon · clearCoupon
+提交订单 → 服务器核算 → 成功：removePurchased
+                      → 价格/库存变了：catalog.load()</pre></div>
+  <div class="fx"><h5>副作用</h5><pre>启动时 catalog.load()
+items、couponCode 变化 → 存 localStorage
+其他标签页修改 → syncFromStorage()</pre></div>
+</div>
+
+<h2 id="launch">上线清单</h2>
+
+<p>从这一篇开始，每个业务组件都附一份“上线前要检查什么”。演示能跑和能上线之间，差的就是这些：</p>
+
+<div class="tw"><table>
+  <tr><th>方面</th><th>检查项</th></tr>
+  <tr><td>空、加载、出错</td><td>空购物车有引导；商品目录加载中有占位、失败能重试；购物车先于目录渲染时不报错、不误判“已下架”</td></tr>
+  <tr><td>金额</td><td>全程整数分；显示统一用一个格式化函数；<code>priceOrder</code> 有单元测试；服务器重新核算</td></tr>
+  <tr><td>提交</td><td>防重复提交（按钮禁用 + 函数开头检查状态）；价格、库存变化时给出明确提示；网络失败可重试</td></tr>
+  <tr><td>边界</td><td>数量不能小于 1、不能超过库存、输入非数字时恢复原值；直接访问 <code>/checkout</code> 有守卫</td></tr>
+  <tr><td>无障碍</td><td>加减按钮有 <code>aria-label</code>；勾选框有可读的标签；角标数量变化用 <code>aria-live</code> 播报；错误提示用 <code>role="alert"</code></td></tr>
+  <tr><td>持久化</td><td>存储里带 <code>version</code>；读取失败时降级为空购物车而不是白屏；多标签页同步</td></tr>
+  <tr><td>测试</td><td>纯函数单测；一条端到端测试走完“加购 → 改数量 → 用券 → 改价 → 提交”</td></tr>
+</table></div>
+
+<h2 id="lib">自己写，还是用现成库</h2>
+
+<ul>
+  <li><strong>持久化</strong>：本篇在 store 里手写了一个 <code>watch</code>，十几行就够了，也看得清原理。如果项目里有很多 store 需要持久化，可以用 <code>pinia-plugin-persistedstate</code>，在 store 上加一个 <code>persist</code> 选项即可。</li>
+  <li><strong>数量调节器、复选框</strong>：Element Plus 的 <code>ElInputNumber</code>、Naive UI 的 <code>NInputNumber</code> 已经处理好了键盘、长按、精度等细节，公司项目直接用。自己写一遍的价值在于明白 <code>v-model</code> 组件是怎么回事。</li>
+  <li><strong>购物车列表</strong>：电商的购物车页面通常有强烈的设计风格，一般基于组件库的基础组件自己组装，而不是套一个现成的“购物车组件”。</li>
+  <li><strong>金额计算</strong>：一定自己写，并且写成纯函数加测试。这是业务规则，没有通用的库能替你决定“包邮按优惠前还是优惠后算”。如果涉及汇率、多币种，再考虑 <code>dinero.js</code> 这类专门处理金额的库。</li>
+</ul>
+
+<h2 id="review">复盘</h2>
+
+<h3 id="quiz">判断题</h3>
+<div class="quiz">
+  <details><summary>详情页上“选几件”的数量，要不要放进 cart store？</summary>
+    <p>不要。它只属于详情页，离开页面就没有意义了。放进 store 反而要操心“换一个商品时要不要重置”。只有跨页面、跨组件树共享的状态才进 store。</p></details>
+  <details><summary>购物车要不要存商品价格？订单呢？</summary>
+    <p>购物车不存：它是还没发生的意图，价格以商品目录为准。订单要存：它是已经发生的事实，下单那一刻的价格必须原样保留，以后改价不能篡改历史。</p></details>
+  <details><summary>前端已经算好了合计，下单时服务器为什么还要再算一遍？</summary>
+    <p>两个原因：前端的商品目录可能过时（价格、库存变了）；前端的任何数据都能被用户篡改。前端的金额只是预览，服务器的金额才算数。<code>expectedTotal</code> 的作用是让服务器发现“用户看到的和实际的不一样”，从而拒绝并让用户确认。</p></details>
+  <details><summary>发现某件商品库存不足，为什么不用 watch 自动把购物车里的数量改小？</summary>
+    <p>自动改用户的数据会让人困惑；商品目录未加载时会误判；而且“状态变了就去改另一个状态”会让数据流难以追踪。把问题作为派生数据显示出来，修正交给用户的操作。</p></details>
+  <details><summary><code>const { count, add } = useCartStore()</code> 有什么问题？</summary>
+    <p><code>count</code> 是 getter，解构后只是那一刻的数字，不会再更新；<code>add</code> 是函数，解构没问题。要解构状态和 getter，用 <code>storeToRefs(store)</code>。</p></details>
+  <details><summary>详情页的“当前商品”为什么用 <code>computed</code> 从路由参数派生，而不是在 <code>onMounted</code> 里查出来存进 <code>ref</code>？</summary>
+    <p>从详情页 A 点到详情页 B 时，Vue Router 会复用同一个组件实例，<code>onMounted</code> 不会再执行，<code>ref</code> 里还是 A。从 <code>props.id</code> 派生则永远和地址栏一致。URL 是状态，别再复制一份。</p></details>
+</div>
+
+<h3 id="pitfalls">后端出身容易踩的坑</h3>
+<ul>
+  <li><strong>相信前端算的金额</strong>：前端的一切都可以被篡改，金额、库存、权限，最终都要由服务器判定。</li>
+  <li><strong>把服务器数据当成前端自己的数据</strong>：商品目录只是一份缓存，随时可能过时。要想清楚什么时候刷新、发现过时后怎么办。</li>
+  <li><strong>所有状态都塞进 store</strong>：store 是给共享状态用的，局部状态留在组件里。</li>
+  <li><strong>业务计算散落在组件里</strong>：抽成纯函数，才能复用、才能测试。</li>
+  <li><strong>用 watch 修补数据</strong>：问题用派生数据暴露，修正交给事件。</li>
+</ul>
+
+<div class="box key">
+  <div class="t">本篇新增的方法</div>
+  <ol>
+    <li>给每份状态问一句“谁在用”：组件内、父子共用、跨页面，分别放在组件、父组件、store。</li>
+    <li>区分意图和事实：意图存引用、以最新数据为准；事实存快照、永不改变。</li>
+    <li>业务计算写成纯函数，响应式代码只负责准备输入；用测试记录业务决定。</li>
+    <li>服务器数据是缓存：设计好加载状态、过时后如何发现、如何刷新。</li>
+    <li>前端的金额只是预览，以服务器为准。</li>
+    <li>URL 也是状态：能从路由派生的，不另存一份。</li>
+  </ol>
+</div>
+
+<div class="exercise">
+  <h3>练习</h3>
+  <ol>
+    <li><strong>降价提醒</strong>：购物车里的商品如果比加入时降价了，显示“比加入时降了 ¥10”。这需要在条目上记什么？它算意图还是事实？会不会破坏“购物车不存价格”的原则？</li>
+    <li><strong>定时刷新目录</strong>：用户在购物车页停留超过 5 分钟，自动重新拉一次商品目录。这是副作用，它的启动和清理分别放在哪里？离开购物车页时要停吗？</li>
+    <li><strong>登录后合并购物车</strong>：未登录时购物车存在本地，登录后要和服务器上的购物车合并，同一商品数量相加。设计卡哪几格要变？冲突（合并后超过库存）怎么处理？</li>
+    <li><strong>给 <code>CheckoutView</code> 写端到端测试</strong>：用 Playwright 模拟“改价后提交被拒、确认后成功”。（提示：示例工程的“模拟服务器”面板就是为此准备的。）</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+<script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/vue-router@4.5.1/dist/vue-router.global.prod.js"></script>
+<script src="https://unpkg.com/pinia@3.0.3/dist/pinia.iife.prod.js"></script>
+<script>
+  if (window.Vue && window.VueRouter && window.Pinia) {
+    const { createApp, ref, computed } = Vue
+    const { createRouter, createMemoryHistory } = VueRouter
+    const { createPinia, defineStore } = Pinia
+    const fmt = new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' })
+    const money = (c) => fmt.format(c / 100)
+
+    // ---- 模拟服务器 ----
+    const server = {
+      products: [
+        { id: 'p1', name: '手冲咖啡壶', emoji: '☕', price: 12900, stock: 5 },
+        { id: 'p2', name: '机械键盘', emoji: '⌨️', price: 39900, stock: 3 },
+        { id: 'p4', name: '帆布托特包', emoji: '👜', price: 5900, stock: 20 },
+        { id: 'p5', name: '绿植盆栽', emoji: '🪴', price: 3500, stock: 0 },
+        { id: 'p6', name: '方格笔记本', emoji: '📓', price: 1990, stock: 50 },
+      ],
+      nextOrder: 1001,
+    }
+    const serverPrice = ref(12900)
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+    const api = {
+      async fetchProducts() { await wait(300); return structuredClone(server.products) },
+      async submitOrder({ items, couponCode, expectedTotal }) {
+        await wait(500)
+        const lines = items.map(({ productId, qty }) => {
+          const p = server.products.find((p) => p.id === productId)
+          if (p.stock < qty) throw Object.assign(new Error(`「${p.name}」库存不足`), { code: 'OUT_OF_STOCK' })
+          return { productId, name: p.name, emoji: p.emoji, price: p.price, qty }
+        })
+        const s = priceOrder(lines, couponCode)
+        if (s.total !== expectedTotal) throw Object.assign(new Error('商品价格有变动'), { code: 'PRICE_CHANGED' })
+        lines.forEach((l) => { server.products.find((p) => p.id === l.productId).stock -= l.qty })
+        return { id: server.nextOrder++, lines, ...s }
+      },
+    }
+
+    // ---- 纯函数：金额 ----
+    const COUPONS = { SAVE15: { label: '满 100 减 15', min: 10000, discount: () => 1500 } }
+    function priceOrder(lines, couponCode = '') {
+      const subtotal = lines.reduce((s, l) => s + l.price * l.qty, 0)
+      const c = COUPONS[couponCode]
+      const discount = c && subtotal >= c.min ? c.discount(subtotal) : 0
+      const shortfall = c && subtotal < c.min ? c.min - subtotal : 0
+      const after = subtotal - discount
+      const shipping = lines.length === 0 || after >= 9900 ? 0 : 1000
+      return { subtotal, discount, shortfall, shipping, total: after + shipping }
+    }
+
+    // ---- 两个 store（与示例工程相同，只是不做持久化） ----
+    const useCatalog = defineStore('catalog', () => {
+      const products = ref([])
+      const status = ref('idle')
+      const byId = computed(() => Object.fromEntries(products.value.map((p) => [p.id, p])))
+      async function load() { status.value = 'loading'; products.value = await api.fetchProducts(); status.value = 'ready' }
+      return { products, status, byId, load }
+    })
+    const useCart = defineStore('cart', () => {
+      const catalog = useCatalog()
+      const items = ref([])
+      const couponCode = ref('')
+      const lines = computed(() => items.value.map((it) => {
+        const product = catalog.byId[it.productId] ?? null
+        const problem = catalog.status === 'ready' && product && product.stock < it.qty ? `库存仅剩 ${product.stock} 件` : ''
+        return { ...it, product, problem }
+      }))
+      const count = computed(() => items.value.reduce((n, i) => n + i.qty, 0))
+      const allSelected = computed(() => items.value.length > 0 && items.value.every((i) => i.selected))
+      const checkoutLines = computed(() => lines.value.filter((l) => l.selected && l.product && !l.problem))
+      const summary = computed(() => priceOrder(checkoutLines.value.map((l) => ({ price: l.product.price, qty: l.qty })), couponCode.value))
+      const find = (id) => items.value.find((i) => i.productId === id)
+      const qtyOf = (id) => find(id)?.qty ?? 0
+      function add(id) {
+        const stock = catalog.byId[id]?.stock ?? 0
+        const it = find(id)
+        if (it) it.qty = Math.min(stock, it.qty + 1)
+        else if (stock > 0) items.value.push({ productId: id, qty: 1, selected: true })
+      }
+      function setQty(id, q) { const it = find(id); if (it) it.qty = Math.max(1, Math.min(q, catalog.byId[id]?.stock ?? q)) }
+      function remove(id) { items.value = items.value.filter((i) => i.productId !== id) }
+      function toggle(id) { const it = find(id); if (it) it.selected = !it.selected }
+      function toggleAll() { const next = !allSelected.value; items.value.forEach((i) => { i.selected = next }) }
+      function applyCoupon(code) { const c = code.trim().toUpperCase(); if (!COUPONS[c]) return false; couponCode.value = c; return true }
+      function removePurchased(ids) { items.value = items.value.filter((i) => !ids.includes(i.productId)); couponCode.value = '' }
+      return { items, couponCode, lines, count, allSelected, checkoutLines, summary, qtyOf, add, setQty, remove, toggle, toggleAll, applyCoupon, removePurchased }
+    })
+
+    // ---- 页面组件 ----
+    const ListPage = {
+      setup() { return { catalog: useCatalog(), cart: useCart(), money } },
+      template: `
+        <p v-if="catalog.status !== 'ready'" class="muted">商品加载中…</p>
+        <div v-else class="shop-grid">
+          <div v-for="p in catalog.products" :key="p.id" class="shop-card">
+            <span class="shop-pic">{{ p.emoji }}</span>
+            <b>{{ p.name }}</b>
+            <span class="shop-price">{{ money(p.price) }}</span>
+            <button :disabled="cart.qtyOf(p.id) >= p.stock" @click="cart.add(p.id)">{{ p.stock ? '加入购物车' : '已售罄' }}</button>
+            <small v-if="cart.qtyOf(p.id)" class="muted">已有 {{ cart.qtyOf(p.id) }} 件</small>
+          </div>
+        </div>`,
+    }
+    const SummaryBox = {
+      props: ['summary'],
+      setup() { return { money } },
+      template: `
+        <div class="shop-sum">
+          <span>商品</span><span>{{ money(summary.subtotal) }}</span>
+          <template v-if="summary.discount"><span>优惠</span><span class="save">−{{ money(summary.discount) }}</span></template>
+          <span>运费</span><span>{{ summary.shipping ? money(summary.shipping) : '包邮' }}</span>
+          <b>合计</b><b>{{ money(summary.total) }}</b>
+        </div>`,
+    }
+    const CartPage = {
+      components: { SummaryBox },
+      setup() {
+        const cart = useCart()
+        const code = ref('')
+        const err = ref('')
+        const apply = () => { err.value = cart.applyCoupon(code.value) ? '' : '优惠码无效'; if (!err.value) code.value = '' }
+        return { cart, code, err, apply, money }
+      },
+      template: `
+        <p v-if="!cart.items.length" class="muted">购物车是空的，<router-link to="/">去逛逛</router-link></p>
+        <template v-else>
+          <label class="shop-all"><input type="checkbox" :checked="cart.allSelected" @change="cart.toggleAll()"> 全选</label>
+          <div v-for="l in cart.lines" :key="l.productId" class="shop-line" :class="{ bad: l.problem }">
+            <input type="checkbox" :checked="l.selected" @change="cart.toggle(l.productId)" :aria-label="'选择 ' + (l.product?.name ?? '')">
+            <span class="grow">{{ l.product?.emoji }} {{ l.product?.name }} <small class="muted">{{ l.product && money(l.product.price) }}</small>
+              <small v-if="l.problem" class="bad-t"> {{ l.problem }}</small></span>
+            <span class="shop-step"><button @click="cart.setQty(l.productId, l.qty - 1)" :disabled="l.qty <= 1" aria-label="减少">−</button>{{ l.qty }}<button @click="cart.setQty(l.productId, l.qty + 1)" aria-label="增加">+</button></span>
+            <button class="ghost" @click="cart.remove(l.productId)">删除</button>
+          </div>
+          <form v-if="!cart.couponCode" class="shop-coupon" @submit.prevent="apply">
+            <input v-model="code" placeholder="优惠码 SAVE15" aria-label="优惠码"><button class="ghost">使用</button>
+            <span v-if="err" class="bad-t">{{ err }}</span>
+          </form>
+          <p v-else class="muted">已用「{{ cart.couponCode }}」<span v-if="cart.summary.shortfall">，还差 {{ money(cart.summary.shortfall) }} 可用</span></p>
+          <SummaryBox :summary="cart.summary" />
+          <router-link v-if="cart.checkoutLines.length" to="/checkout" class="shop-go">去结算</router-link>
+        </template>`,
+    }
+    const CheckoutPage = {
+      components: { SummaryBox },
+      setup() {
+        const cart = useCart(), catalog = useCatalog()
+        const state = ref({ status: 'idle' })
+        async function place() {
+          if (state.value.status === 'submitting') return
+          state.value = { status: 'submitting' }
+          try {
+            const order = await api.submitOrder({ items: cart.checkoutLines.map((l) => ({ productId: l.productId, qty: l.qty })),
+                                                  couponCode: cart.couponCode, expectedTotal: cart.summary.total })
+            cart.removePurchased(order.lines.map((l) => l.productId))
+            state.value = { status: 'done', order }
+          } catch (e) {
+            await catalog.load()
+            state.value = { status: 'failed', message: e.message + (e.code === 'PRICE_CHANGED' ? '，已更新为最新价格，请确认后重新提交' : '') }
+          }
+        }
+        return { cart, state, place, money }
+      },
+      template: `
+        <div v-if="state.status === 'done'">
+          <b>下单成功 #{{ state.order.id }}</b>
+          <div v-for="l in state.order.lines" :key="l.productId" class="muted">{{ l.emoji }} {{ l.name }} × {{ l.qty }}　单价快照 {{ money(l.price) }}</div>
+          <p>实付 {{ money(state.order.total) }}　<router-link to="/">继续购物</router-link></p>
+        </div>
+        <template v-else>
+          <div v-for="l in cart.checkoutLines" :key="l.productId" class="shop-line">
+            <span class="grow">{{ l.product.emoji }} {{ l.product.name }} × {{ l.qty }}</span><span>{{ money(l.product.price * l.qty) }}</span>
+          </div>
+          <p v-if="!cart.checkoutLines.length" class="muted">没有可结算的商品，<router-link to="/cart">回购物车</router-link></p>
+          <SummaryBox :summary="cart.summary" />
+          <p v-if="state.status === 'failed'" class="bad-t" role="alert">{{ state.message }}</p>
+          <button :disabled="state.status === 'submitting' || !cart.checkoutLines.length" @click="place">
+            {{ state.status === 'submitting' ? '提交中…' : '提交订单 ' + money(cart.summary.total) }}</button>
+        </template>`,
+    }
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: ListPage },
+        { path: '/cart', component: CartPage },
+        { path: '/checkout', component: CheckoutPage, beforeEnter: () => (useCart().checkoutLines.length ? true : '/cart') },
+      ],
+    })
+    const pinia = createPinia()
+    const app = createApp({
+      setup() {
+        const catalog = useCatalog()
+        catalog.load()
+        const bump = () => {
+          const p = server.products.find((p) => p.id === 'p1')
+          p.price += 1000
+          serverPrice.value = p.price
+        }
+        return { cart: useCart(), catalog, serverPrice, bump }
+      },
+    })
+    app.use(pinia).use(router)
+    router.push('/').then(() => app.mount('#demo-shop'))
+  }
+</script>
+</body>
+</html>

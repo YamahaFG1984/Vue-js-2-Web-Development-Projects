@@ -157,3 +157,35 @@
 .ldg-rec b { font-variant-numeric: tabular-nums; }
 .ldg-rec button.ghost { border: none !important; padding: 2px 4px !important; font-size: 13px !important; }
 .ldg-json { font-size: 11px; word-break: break-all; color: var(--fg-soft); margin: 0 0 2px 8px; }
+
+/* ---------- 购物车演示 ---------- */
+.shop { display: grid; grid-template-columns: 1fr 250px; gap: 18px; align-items: start; }
+@media (width <= 760px) { .shop { grid-template-columns: 1fr; } }
+.shop-main { min-width: 0; font-size: 14px; display: flex; flex-direction: column; gap: 10px; }
+.shop-bar { display: flex; gap: 8px; align-items: center; background: var(--panel-2); border-radius: 8px; padding: 4px 6px; }
+.shop-bar button.ghost { padding: 0 10px !important; }
+.shop-url { flex: 1; font-family: var(--mono); font-size: 12.5px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 2px 12px; color: var(--fg-soft); }
+.shop-head { display: flex; justify-content: space-between; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.shop-head a { text-decoration: none; color: var(--fg); font-weight: 700; position: relative; }
+.shop-badge { background: var(--accent); color: #fff; border-radius: 10px; padding: 0 6px; font-size: 12px; margin-left: 2px; }
+.shop-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+.shop-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.shop-card button { font-size: 13px !important; padding: 3px 10px !important; }
+.shop-pic { font-size: 30px; }
+.shop-price { color: var(--accent-2); font-weight: 700; }
+.shop-all { display: block; }
+.shop-line { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-bottom: 1px dashed var(--line); flex-wrap: wrap; }
+.shop-line.bad { background: var(--red-bg); }
+.shop-line .grow { flex: 1; min-width: 120px; }
+.shop-line button.ghost { border: none !important; padding: 2px 6px !important; font-size: 13px !important; }
+.bad-t { color: var(--red); font-size: 12.5px; }
+.shop-step { display: inline-flex; align-items: center; gap: 8px; }
+.shop-step button { padding: 0 8px !important; font-size: 13px !important; background: transparent !important; color: var(--accent-2) !important; }
+.shop-coupon { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.shop-coupon input { width: 140px; padding: 4px 8px !important; }
+.shop-coupon button { padding: 3px 12px !important; }
+.shop-sum { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; max-width: 260px; margin-left: auto; font-variant-numeric: tabular-nums; }
+.shop-sum span:nth-child(even), .shop-sum b:last-child { text-align: right; }
+.shop-sum .save { color: var(--green); }
+.shop-go { align-self: flex-end; background: var(--accent); color: #fff !important; border-radius: 7px; padding: 5px 16px; text-decoration: none; }
+.dgm text.mono { white-space: pre; }
