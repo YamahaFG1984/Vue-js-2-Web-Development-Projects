@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 8 章 · 项目六：Meteor 实时仪表盘 — React 项目实战教程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="assets/react.css">
+<style>
+  .gauges { display: flex; gap: 28px; justify-content: center; flex-wrap: wrap; }
+  .gauge { text-align: center; width: 170px; }
+  .gauge svg { width: 170px; height: 100px; display: block; }
+  .gauge .track { fill: none; stroke: var(--line); stroke-width: 12; stroke-linecap: round; }
+  .gauge .bar { fill: none; stroke: var(--accent); stroke-width: 12; stroke-linecap: round; transition: stroke-dashoffset .6s ease; }
+  .gauge.danger .bar { stroke: var(--red); }
+  .gauge .title { font-weight: 700; margin-top: 2px; }
+  .gauge .info { color: var(--fg-soft); font-size: 22px; font-weight: 700; line-height: 1.2; }
+  .m-list { max-height: 180px; overflow: auto; margin-top: 12px; font-size: 13px; border: 1px solid var(--line); border-radius: 8px; }
+  .m-list:empty { display: none; }
+  .m-list > div { display: grid; grid-template-columns: 1fr 60px 50px; padding: 4px 10px; border-bottom: 1px solid var(--line); }
+  .m-list > div:last-child { border-bottom: none; }
+  .m-list .err { color: var(--red); font-weight: 700; }
+  .m-list .val { text-align: right; font-family: var(--mono); }
+</style>
+<script type="importmap">
+{ "imports": {
+  "react": "https://esm.sh/react@19.2.0",
+  "react-dom/client": "https://esm.sh/react-dom@19.2.0/client?external=react",
+  "htm": "https://esm.sh/htm@3.1.1"
+} }
+</script>
+</head>
+<body data-chapter="8">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 8 章 · 项目六</span>
+<h1>Meteor 实时仪表盘</h1>
+<p class="lede">
+  最后一个项目换一套全栈技术栈：<strong>Meteor</strong>。我们做一个监控产品生产情况的实时仪表盘 ——
+  在一个窗口里录入数据，另一个窗口里的图表会<strong>立刻</strong>跟着变化，而我们几乎不用写任何网络通信代码。
+  React 是 Meteor 支持最好的前端库之一，集成非常自然。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>了解 Meteor 的架构：Minimongo、DDP、MongoDB 和“全栈响应式”</li>
+    <li>用 Meteor 3 创建 React 项目，理解 Meteor 的目录约定</li>
+    <li>用集合存数据，用方法修改数据并获得乐观更新</li>
+    <li>用 <code>useSubscribe</code> 和 <code>useFind</code> 把实时数据接入 React 组件</li>
+    <li>自己用 SVG 画一个半圆进度仪表</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="overview">我们要做什么</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="仪表盘页显示平均值和错误率两个半圆仪表及记录列表，生成页有两个按钮">
+  <rect class="bx" x="20" y="14" width="440" height="232" rx="12"/>
+  <text class="ttl" x="240" y="38" text-anchor="middle">仪表盘 /</text>
+  <path d="M90 140 A60 60 0 0 1 210 140" style="fill:none;stroke:var(--line);stroke-width:12;stroke-linecap:round"/>
+  <path d="M90 140 A60 60 0 0 1 192 98" style="fill:none;stroke:var(--accent);stroke-width:12;stroke-linecap:round"/>
+  <text class="ttl" x="150" y="134" text-anchor="middle" style="font-size:20px">62</text>
+  <text class="sm" x="150" y="160" text-anchor="middle">平均值</text>
+  <path d="M270 140 A60 60 0 0 1 390 140" style="fill:none;stroke:var(--line);stroke-width:12;stroke-linecap:round"/>
+  <path d="M270 140 A60 60 0 0 1 287 98" style="fill:none;stroke:var(--red);stroke-width:12;stroke-linecap:round"/>
+  <text class="ttl" x="330" y="134" text-anchor="middle" style="font-size:20px">12%</text>
+  <text class="sm" x="330" y="160" text-anchor="middle">错误率</text>
+  <rect class="bx-d" x="50" y="178" width="380" height="56" rx="6"/>
+  <text class="mono sm" x="64" y="198">2026/11/5 14:02:11　　　　　　　 73</text>
+  <text class="mono sm" x="64" y="222">2026/11/5 14:02:08　<tspan class="on-r">错误</tspan>　　　　　 18</text>
+  <rect class="bx" x="500" y="14" width="240" height="232" rx="12"/>
+  <text class="ttl" x="620" y="38" text-anchor="middle">生成测量 /generate</text>
+  <rect class="bx-a" x="540" y="80" width="160" height="40" rx="8"/>
+  <text class="on-a" x="620" y="105" text-anchor="middle">生成测量值</text>
+  <rect class="bx-r" x="540" y="136" width="160" height="40" rx="8"/>
+  <text class="on-r" x="620" y="161" text-anchor="middle">生成错误</text>
+  <text class="sm" x="620" y="212" text-anchor="middle">没有真实传感器，</text>
+  <text class="sm" x="620" y="228" text-anchor="middle">用按钮模拟</text>
+  <path class="ln-a" d="M498 128 H464" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="480" y="120" text-anchor="middle">实时</text>
+</svg>
+<figcaption>图 8-1　仪表盘页 + 数据生成页</figcaption>
+</figure>
+
+<h2 id="meteor">Meteor 是什么</h2>
+
+<p>Meteor 是一个<strong>全栈</strong> JavaScript 框架，它把前端、后端、数据库和两者之间的通信打包成一个整体：</p>
+
+<ul>
+  <li><strong>客户端</strong>：可以用 React、Vue、Svelte 等任何前端库，内置一个客户端数据库 <strong>Minimongo</strong>；</li>
+  <li><strong>服务器</strong>：基于 Node.js；</li>
+  <li><strong>数据库</strong>：MongoDB；</li>
+  <li><strong>通信被抽象掉了</strong>：客户端和服务器之间通过 WebSocket 上的 DDP 协议自动同步数据；</li>
+  <li>还有命令行工具、构建系统、混合移动应用打包等。</li>
+</ul>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="Meteor 架构：多个浏览器客户端通过 DDP 连接服务器和 MongoDB">
+  <rect class="bx-g" x="20" y="30" width="230" height="110" rx="12"/>
+  <text class="ttl on-g" x="135" y="54" text-anchor="middle">浏览器 A</text>
+  <rect class="bx" x="36" y="66" width="96" height="60" rx="8"/>
+  <text class="sm" x="84" y="92" text-anchor="middle">React 组件</text>
+  <text class="sm" x="84" y="110" text-anchor="middle">（界面）</text>
+  <rect class="bx-a" x="140" y="66" width="96" height="60" rx="8"/>
+  <text class="sm on-a" x="188" y="92" text-anchor="middle">Minimongo</text>
+  <text class="sm" x="188" y="110" text-anchor="middle">客户端缓存</text>
+  <rect class="bx-g" x="20" y="170" width="230" height="110" rx="12"/>
+  <text class="ttl on-g" x="135" y="194" text-anchor="middle">浏览器 B</text>
+  <rect class="bx" x="36" y="206" width="96" height="60" rx="8"/>
+  <text class="sm" x="84" y="240" text-anchor="middle">React 组件</text>
+  <rect class="bx-a" x="140" y="206" width="96" height="60" rx="8"/>
+  <text class="sm on-a" x="188" y="240" text-anchor="middle">Minimongo</text>
+  <rect class="bx-b" x="400" y="90" width="180" height="130" rx="12"/>
+  <text class="ttl on-b" x="490" y="116" text-anchor="middle">Meteor 服务器</text>
+  <text class="sm" x="490" y="140" text-anchor="middle">Node.js</text>
+  <text class="sm" x="490" y="162" text-anchor="middle">Methods（修改数据）</text>
+  <text class="sm" x="490" y="182" text-anchor="middle">Publications（推送数据）</text>
+  <rect class="bx-p" x="620" y="120" width="120" height="70" rx="12"/>
+  <text class="ttl on-p" x="680" y="150" text-anchor="middle">MongoDB</text>
+  <text class="sm" x="680" y="170" text-anchor="middle">持久化</text>
+  <path class="ln-p" d="M582 155 H616" marker-end="url(#ar)"/>
+  <path class="ln-p" d="M616 165 H584" marker-end="url(#ar)"/>
+  <path class="ln-a" d="M252 85 C330 85 340 130 396 135" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M396 145 C340 150 320 100 254 100" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M252 225 C330 225 340 180 396 175" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M396 185 C340 190 320 240 254 240" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="325" y="62" text-anchor="middle">DDP over WebSocket</text>
+  <text class="halo sm on-a" x="325" y="270" text-anchor="middle">长连接，双向实时</text>
+</svg>
+<figcaption>图 8-2　Meteor 架构：每个客户端都有一份数据库的“镜像”</figcaption>
+</figure>
+
+<p>整个栈都是响应式和实时的：一个客户端修改了数据，所有其他客户端都会收到新数据，界面自动更新。</p>
+
+<div class="box note">
+  <div class="t">&#9432; Meteor 3</div>
+  <p>
+    Meteor 3（2024 年发布）移除了基于 Fibers 的同步写法，全面改用 <code>async/await</code>，并支持最新的 Node.js LTS：
+    <code>insert</code> 变成 <code>insertAsync</code>、<code>Meteor.call</code> 变成 <code>Meteor.callAsync</code>。前端构建也支持接入现代打包工具，具体以 <code>meteor create</code> 生成的项目为准。
+  </p>
+</div>
+
+<h2 id="setup">创建项目</h2>
+
+<div class="code" data-lang="bash" data-file="终端"><pre>
+npx meteor                          # 安装 Meteor（需要 Node.js）
+meteor create --react dashboard     # 用 React 模板创建项目
+cd dashboard
+meteor npm install react-router     # 用 meteor npm，保证 Node/npm 版本一致
+meteor                              # 启动：同时启动 MongoDB、服务器和前端构建
+</pre></div>
+
+<div class="code" data-lang="text" data-file="终端输出"><pre>
+=&gt; Started proxy.
+=&gt; Started MongoDB.
+=&gt; Started your app.
+
+=&gt; App running at: http://localhost:3000/
+</pre></div>
+
+<div class="tree"><b>dashboard/</b>
+├── package.json         <i># "meteor.mainModule" 指定客户端/服务端入口</i>
+├── <b>client/</b>
+│   ├── main.html        <i># 页面骨架</i>
+│   └── main.jsx         <i># 客户端入口：渲染 React 应用</i>
+├── <b>server/</b>
+│   └── main.js          <i># 服务端入口</i>
+└── <b>imports/</b>
+    ├── <b>api/</b>             <i># 集合、方法、发布（两端共享）</i>
+    └── <b>ui/</b>              <i># React 组件</i></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="Meteor 代码的运行位置">
+  <rect class="bx-g" x="20" y="40" width="200" height="120" rx="12"/>
+  <text class="ttl on-g" x="120" y="66" text-anchor="middle">client/main.jsx</text>
+  <text class="sm" x="120" y="92" text-anchor="middle">只在浏览器运行</text>
+  <text class="mono sm" x="120" y="118" text-anchor="middle">import '/imports/ui/…'</text>
+  <text class="mono sm" x="120" y="138" text-anchor="middle">import '/imports/api/…'</text>
+  <rect class="bx-a" x="280" y="40" width="200" height="120" rx="12"/>
+  <text class="ttl on-a" x="380" y="66" text-anchor="middle">imports/api/</text>
+  <text class="sm" x="380" y="92" text-anchor="middle">集合 + 方法</text>
+  <text class="sm" x="380" y="114" text-anchor="middle">两边都导入 → 两边都运行</text>
+  <text class="sm" x="380" y="136" text-anchor="middle">（方法因此能乐观更新）</text>
+  <rect class="bx-b" x="540" y="40" width="200" height="120" rx="12"/>
+  <text class="ttl on-b" x="640" y="66" text-anchor="middle">server/main.js</text>
+  <text class="sm" x="640" y="92" text-anchor="middle">只在服务器运行</text>
+  <text class="mono sm" x="640" y="118" text-anchor="middle">import '/imports/api/…'</text>
+  <text class="sm" x="640" y="138" text-anchor="middle">+ 发布（publications）</text>
+  <path class="ln-g" d="M222 120 H276" marker-end="url(#ar)"/>
+  <path class="ln-b" d="M538 120 H484" marker-end="url(#ar)"/>
+  <text class="lbl" x="380" y="196" text-anchor="middle">imports/ 下的文件只有被 import 时才会执行 —— 依赖关系是显式的</text>
+</svg>
+<figcaption>图 8-3　Meteor 的代码在哪里运行</figcaption>
+</figure>
+
+<h3>第一个页面与路由</h3>
+
+<div class="code" data-lang="html" data-file="client/main.html"><pre>
+&lt;head&gt;
+  &lt;title&gt;生产仪表盘&lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;div id="react-target"&gt;&lt;/div&gt;
+&lt;/body&gt;
+</pre></div>
+
+<p>这不是完整的 HTML 文件，而是 Meteor 的特殊格式：<code>&lt;head&gt;</code> 和 <code>&lt;body&gt;</code> 里的内容会被<strong>注入</strong>到最终页面的对应位置。</p>
+
+<div class="code" data-lang="jsx" data-file="client/main.jsx"><pre>
+import { Meteor } from 'meteor/meteor'
+import { createRoot } from 'react-dom/client'
+import { RouterProvider } from 'react-router'
+import { router } from '/imports/ui/router.jsx'
+import '/imports/api/measures.js'       // 集合和方法：客户端也要有一份
+
+// 等 Meteor 的各个系统准备好之后再渲染
+Meteor.startup(() =&gt; {
+  createRoot(document.getElementById('react-target')).render(&lt;RouterProvider router={router} /&gt;)
+})
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="imports/ui/router.jsx"><pre>
+import { createBrowserRouter, NavLink, Outlet } from 'react-router'
+import ProductionDashboard from './ProductionDashboard.jsx'
+import ProductionGenerator from './ProductionGenerator.jsx'
+
+function App() {
+  return (
+    &lt;div className="app"&gt;
+      &lt;nav&gt;
+        &lt;NavLink to="/"&gt;仪表盘&lt;/NavLink&gt;
+        &lt;NavLink to="/generate"&gt;生成测量&lt;/NavLink&gt;
+      &lt;/nav&gt;
+      &lt;Outlet /&gt;
+    &lt;/div&gt;
+  )
+}
+
+export const router = createBrowserRouter([
+  {
+    path: '/',
+    Component: App,
+    children: [
+      { index: true, Component: ProductionDashboard },
+      { path: 'generate', Component: ProductionGenerator },
+    ],
+  },
+])
+</pre></div>
+
+<p>样式可以从仓库 <code>chapter08/client/style.styl</code> 改写为 CSS 放进 <code>client/main.css</code>（Meteor 会自动加载 <code>client/</code> 下的 CSS）。</p>
+
+<h2 id="data">集合与方法</h2>
+
+<h3>集合（Collection）</h3>
+
+<p>Meteor 集合是一个响应式的文档列表：在服务器上读写 MongoDB，在客户端读写 Minimongo 中的缓存副本。</p>
+
+<h3>方法（Method）与乐观更新</h3>
+
+<p>
+  Meteor 方法在客户端调用时，会<strong>同时</strong>在客户端（操作 Minimongo，作为“模拟”）和服务器（操作 MongoDB，作为权威结果）执行。
+  客户端那份让界面瞬间更新，服务器完成后如果结果不同会自动纠正 —— 这就是 Meteor 内置的<strong>乐观更新</strong>。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="Meteor 方法的乐观更新时序">
+  <rect class="bx-g" x="20" y="14" width="160" height="34" rx="8"/><text class="on-g ttl" x="100" y="36" text-anchor="middle">浏览器（Minimongo）</text>
+  <rect class="bx-b" x="560" y="14" width="180" height="34" rx="8"/><text class="on-b ttl" x="650" y="36" text-anchor="middle">服务器（MongoDB）</text>
+  <path class="ln-d" d="M100 50 V260"/><path class="ln-d" d="M650 50 V260"/>
+  <rect class="bx-a" x="14" y="66" width="172" height="30" rx="6"/>
+  <text class="sm on-a" x="100" y="86" text-anchor="middle">callAsync('measure.add')</text>
+  <path class="ln-a" d="M188 110 H646" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="400" y="104" text-anchor="middle">① 通过 DDP 发给服务器</text>
+  <rect class="bx-g" x="30" y="124" width="140" height="44" rx="6"/>
+  <text class="sm on-g" x="100" y="142" text-anchor="middle">② 客户端模拟执行</text>
+  <text class="sm" x="100" y="160" text-anchor="middle">界面立即更新 ⚡</text>
+  <rect class="bx-b" x="580" y="124" width="140" height="44" rx="6"/>
+  <text class="sm on-b" x="650" y="142" text-anchor="middle">③ 服务器真正执行</text>
+  <text class="sm" x="650" y="160" text-anchor="middle">写入 MongoDB</text>
+  <path class="ln-b" d="M646 196 H104" marker-end="url(#ar)"/>
+  <text class="halo sm on-b" x="400" y="190" text-anchor="middle">④ 推送权威结果，若与模拟不同则自动纠正</text>
+  <path class="ln-b" d="M646 228 H350" marker-end="url(#ar)"/>
+  <text class="halo sm on-b" x="250" y="232" text-anchor="middle">⑤ 同时推送给所有订阅了的客户端</text>
+</svg>
+<figcaption>图 8-4　方法在两端运行：客户端先“猜”，服务器再“确认”</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="imports/api/measures.js"><pre>
+import { Meteor } from 'meteor/meteor'
+import { Mongo } from 'meteor/mongo'
+import { check } from 'meteor/check'
+
+export const Measures = new Mongo.Collection('measures')
+
+Meteor.methods({
+  async 'measure.add'(measure) {
+    // 方法可以被任何客户端调用：永远要校验参数
+    check(measure, { value: Number, error: Boolean })
+    await Measures.insertAsync({ ...measure, date: new Date() })
+  },
+})
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; 一定要校验方法参数</div>
+  <p>任何人都可以在浏览器控制台里调用 <code>Meteor.callAsync('measure.add', { 随便什么 })</code>。不校验的话，别人能往你的数据库里写入任意字段。</p>
+</div>
+
+<h3>生成测量数据</h3>
+
+<div class="code" data-lang="jsx" data-file="imports/ui/ProductionGenerator.jsx"><pre>
+import { Meteor } from 'meteor/meteor'
+
+export default function ProductionGenerator() {
+  async function generateMeasure(error) {
+    const value = Math.round(Math.random() * 100)
+    await Meteor.callAsync('measure.add', { value, error })
+  }
+
+  return (
+    &lt;div className="production-generator"&gt;
+      &lt;h1&gt;生成测量数据&lt;/h1&gt;
+      &lt;section className="actions"&gt;
+        &lt;button onClick={() =&gt; generateMeasure(false)}&gt;生成测量值&lt;/button&gt;
+        &lt;button onClick={() =&gt; generateMeasure(true)}&gt;生成错误&lt;/button&gt;
+      &lt;/section&gt;
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<p>在另一个终端运行 <code>meteor mongo</code>，输入 <code>db.measures.find({})</code>，可以看到点击按钮后写入的文档。</p>
+
+<h2 id="pubsub">发布与订阅</h2>
+
+<p>
+  数据在服务器的 MongoDB 里，客户端怎么拿到？服务器<strong>发布</strong>一个查询，客户端<strong>订阅</strong>它。订阅之后，查询结果会被同步到客户端的 Minimongo，
+  并<strong>持续保持同步</strong> —— 服务器上数据的任何变化都会被自动推送过来。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="发布订阅：服务器发布查询，客户端用 useSubscribe 订阅，数据同步到 Minimongo，useFind 读取并自动更新组件">
+  <rect class="bx-b" x="20" y="30" width="240" height="110" rx="12"/>
+  <text class="ttl on-b" x="140" y="54" text-anchor="middle">服务器：发布</text>
+  <text class="mono sm" x="36" y="80">Meteor.publish('measures',</text>
+  <text class="mono sm" x="52" y="100">() =&gt; Measures.find())</text>
+  <text class="sm" x="140" y="126" text-anchor="middle">“允许客户端看哪些数据”</text>
+  <rect class="bx-g" x="500" y="30" width="240" height="110" rx="12"/>
+  <text class="ttl on-g" x="620" y="54" text-anchor="middle">组件：订阅</text>
+  <text class="mono sm" x="516" y="84">useSubscribe('measures')</text>
+  <text class="sm" x="620" y="114" text-anchor="middle">组件卸载时自动取消订阅</text>
+  <path class="ln-g" d="M498 70 H264" marker-end="url(#ar)"/>
+  <text class="halo sm on-g" x="380" y="62" text-anchor="middle">① 订阅请求</text>
+  <path class="ln-b" d="M264 105 H498" marker-end="url(#ar)"/>
+  <text class="halo sm on-b" x="380" y="98" text-anchor="middle">② 初始数据 + 之后的每一次变化</text>
+  <rect class="bx-a" x="500" y="170" width="240" height="44" rx="10"/>
+  <text class="on-a" x="620" y="197" text-anchor="middle">Minimongo（客户端缓存）</text>
+  <path class="ln-b" d="M620 142 V166" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="200" y="170" width="250" height="100" rx="12"/>
+  <text class="ttl on-g" x="325" y="194" text-anchor="middle">React 组件</text>
+  <text class="mono sm" x="214" y="220">useFind(() =&gt;</text>
+  <text class="mono sm" x="230" y="240">Measures.find(…), [])</text>
+  <text class="sm" x="325" y="262" text-anchor="middle">Minimongo 一变，组件重新渲染</text>
+  <path class="ln-a" d="M498 200 H454" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="476" y="232" text-anchor="middle">③ 查询</text>
+</svg>
+<figcaption>图 8-5　数据从 MongoDB 一路“流”进组件</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="imports/api/publications.js"><pre>
+import { Meteor } from 'meteor/meteor'
+import { Measures } from './measures.js'
+
+Meteor.publish('measures', function () {
+  return Measures.find({})
+})
+</pre></div>
+
+<div class="code" data-lang="js" data-file="server/main.js"><pre>
+import '/imports/api/measures.js'
+import '/imports/api/publications.js'   // 只有服务器需要发布
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 只发布需要的数据</div>
+  <p>真实项目要控制数据量（比如只发布最近 100 条：<code>find({}, { sort: { date: -1 }, limit: 100 })</code>）和权限（用 <code>this.userId</code> 只发布当前用户能看的数据）。</p>
+</div>
+
+<h3>在 React 中使用：react-meteor-data</h3>
+
+<p>Meteor 官方的 <code>react-meteor-data</code> 包（React 模板已包含）提供了把 Meteor 响应式数据接入 React 的 Hooks：</p>
+
+<div class="tw"><table>
+<thead><tr><th>Hook</th><th>作用</th></tr></thead>
+<tbody>
+<tr><td><code>useSubscribe(name, ...args)</code></td><td>订阅一个发布，返回 <code>isLoading()</code> 函数；组件卸载时自动取消订阅</td></tr>
+<tr><td><code>useFind(() =&gt; cursor, deps)</code></td><td>执行一个集合查询，数据变化时组件自动重新渲染（只更新变化的文档，效率高）</td></tr>
+<tr><td><code>useTracker(() =&gt; value, deps)</code></td><td>通用版：在 Meteor 的响应式计算中运行任意函数，结果变化时重新渲染</td></tr>
+</tbody>
+</table></div>
+
+<div class="code" data-lang="jsx" data-file="imports/ui/ProductionDashboard.jsx"><pre>
+import { useSubscribe, useFind } from 'meteor/react-meteor-data'
+import { Measures } from '/imports/api/measures.js'
+import ProductionIndicator from './ProductionIndicator.jsx'
+
+export default function ProductionDashboard() {
+  const isLoading = useSubscribe('measures')
+  const measures = useFind(() =&gt; Measures.find({}, { sort: { date: -1 } }), [])
+
+  // 之后就是普通的派生数据了
+  const count = measures.length
+  const average = count ? measures.reduce((sum, m) =&gt; sum + m.value, 0) / count : 0
+  const errorRate = count ? measures.filter((m) =&gt; m.error).length / count : 0
+
+  if (isLoading()) return &lt;div className="loading"&gt;加载中……&lt;/div&gt;
+
+  return (
+    &lt;div className="production-dashboard"&gt;
+      &lt;h1&gt;生产仪表盘&lt;/h1&gt;
+      &lt;section className="indicators"&gt;
+        &lt;ProductionIndicator value={average / 100} title="平均值" info={Math.round(average)} /&gt;
+        &lt;ProductionIndicator className="danger" value={errorRate} title="错误率"
+                             info={`${Math.round(errorRate * 100)}%`} /&gt;
+      &lt;/section&gt;
+      &lt;section className="list"&gt;
+        {measures.map((item) =&gt; (
+          &lt;div key={item._id}&gt;
+            &lt;div className="date"&gt;{item.date.toLocaleString()}&lt;/div&gt;
+            &lt;div className="error"&gt;{item.error ? '错误' : ''}&lt;/div&gt;
+            &lt;div className="value"&gt;{item.value}&lt;/div&gt;
+          &lt;/div&gt;
+        ))}
+      &lt;/section&gt;
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<div class="box deep">
+  <div class="t">&#128269; 两套响应式系统的“握手”</div>
+  <p>
+    Meteor 有自己的响应式系统 Tracker，React 则是“状态变了就重新渲染”。<code>useFind</code> / <code>useTracker</code> 做的就是桥接：
+    在 Tracker 的计算中执行查询，Tracker 通知“数据变了”时，就触发组件重新渲染（内部基于 React 的 <code>useSyncExternalStore</code> 这类机制订阅外部数据源）。
+    这和第 6 章 Zustand 的 selector 订阅、react-leaflet 接入 Leaflet 事件，本质上是同一件事：把 React 之外的数据源接进 React。
+  </p>
+</div>
+
+<h2 id="gauge">仪表组件：用 SVG 画半圆进度条</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="用 pathLength 和 stroke-dashoffset 控制描边显示的比例">
+  <path d="M60 170 A100 100 0 0 1 260 170" style="fill:none;stroke:var(--line);stroke-width:16;stroke-linecap:round"/>
+  <path d="M60 170 A100 100 0 0 1 230 99" style="fill:none;stroke:var(--accent);stroke-width:16;stroke-linecap:round"/>
+  <text class="ttl" x="160" y="160" text-anchor="middle" style="font-size:24px">62%</text>
+  <text class="sm" x="160" y="200" text-anchor="middle">两条相同的半圆弧：</text>
+  <text class="sm" x="160" y="218" text-anchor="middle">底下灰色是轨道，上面彩色是进度</text>
+  <rect class="bx" x="330" y="30" width="410" height="220" rx="12"/>
+  <text class="ttl" x="350" y="56">把路径的“长度”定义为 1，就能按比例描边</text>
+  <text class="mono sm" x="350" y="88">&lt;path d="M10 90 A80 80 0 0 1 170 90"</text>
+  <text class="mono sm on-a" x="366" y="108">pathLength="1"</text>
+  <text class="mono sm on-b" x="366" y="128">strokeDasharray="1"</text>
+  <text class="mono sm on-g" x="366" y="148">strokeDashoffset={1 - value} /&gt;</text>
+  <text class="sm on-a" x="350" y="178">pathLength="1"：不管实际多长，都按长度 1 计算</text>
+  <text class="sm on-b" x="350" y="198">dasharray="1"：画 1 段实线、再空 1 段</text>
+  <text class="sm on-g" x="350" y="218">dashoffset：把图案往回推，value=0.62 时露出 62%</text>
+  <text class="sm" x="350" y="238">配合 CSS transition，数值变化时平滑地动起来</text>
+</svg>
+<figcaption>图 8-6　半圆进度条的几何原理</figcaption>
+</figure>
+
+<div class="code" data-lang="jsx" data-file="imports/ui/ProductionIndicator.jsx"><pre>
+const ARC = 'M10 90 A80 80 0 0 1 170 90'   // 半径 80 的上半圆
+
+export default function ProductionIndicator({ value, title, info, className = '' }) {
+  const v = Math.min(Math.max(value, 0), 1)   // 限制在 0~1
+  return (
+    &lt;div className={`production-indicator ${className}`}&gt;
+      &lt;svg viewBox="0 0 180 100"&gt;
+        &lt;path className="track" d={ARC} /&gt;
+        &lt;path className="bar" d={ARC} pathLength="1" strokeDasharray="1" strokeDashoffset={1 - v} /&gt;
+      &lt;/svg&gt;
+      &lt;div className="info"&gt;{info}&lt;/div&gt;
+      &lt;div className="title"&gt;{title}&lt;/div&gt;
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<div class="code" data-lang="css" data-file="client/main.css（节选）"><pre>
+.production-indicator .track,
+.production-indicator .bar { fill: none; stroke-width: 12; stroke-linecap: round; }
+.production-indicator .track { stroke: #e5e5e5; }
+.production-indicator .bar { stroke: #087ea4; transition: stroke-dashoffset .6s ease; }
+.production-indicator.danger .bar { stroke: #e53935; }
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; SVG 属性在 JSX 里要驼峰</div>
+  <p><code>stroke-dasharray</code> 写成 <code>strokeDasharray</code>，<code>stroke-width</code> 写成 <code>strokeWidth</code>。<code>A80 80 0 0 1 170 90</code> 表示画一段半径 80 的弧到 (170, 90)，起点和终点相距 160，正好是半圆。</p>
+</div>
+
+<p>把两个浏览器窗口并排打开，一个停在仪表盘、一个停在生成页，点击按钮，仪表盘会实时更新 —— 没有写一行 WebSocket 代码，也没有一个 REST 接口。下面的演示用本地数据模拟了同样的效果：</p>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · 实时仪表盘（本地模拟）</div>
+  <div class="body"><div id="demo-dashboard"><span class="muted">加载中……</span></div></div>
+</div>
+
+<h2 id="alternatives">不用 Meteor，怎么做实时？</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="实时方案对比：轮询、SSE、WebSocket、托管实时后端">
+  <rect class="bx" x="20" y="20" width="170" height="210" rx="12"/>
+  <text class="ttl" x="105" y="46" text-anchor="middle">轮询</text>
+  <text class="sm" x="105" y="72" text-anchor="middle">每隔几秒请求一次</text>
+  <text class="sm" x="105" y="102" text-anchor="middle">✓ 最简单</text>
+  <text class="sm" x="105" y="122" text-anchor="middle">✗ 有延迟、浪费请求</text>
+  <text class="mono sm" x="105" y="170" text-anchor="middle">TanStack Query</text>
+  <text class="mono sm" x="105" y="190" text-anchor="middle">refetchInterval</text>
+  <rect class="bx-b" x="205" y="20" width="170" height="210" rx="12"/>
+  <text class="ttl on-b" x="290" y="46" text-anchor="middle">SSE</text>
+  <text class="sm" x="290" y="72" text-anchor="middle">服务器单向推送</text>
+  <text class="sm" x="290" y="102" text-anchor="middle">✓ 基于 HTTP，简单</text>
+  <text class="sm" x="290" y="122" text-anchor="middle">✓ 自动重连</text>
+  <text class="sm" x="290" y="142" text-anchor="middle">✗ 只能服务器 → 客户端</text>
+  <text class="mono sm" x="290" y="180" text-anchor="middle">new EventSource()</text>
+  <rect class="bx-a" x="390" y="20" width="170" height="210" rx="12"/>
+  <text class="ttl on-a" x="475" y="46" text-anchor="middle">WebSocket</text>
+  <text class="sm" x="475" y="72" text-anchor="middle">双向长连接</text>
+  <text class="sm" x="475" y="102" text-anchor="middle">✓ 真正的双向实时</text>
+  <text class="sm" x="475" y="122" text-anchor="middle">✗ 要自己处理重连、</text>
+  <text class="sm" x="475" y="142" text-anchor="middle">鉴权、扩容</text>
+  <text class="mono sm" x="475" y="180" text-anchor="middle">socket.io</text>
+  <rect class="bx-p" x="575" y="20" width="165" height="210" rx="12"/>
+  <text class="ttl on-p" x="657" y="46" text-anchor="middle">托管实时后端</text>
+  <text class="sm" x="657" y="72" text-anchor="middle">订阅数据库变化</text>
+  <text class="sm" x="657" y="102" text-anchor="middle">✓ 体验接近 Meteor</text>
+  <text class="sm" x="657" y="122" text-anchor="middle">✗ 依赖第三方服务</text>
+  <text class="mono sm" x="657" y="170" text-anchor="middle">Supabase Realtime</text>
+  <text class="mono sm" x="657" y="190" text-anchor="middle">Firebase / Convex</text>
+</svg>
+<figcaption>图 8-7　常见的实时数据方案</figcaption>
+</figure>
+
+<p>以 SSE 为例，写一个自定义 Hook：</p>
+
+<div class="code" data-lang="js" data-file="useMeasuresStream.js（示意）"><pre>
+import { useState, useEffect } from 'react'
+
+export function useMeasuresStream() {
+  const [measures, setMeasures] = useState([])
+  useEffect(() =&gt; {
+    const source = new EventSource('/api/measures/stream')   // 服务器每产生一条就推送一条
+    source.onmessage = (e) =&gt; setMeasures((list) =&gt; [JSON.parse(e.data), ...list])
+    return () =&gt; source.close()                              // 卸载时断开
+  }, [])
+  return measures
+}
+</pre></div>
+
+<h2 id="summary">小结</h2>
+
+<div class="tw"><table>
+<thead><tr><th>主题</th><th>Meteor 3 + React</th></tr></thead>
+<tbody>
+<tr><td>创建项目</td><td><code>meteor create --react</code></td></tr>
+<tr><td>目录约定</td><td><code>imports/</code> + <code>mainModule</code> 显式导入</td></tr>
+<tr><td>启动 React</td><td><code>Meteor.startup(() =&gt; createRoot(...).render(...))</code></td></tr>
+<tr><td>写入数据</td><td>方法内 <code>await Measures.insertAsync()</code>，客户端 <code>await Meteor.callAsync()</code></td></tr>
+<tr><td>参数校验</td><td><code>check()</code></td></tr>
+<tr><td>订阅</td><td><code>useSubscribe('measures')</code></td></tr>
+<tr><td>查询</td><td><code>useFind(() =&gt; Measures.find(), [])</code> / <code>useTracker</code></td></tr>
+<tr><td>半圆进度条</td><td>SVG + <code>pathLength</code> + <code>strokeDashoffset</code></td></tr>
+</tbody>
+</table></div>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>发布只返回最近 50 条测量，并在仪表盘上显示“共 N 条记录”。</li>
+    <li>加一个 <code>measure.clear</code> 方法清空数据（想一想：这个方法应该允许任何人调用吗？）。</li>
+    <li>给仪表组件加一个 <code>max</code> prop，并画出刻度。</li>
+    <li>让发布接收参数 <code>onlyErrors</code>，仪表盘加一个复选框：<code>useSubscribe('measures', onlyErrors)</code>，参数变化时会自动重新订阅。</li>
+    <li>（进阶）不用 Meteor，用 Express + SSE 或 Supabase 实现同样的实时仪表盘。</li>
+  </ol>
+</div>
+
+<h2 id="journey">旅程的终点，也是起点</h2>
+
+<p>
+  我们从一个 HTML 文件里的 <code>useState</code> 起步，做了 Markdown 笔记本、带动画的卡牌游戏、带登录的客服中心、地图博客、可测试可翻译可服务端渲染的商店，
+  最后是一个实时仪表盘：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="六个项目学到的技能回顾">
+  <rect class="bx-a" x="20" y="30" width="110" height="130" rx="10"/>
+  <text class="ttl on-a" x="75" y="54" text-anchor="middle">笔记本</text>
+  <text class="sm" x="75" y="80" text-anchor="middle">useState</text>
+  <text class="sm" x="75" y="100" text-anchor="middle">useEffect</text>
+  <text class="sm" x="75" y="120" text-anchor="middle">不可变更新</text>
+  <rect class="bx-a" x="145" y="30" width="110" height="130" rx="10"/>
+  <text class="ttl on-a" x="200" y="54" text-anchor="middle">卡牌游戏</text>
+  <text class="sm" x="200" y="80" text-anchor="middle">props · children</text>
+  <text class="sm" x="200" y="100" text-anchor="middle">useReducer</text>
+  <text class="sm" x="200" y="120" text-anchor="middle">Motion</text>
+  <rect class="bx-b" x="270" y="30" width="110" height="130" rx="10"/>
+  <text class="ttl on-b" x="325" y="54" text-anchor="middle">工程化</text>
+  <text class="sm" x="325" y="80" text-anchor="middle">Vite</text>
+  <text class="sm" x="325" y="100" text-anchor="middle">渲染原理</text>
+  <text class="sm" x="325" y="120" text-anchor="middle">Compiler</text>
+  <rect class="bx-b" x="395" y="30" width="110" height="130" rx="10"/>
+  <text class="ttl on-b" x="450" y="54" text-anchor="middle">客服中心</text>
+  <text class="sm" x="450" y="80" text-anchor="middle">React Router</text>
+  <text class="sm" x="450" y="100" text-anchor="middle">TanStack Query</text>
+  <text class="sm" x="450" y="120" text-anchor="middle">表单 Actions</text>
+  <rect class="bx-p" x="520" y="30" width="110" height="130" rx="10"/>
+  <text class="ttl on-p" x="575" y="54" text-anchor="middle">地图博客</text>
+  <text class="sm" x="575" y="80" text-anchor="middle">Zustand</text>
+  <text class="sm" x="575" y="100" text-anchor="middle">react-leaflet</text>
+  <text class="sm" x="575" y="120" text-anchor="middle">useOptimistic</text>
+  <rect class="bx-p" x="645" y="30" width="95" height="130" rx="10"/>
+  <text class="ttl on-p" x="692" y="54" text-anchor="middle">商店+仪表盘</text>
+  <text class="sm" x="692" y="80" text-anchor="middle">测试 · i18n</text>
+  <text class="sm" x="692" y="100" text-anchor="middle">Next.js · RSC</text>
+  <text class="sm" x="692" y="120" text-anchor="middle">实时数据</text>
+  <path class="ln-a" d="M20 186 H736" marker-end="url(#ar-a)"/>
+  <text class="sm" x="380" y="204" text-anchor="middle">同样的六个项目，也可以对照阅读本站的 Vue 版，体会两个框架思路上的异同</text>
+</svg>
+<figcaption>图 8-8　六个项目，一条渐进的学习路线</figcaption>
+</figure>
+
+<ul>
+  <li>通读 <a href="https://zh-hans.react.dev/">React 官方文档</a>（有中文版），尤其是“状态管理”和“脱围机制”两章；</li>
+  <li>读一读官方文章《你可能不需要 Effect》，它会改变你写 React 的方式；</li>
+  <li>选一个书中的项目继续完善，或者用 Next.js 做一个自己的全栈小项目。</li>
+</ul>
+
+<p>附录有一份 <a href="ch09.html">Vue ↔ React 对照表</a>，适合已经学过其中一个框架的读者快速切换。</p>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+<script type="module">
+  import { createElement, useState, useEffect } from 'react'
+  import { createRoot } from 'react-dom/client'
+  import htm from 'htm'
+  const html = htm.bind(createElement)
+  const ARC = 'M10 90 A80 80 0 0 1 170 90'
+  let id = 0
+
+  function Gauge({ value, title, info, danger }) {
+    const v = Math.min(Math.max(value, 0), 1)
+    return html`<div className=${'gauge' + (danger ? ' danger' : '')}>
+      <svg viewBox="0 0 180 100"><path className="track" d=${ARC} />
+        <path className="bar" d=${ARC} pathLength="1" strokeDasharray="1" strokeDashoffset=${1 - v} /></svg>
+      <div className="info">${info}</div><div className="title">${title}</div>
+    </div>`
+  }
+
+  function Demo() {
+    const [measures, setMeasures] = useState([])
+    const [auto, setAuto] = useState(false)
+    const add = (error) => setMeasures((list) => [{ id: id++, value: Math.round(Math.random() * 100), error, date: new Date() }, ...list].slice(0, 60))
+    useEffect(() => {
+      if (!auto) return
+      const t = setInterval(() => add(Math.random() < 0.15), 1000)
+      return () => clearInterval(t)
+    }, [auto])
+    const n = measures.length
+    const average = n ? measures.reduce((s, m) => s + m.value, 0) / n : 0
+    const errorRate = n ? measures.filter((m) => m.error).length / n : 0
+    return html`<div>
+      <div style=${{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
+        <button onClick=${() => add(false)}>生成测量值</button>
+        <button className="ghost" onClick=${() => add(true)}>生成错误</button>
+        <button className="ghost" onClick=${() => setAuto(!auto)}>${auto ? '停止自动生成' : '每秒自动生成'}</button>
+        <button className="ghost" onClick=${() => setMeasures([])}>清空</button>
+      </div>
+      <div className="gauges">
+        <${Gauge} value=${average / 100} title="平均值" info=${Math.round(average)} />
+        <${Gauge} value=${errorRate} title="错误率" info=${Math.round(errorRate * 100) + '%'} danger=${true} />
+      </div>
+      <div className="m-list">${measures.map((m) => html`<div key=${m.id}>
+        <span>${m.date.toLocaleTimeString()}</span><span className="err">${m.error ? '错误' : ''}</span><span className="val">${m.value}</span>
+      </div>`)}</div>
+      ${!n && html`<p className="muted">还没有数据，点上面的按钮试试。</p>`}
+    </div>`
+  }
+  createRoot(document.getElementById('demo-dashboard')).render(html`<${Demo} />`)
+</script>
+</body>
+</html>

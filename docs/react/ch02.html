@@ -1,0 +1,1081 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 2 章 · 项目一：Markdown 笔记本 — React 项目实战教程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="assets/react.css">
+<style>
+  .nb-demo { display: grid; grid-template-columns: 180px 1fr; gap: 14px; }
+  @media (width <= 600px) { .nb-demo { grid-template-columns: 1fr; } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "react": "https://esm.sh/react@19.2.0",
+  "react-dom/client": "https://esm.sh/react-dom@19.2.0/client?external=react",
+  "htm": "https://esm.sh/htm@3.1.1"
+} }
+</script>
+</head>
+<body data-chapter="2">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 2 章 · 项目一</span>
+<h1>Markdown 笔记本</h1>
+<p class="lede">
+  第一个完整应用：一个能实时预览 Markdown、支持多条笔记、刷新后自动恢复的笔记本。
+  做完它，你就掌握了 React 日常开发里最常用的那批基本功：状态、派生数据、副作用、列表、条件渲染，以及最重要的“不可变更新”。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>区分“状态”和“可以算出来的数据”，知道什么时候用 <code>useMemo</code></li>
+    <li>用 <code>useEffect</code> 把状态同步到 localStorage，理解依赖数组</li>
+    <li>用 <code>map</code> + <code>key</code> 渲染列表，用 <code>&amp;&amp;</code> 和三元运算做条件渲染</li>
+    <li>掌握数组和对象的<strong>不可变更新</strong></li>
+    <li>知道 <code>dangerouslySetInnerHTML</code> 的风险以及如何安全地显示 HTML</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="overview">我们要做什么</h2>
+
+<ul>
+  <li>用户可以用 Markdown 写笔记，右侧实时预览；</li>
+  <li>可以创建多条笔记，可以重命名、删除、收藏（收藏的排在前面）；</li>
+  <li>底部状态栏显示创建时间、行数、词数、字符数；</li>
+  <li>刷新页面后，笔记和上次选中的那条都还在。</li>
+</ul>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="笔记本界面：左侧笔记列表，中间编辑器，右侧预览">
+  <rect class="bx" x="20" y="20" width="720" height="250" rx="12"/>
+  <rect class="bx-b" x="34" y="34" width="170" height="222" rx="8"/>
+  <text class="ttl on-b" x="119" y="56" text-anchor="middle">&lt;Sidebar&gt;</text>
+  <rect class="bx-a" x="48" y="68" width="142" height="28" rx="6"/>
+  <text class="sm on-a" x="119" y="87" text-anchor="middle">＋ 新建笔记</text>
+  <rect class="bx" x="48" y="106" width="142" height="26" rx="5"/>
+  <text class="sm" x="60" y="123">★ 购物清单</text>
+  <rect class="bx-b" x="48" y="138" width="142" height="26" rx="5" style="stroke-width:2"/>
+  <text class="sm on-b" x="60" y="155">读书笔记（选中）</text>
+  <rect class="bx" x="48" y="170" width="142" height="26" rx="5"/>
+  <text class="sm" x="60" y="187">新笔记 3</text>
+  <text class="sm" x="119" y="236" text-anchor="middle">notes.map(…)</text>
+
+  <rect class="bx-a" x="216" y="34" width="276" height="222" rx="8"/>
+  <text class="ttl on-a" x="354" y="56" text-anchor="middle">&lt;Editor&gt;</text>
+  <rect class="bx" x="230" y="68" width="248" height="28" rx="6"/>
+  <text class="sm" x="242" y="87">标题输入框</text>
+  <text class="sm" x="420" y="87">☆　🗑</text>
+  <rect class="bx" x="230" y="104" width="248" height="110" rx="6"/>
+  <text class="mono sm" x="242" y="126"># 读书笔记</text>
+  <text class="mono sm" x="242" y="146">**React** 真好用</text>
+  <text class="sm" x="354" y="196" text-anchor="middle">受控 &lt;textarea&gt;</text>
+  <rect class="bx-d" x="230" y="222" width="248" height="26" rx="6"/>
+  <text class="sm" x="354" y="239" text-anchor="middle">状态栏：创建时间 · 行 · 词 · 字符</text>
+
+  <rect class="bx-g" x="504" y="34" width="222" height="222" rx="8"/>
+  <text class="ttl on-g" x="615" y="56" text-anchor="middle">&lt;Preview&gt;</text>
+  <text class="ttl" x="520" y="96" style="font-size:18px">读书笔记</text>
+  <text x="520" y="124"><tspan font-weight="700">React</tspan> 真好用</text>
+  <text class="sm" x="615" y="200" text-anchor="middle">Markdown → HTML</text>
+  <text class="sm" x="615" y="216" text-anchor="middle">消毒后再显示</text>
+</svg>
+<figcaption>图 2-1　笔记本的三栏布局</figcaption>
+</figure>
+
+<p>先做单条笔记的“编辑器 + 预览”，再扩展成多条笔记的笔记本。</p>
+
+<h2 id="setup">搭建项目</h2>
+
+<p>
+  和上一章一样，这个项目放在一个 HTML 文件里，双击就能打开。样式不是重点，可以直接复制仓库里的 <code>Chapter02/chapter2-full/style.css</code>
+  （它的类名和本章代码一一对应）。这次 import map 里多了两个库：
+</p>
+
+<div class="code" data-lang="html" data-file="index.html"><pre>
+&lt;!doctype html&gt;
+&lt;html lang="zh-CN"&gt;
+&lt;head&gt;
+  &lt;meta charset="utf-8"&gt;
+  &lt;title&gt;笔记本&lt;/title&gt;
+  &lt;link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"&gt;
+  &lt;link rel="stylesheet" href="style.css"&gt;
+  &lt;script type="importmap"&gt;
+  {
+    "imports": {
+      "react": "https://esm.sh/react@19.2.0",
+      "react-dom/client": "https://esm.sh/react-dom@19.2.0/client?external=react",
+      "marked": "https://esm.sh/marked@15",
+      "dompurify": "https://esm.sh/dompurify@3"
+    }
+  }
+  &lt;/script&gt;
+  &lt;script src="https://unpkg.com/@babel/standalone/babel.min.js"&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;div id="root"&gt;&lt;/div&gt;
+  &lt;script type="text/babel" data-type="module" data-presets="react"&gt;
+    // 本章所有代码都写在这里
+  &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</pre></div>
+
+<ul>
+  <li><a href="https://marked.js.org/">marked</a>：把 Markdown 转成 HTML；</li>
+  <li><a href="https://github.com/cure53/DOMPurify">DOMPurify</a>：清除 HTML 中的危险内容（后面会解释为什么必须要它）。</li>
+</ul>
+
+<h2 id="editor">笔记编辑器</h2>
+
+<p>编辑器就是一个受控的 <code>&lt;textarea&gt;</code>：</p>
+
+<div class="code" data-lang="jsx"><pre>
+import React, { useState } from 'react'
+import { createRoot } from 'react-dom/client'
+
+function Notebook() {
+  const [content, setContent] = useState('这是一条笔记。')
+
+  return (
+    &lt;div className="notebook"&gt;
+      &lt;section className="main"&gt;
+        &lt;textarea value={content} onChange={(e) =&gt; setContent(e.target.value)} /&gt;
+      &lt;/section&gt;
+    &lt;/div&gt;
+  )
+}
+
+createRoot(document.getElementById('root')).render(&lt;Notebook /&gt;)
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 复选框、下拉框也一样</div>
+  <p>
+    所有表单元素都用“值 + onChange”受控：文本框和下拉框用 <code>value</code>，复选框用 <code>checked</code> 读 <code>e.target.checked</code>。
+    注意 React 的 <code>onChange</code> 在<strong>每次输入</strong>时都会触发（和原生 <code>input</code> 事件一样），而不是像原生 <code>change</code> 那样失去焦点才触发。
+  </p>
+</div>
+
+<h2 id="preview">预览面板</h2>
+
+<h3>派生数据：直接在渲染时计算</h3>
+
+<p>
+  预览的 HTML 完全由 <code>content</code> 决定。初学者常犯的错误是再开一个状态存它，然后想办法同步。在 React 里，
+  <strong>能由现有状态算出来的东西，就不要放进状态</strong>，直接在渲染时算：
+</p>
+
+<div class="code" data-lang="jsx"><pre>
+import { marked } from 'marked'
+
+function Notebook() {
+  const [content, setContent] = useState('这是一条笔记。')
+
+  // 每次渲染都会重新算一遍：content 变了，它自然跟着变
+  const notePreview = marked.parse(content)
+  // ...
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="把派生数据存进状态会导致不同步，正确做法是在渲染时计算">
+  <text class="ttl on-r" x="190" y="24" text-anchor="middle">✗ 冗余状态：要手动同步</text>
+  <rect class="bx-b" x="40" y="44" width="120" height="44" rx="8"/><text class="sm on-b" x="100" y="71" text-anchor="middle">content</text>
+  <rect class="bx-r" x="220" y="44" width="120" height="44" rx="8"/><text class="sm on-r" x="280" y="71" text-anchor="middle">preview（状态）</text>
+  <path class="ln-r" d="M162 66 H216" marker-end="url(#ar)"/>
+  <text class="halo sm" x="190" y="58" text-anchor="middle">同步？</text>
+  <text class="sm" x="190" y="120" text-anchor="middle">忘了在某处一起更新 → 两者不一致</text>
+  <text class="sm" x="190" y="140" text-anchor="middle">用 useEffect 同步 → 多渲染一次，还容易出错</text>
+
+  <path class="ln-d" d="M380 14 V200"/>
+
+  <text class="ttl on-a" x="570" y="24" text-anchor="middle">✓ 派生：渲染时计算</text>
+  <rect class="bx-b" x="420" y="44" width="120" height="44" rx="8"/><text class="sm on-b" x="480" y="71" text-anchor="middle">content（状态）</text>
+  <rect class="bx-a" x="600" y="44" width="140" height="44" rx="8"/><text class="sm on-a" x="670" y="71" text-anchor="middle">preview（变量）</text>
+  <path class="ln-a" d="M542 66 H596" marker-end="url(#ar-a)"/>
+  <text class="halo mono sm" x="570" y="58" text-anchor="middle">marked</text>
+  <text class="sm" x="570" y="120" text-anchor="middle">只有一个真相来源，永远不会不一致</text>
+  <text class="sm" x="570" y="140" text-anchor="middle">计算很贵时，再用 useMemo 缓存</text>
+
+  <rect class="bx" x="20" y="180" width="720" height="56" rx="10"/>
+  <text class="sm" x="380" y="204" text-anchor="middle">口诀：状态要“最少”—— 只存无法从其他东西推导出来的数据。</text>
+  <text class="sm" x="380" y="222" text-anchor="middle">筛选后的列表、排序结果、统计数字、格式化后的文本，都应该在渲染时计算。</text>
+</svg>
+<figcaption>图 2-2　不要把能算出来的东西放进状态</figcaption>
+</figure>
+
+<h3>useMemo：缓存昂贵的计算</h3>
+
+<p>
+  组件每次重新渲染（比如以后修改了别的状态）都会重新解析一次 Markdown。笔记很长时，这可能有点浪费。
+  <code>useMemo</code> 可以缓存计算结果，只有依赖变化时才重新计算：
+</p>
+
+<div class="code" data-lang="jsx"><pre>
+import React, { useState, useMemo } from 'react'
+
+const notePreview = useMemo(
+  () =&gt; marked.parse(content),   // 计算函数
+  [content],                     // 依赖：只有 content 变了才重新计算
+)
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="useMemo 比较依赖数组，没变就返回缓存">
+  <rect class="bx" x="20" y="70" width="150" height="60" rx="10"/>
+  <text class="ttl" x="95" y="96" text-anchor="middle">组件重新渲染</text>
+  <text class="sm" x="95" y="116" text-anchor="middle">（任何原因）</text>
+  <path class="ln" d="M172 100 H226" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="230" y="60" width="200" height="80" rx="12"/>
+  <text class="ttl on-a" x="330" y="88" text-anchor="middle">useMemo</text>
+  <text class="sm" x="330" y="110" text-anchor="middle">比较 [content] 和上次的</text>
+  <text class="sm" x="330" y="126" text-anchor="middle">（用 Object.is 逐项比较）</text>
+  <path class="ln-g" d="M432 80 L516 44" marker-end="url(#ar)"/>
+  <path class="ln-a" d="M432 120 L516 156" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-g" x="470" y="52">没变</text>
+  <text class="halo sm on-a" x="470" y="160">变了</text>
+  <rect class="bx-g" x="520" y="20" width="220" height="50" rx="10"/>
+  <text class="sm on-g" x="630" y="50" text-anchor="middle">直接返回上次的结果 ⚡</text>
+  <rect class="bx-a" x="520" y="130" width="220" height="50" rx="10"/>
+  <text class="sm on-a" x="630" y="160" text-anchor="middle">重新执行 marked.parse</text>
+</svg>
+<figcaption>图 2-3　useMemo 的缓存机制</figcaption>
+</figure>
+
+<div class="box tip">
+  <div class="t">&#10003; 不要过早优化</div>
+  <p>
+    大多数计算都很便宜，直接算就好。只有确实昂贵（解析大段文本、处理上千条数据）时才需要 <code>useMemo</code>。
+    第 4 章会介绍 <strong>React Compiler</strong>，它能在构建时自动帮你加上这类缓存，以后连 <code>useMemo</code> 都很少需要手写了。
+  </p>
+</div>
+
+<h3>显示 HTML：dangerouslySetInnerHTML</h3>
+
+<p>先试着直接显示 <code>{notePreview}</code>，你会发现预览区显示的是带标签的原始文本：</p>
+
+<div class="code" data-lang="text"><pre>
+&lt;p&gt;我是 &lt;strong&gt;粗体&lt;/strong&gt;！&lt;/p&gt;
+</pre></div>
+
+<p>
+  这是 React 故意的：<strong>JSX 中的 <code>{ }</code> 总会转义 HTML</strong>，以防止 XSS（跨站脚本）攻击。
+  要把字符串当 HTML 插入，必须用一个名字很吓人的属性 —— <code>dangerouslySetInnerHTML</code>：
+</p>
+
+<div class="code" data-lang="jsx"><pre>
+&lt;aside className="preview" dangerouslySetInnerHTML={{ __html: notePreview }} /&gt;
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="XSS 攻击示意：恶意内容被当作 HTML 渲染后执行脚本">
+  <rect class="bx-r" x="20" y="40" width="170" height="70" rx="10"/>
+  <text class="on-r ttl" x="105" y="66" text-anchor="middle">恶意内容</text>
+  <text class="mono sm" x="105" y="90" text-anchor="middle">&lt;img src=x onerror=…&gt;</text>
+  <path class="ln" d="M192 60 H300" marker-end="url(#ar)"/>
+  <text class="halo sm" x="246" y="52" text-anchor="middle">当 HTML 插入</text>
+  <rect class="bx-r" x="304" y="30" width="200" height="56" rx="10"/>
+  <text class="on-r" x="404" y="54" text-anchor="middle">dangerouslySetInnerHTML</text>
+  <text class="sm on-r" x="404" y="74" text-anchor="middle">脚本被执行 ✗</text>
+  <path class="ln" d="M192 92 H300" marker-end="url(#ar)"/>
+  <text class="halo sm" x="246" y="112" text-anchor="middle">当文本插入</text>
+  <rect class="bx-g" x="304" y="96" width="200" height="56" rx="10"/>
+  <text class="on-g" x="404" y="120" text-anchor="middle">{ 文本 }</text>
+  <text class="sm on-g" x="404" y="140" text-anchor="middle">只显示成文字 ✓</text>
+  <path class="ln-a" d="M506 58 H556" marker-end="url(#ar-a)"/>
+  <rect class="bx-a" x="560" y="30" width="180" height="56" rx="10"/>
+  <text class="on-a" x="650" y="54" text-anchor="middle">先 DOMPurify 消毒</text>
+  <text class="sm" x="650" y="74" text-anchor="middle">去掉 script / onerror ✓</text>
+  <rect class="bx-d" x="20" y="180" width="720" height="44" rx="8"/>
+  <text class="lbl" x="380" y="200" text-anchor="middle">被执行的脚本能读取 Cookie、冒充用户发请求、篡改页面。</text>
+  <text class="lbl" x="380" y="216" text-anchor="middle">属性名里的 dangerously 和 __html 都是在提醒你：确认内容安全后再用</text>
+</svg>
+<figcaption>图 2-4　为什么默认转义、为什么要消毒</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; 用户写的 Markdown 必须先消毒</div>
+  <p>
+    Markdown 允许内嵌原始 HTML，marked 也不会帮你过滤危险标签。笔记一旦可以分享给别人看，这就是一个真实的 XSS 漏洞。
+    正确做法是先用 DOMPurify 消毒：
+  </p>
+</div>
+
+<div class="code" data-lang="jsx"><pre>
+import DOMPurify from 'dompurify'
+
+const notePreview = useMemo(
+  () =&gt; DOMPurify.sanitize(marked.parse(content)),
+  [content],
+)
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 工程化项目里的更好选择</div>
+  <p>
+    第 3 章起使用 Vite 后，可以用 <a href="https://github.com/remarkjs/react-markdown">react-markdown</a>：它把 Markdown 直接转换成 React 元素，
+    根本不经过 HTML 字符串，默认就是安全的：<code>&lt;Markdown&gt;{content}&lt;/Markdown&gt;</code>。
+  </p>
+</div>
+
+<h2 id="save">保存笔记：useEffect</h2>
+
+<p>
+  现在刷新页面笔记就没了。我们要在 <code>content</code> 变化时把它写进 <code>localStorage</code>。
+  写 localStorage 不是“计算界面”，而是和 React 之外的世界打交道 —— 这叫<strong>副作用（effect）</strong>。
+</p>
+
+<div class="code" data-lang="jsx"><pre>
+import React, { useState, useMemo, useEffect } from 'react'
+
+useEffect(() =&gt; {
+  localStorage.setItem('content', content)
+}, [content])   // 依赖数组：content 变化后执行
+</pre></div>
+
+<p>打开开发者工具的 Application（或“存储”）面板，在 Local Storage 下能看到 <code>content</code> 条目随着输入实时更新。</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="useEffect 在渲染提交到 DOM 之后执行，依赖变化才重新执行">
+  <rect class="bx-b" x="20" y="40" width="160" height="56" rx="10"/>
+  <text class="on-b ttl" x="100" y="64" text-anchor="middle">① 渲染</text>
+  <text class="sm" x="100" y="84" text-anchor="middle">调用组件函数</text>
+  <path class="ln" d="M182 68 H226" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="230" y="40" width="160" height="56" rx="10"/>
+  <text class="on-g ttl" x="310" y="64" text-anchor="middle">② 提交</text>
+  <text class="sm" x="310" y="84" text-anchor="middle">更新真实 DOM</text>
+  <path class="ln" d="M392 68 H436" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="440" y="30" width="300" height="76" rx="12"/>
+  <text class="on-a ttl" x="590" y="54" text-anchor="middle">③ 执行 effect</text>
+  <text class="sm" x="590" y="76" text-anchor="middle">依赖和上次相比变了才执行</text>
+  <text class="sm" x="590" y="94" text-anchor="middle">（第一次渲染后总会执行）</text>
+
+  <text class="ttl" x="20" y="150">依赖数组的三种写法</text>
+  <rect class="bx" x="20" y="164" width="230" height="78" rx="10"/>
+  <text class="mono sm" x="135" y="188" text-anchor="middle">useEffect(fn, [a, b])</text>
+  <text class="sm" x="135" y="210" text-anchor="middle">a 或 b 变化后执行</text>
+  <text class="sm on-g" x="135" y="228" text-anchor="middle">最常用</text>
+  <rect class="bx" x="265" y="164" width="230" height="78" rx="10"/>
+  <text class="mono sm" x="380" y="188" text-anchor="middle">useEffect(fn, [])</text>
+  <text class="sm" x="380" y="210" text-anchor="middle">只在挂载后执行一次</text>
+  <text class="sm" x="380" y="228" text-anchor="middle">订阅、初始化第三方库</text>
+  <rect class="bx" x="510" y="164" width="230" height="78" rx="10"/>
+  <text class="mono sm" x="625" y="188" text-anchor="middle">useEffect(fn)</text>
+  <text class="sm" x="625" y="210" text-anchor="middle">每次渲染后都执行</text>
+  <text class="sm on-r" x="625" y="228" text-anchor="middle">很少需要</text>
+</svg>
+<figcaption>图 2-5　effect 在界面更新之后运行</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; 依赖数组要写全</div>
+  <p>
+    effect 里用到的所有来自组件的值（状态、props、函数）都应该写进依赖数组，否则 effect 会读到“过期”的旧值。
+    第 4 章配置的 ESLint 插件 <code>eslint-plugin-react-hooks</code> 会自动检查这一点，不要凭感觉删依赖。
+  </p>
+</div>
+
+<h3>清理函数与组件的“一生”</h3>
+
+<p>effect 可以返回一个<strong>清理函数</strong>，React 会在下一次执行 effect 之前、以及组件被移除时调用它。用于取消订阅、清除定时器等：</p>
+
+<div class="code" data-lang="jsx"><pre>
+useEffect(() =&gt; {
+  const timer = setInterval(() =&gt; console.log('滴答'), 1000)
+  return () =&gt; clearInterval(timer)    // 清理：防止组件消失后定时器还在跑
+}, [])
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="组件的挂载、更新、卸载与 effect 和清理函数的执行时机">
+  <path class="ln" d="M20 100 H740" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="30" y="70" width="130" height="60" rx="10"/>
+  <text class="on-g ttl" x="95" y="96" text-anchor="middle">挂载</text>
+  <text class="sm" x="95" y="116" text-anchor="middle">effect 执行</text>
+  <rect class="bx-a" x="200" y="70" width="160" height="60" rx="10"/>
+  <text class="on-a ttl" x="280" y="96" text-anchor="middle">依赖变化</text>
+  <text class="sm" x="280" y="116" text-anchor="middle">先清理，再执行</text>
+  <rect class="bx-a" x="400" y="70" width="160" height="60" rx="10"/>
+  <text class="on-a ttl" x="480" y="96" text-anchor="middle">依赖又变化</text>
+  <text class="sm" x="480" y="116" text-anchor="middle">先清理，再执行</text>
+  <rect class="bx-r" x="600" y="70" width="130" height="60" rx="10"/>
+  <text class="on-r ttl" x="665" y="96" text-anchor="middle">卸载</text>
+  <text class="sm" x="665" y="116" text-anchor="middle">最后清理一次</text>
+  <text class="lbl" x="380" y="170" text-anchor="middle">React 没有“生命周期方法”的概念，而是问你：这个副作用要和哪些数据保持同步？</text>
+  <text class="sm" x="380" y="192" text-anchor="middle">开发模式的 StrictMode 下，React 会故意“挂载 → 清理 → 再挂载”一次，帮你发现没写清理函数的 bug</text>
+</svg>
+<figcaption>图 2-6　effect 的执行与清理</figcaption>
+</figure>
+
+<details class="box deep">
+<summary class="t" style="cursor:pointer">&#128269; 你可能不需要 effect（点击展开）</summary>
+<p>
+  effect 是 React 里最常被滥用的 Hook。判断标准：<strong>这段代码是因为“组件显示出来了”而要执行，还是因为“用户做了某个操作”而要执行？</strong>
+  如果是后者，直接写在事件处理函数里更好。比如保存笔记，也可以写成：
+</p>
+<div class="code" data-lang="jsx"><pre>
+function handleChange(e) {
+  setContent(e.target.value)
+  localStorage.setItem('content', e.target.value)   // 用户输入时保存
+}
+</pre></div>
+<p>
+  本章用 effect，是因为后面会有很多地方修改笔记（编辑、改名、收藏、删除），用一个 effect 统一“保持 localStorage 和状态同步”更省事。
+  官方文档有一篇专门的文章《你可能不需要 Effect》，非常值得一读。
+</p>
+</details>
+
+<h2 id="load">加载已保存的笔记</h2>
+
+<p>打开页面时，从 localStorage 读出上次的内容作为初始值：</p>
+
+<div class="code" data-lang="jsx"><pre>
+const [content, setContent] = useState(
+  () =&gt; localStorage.getItem('content') || '你可以用 **Markdown** 写作'
+)
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 为什么传一个函数？</div>
+  <p>
+    <code>useState(初始值)</code> 的初始值只在第一次渲染时使用，但如果写成 <code>useState(localStorage.getItem(...))</code>，
+    这个读取操作<em>每次渲染</em>都会执行（只是结果被丢弃）。传一个函数（<strong>惰性初始化</strong>），React 只会在第一次调用它。
+    <code>a || b</code> 在 <code>a</code> 为 falsy（<code>null</code>、空字符串等）时取 <code>b</code>，第一次打开时 <code>getItem</code> 返回 <code>null</code>，于是用默认文字。
+  </p>
+</div>
+
+<h2 id="multi">多条笔记</h2>
+
+<h3>数据结构</h3>
+
+<p>每条笔记是一个对象，所有笔记放在 <code>notes</code> 数组里，另外用 <code>selectedId</code> 记录选中的是哪一条：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="notes 数组与 selectedId，选中的笔记在渲染时查出来">
+  <text class="ttl" x="20" y="24">const [notes, setNotes] = useState([…])</text>
+  <rect class="bx" x="20" y="36" width="220" height="150" rx="10"/>
+  <text class="mono sm" x="36" y="60">id:       'a1b2…'</text>
+  <text class="mono sm" x="36" y="82">title:    '购物清单'</text>
+  <text class="mono sm" x="36" y="104">content:  '- 牛奶'</text>
+  <text class="mono sm" x="36" y="126">created:  1730700000000</text>
+  <text class="mono sm" x="36" y="148">favorite: true</text>
+  <rect class="bx-a" x="260" y="36" width="220" height="150" rx="10" style="stroke-width:2.2"/>
+  <text class="mono sm" x="276" y="60">id:       'c3d4…'</text>
+  <text class="mono sm" x="276" y="82">title:    '读书笔记'</text>
+  <text class="mono sm" x="276" y="104">content:  '# React…'</text>
+  <text class="mono sm" x="276" y="126">created:  1730800000000</text>
+  <text class="mono sm" x="276" y="148">favorite: false</text>
+  <rect class="bx-d" x="500" y="36" width="90" height="150" rx="10"/>
+  <text class="sm" x="545" y="116" text-anchor="middle">……</text>
+  <rect class="bx-b" x="610" y="50" width="130" height="56" rx="10"/>
+  <text class="mono sm on-b" x="675" y="74" text-anchor="middle">selectedId</text>
+  <text class="mono sm" x="675" y="94" text-anchor="middle">'c3d4…'</text>
+  <path class="ln-b" d="M610 78 C560 20 420 10 400 34" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="610" y="130" width="130" height="56" rx="10"/>
+  <text class="mono sm on-g" x="675" y="154" text-anchor="middle">selectedNote</text>
+  <text class="sm" x="675" y="174" text-anchor="middle">渲染时 find 出来</text>
+  <path class="ln-g" d="M675 108 V126" marker-end="url(#ar)"/>
+  <text class="lbl" x="380" y="222" text-anchor="middle">只存 id，选中的对象每次渲染时查出来（派生数据）—— 永远不会和数组不同步</text>
+</svg>
+<figcaption>图 2-7　笔记数组 + 选中 id</figcaption>
+</figure>
+
+<div class="code" data-lang="jsx"><pre>
+const [notes, setNotes] = useState(() =&gt; JSON.parse(localStorage.getItem('notes')) || [])
+const [selectedId, setSelectedId] = useState(() =&gt; localStorage.getItem('selected-id'))
+
+// 派生：渲染时直接查
+const selectedNote = notes.find((note) =&gt; note.id === selectedId)
+</pre></div>
+
+<h3>不可变更新：React 最重要的习惯</h3>
+
+<p>新建一条笔记。初学者的第一反应是 <code>notes.push(note)</code> —— 但这在 React 里<strong>不会触发更新</strong>：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="直接修改数组时引用不变，React 认为没有变化；创建新数组时引用改变，React 重新渲染">
+  <text class="ttl on-r" x="190" y="24" text-anchor="middle">✗ 修改原数组</text>
+  <rect class="bx-r" x="60" y="44" width="260" height="60" rx="10"/>
+  <text class="mono sm" x="190" y="68" text-anchor="middle">notes.push(note)</text>
+  <text class="mono sm" x="190" y="88" text-anchor="middle">setNotes(notes)</text>
+  <rect class="bx" x="60" y="124" width="120" height="44" rx="8"/><text class="sm" x="120" y="150" text-anchor="middle">旧引用 #1</text>
+  <rect class="bx" x="200" y="124" width="120" height="44" rx="8"/><text class="sm" x="260" y="150" text-anchor="middle">新引用 #1</text>
+  <text class="sm on-r" x="190" y="196" text-anchor="middle">Object.is(旧, 新) === true</text>
+  <text class="sm on-r" x="190" y="214" text-anchor="middle">React：“没变”，不渲染</text>
+
+  <path class="ln-d" d="M380 14 V240"/>
+
+  <text class="ttl on-a" x="570" y="24" text-anchor="middle">✓ 创建新数组</text>
+  <rect class="bx-a" x="440" y="44" width="260" height="60" rx="10"/>
+  <text class="mono sm" x="570" y="80" text-anchor="middle">setNotes([...notes, note])</text>
+  <rect class="bx" x="440" y="124" width="120" height="44" rx="8"/><text class="sm" x="500" y="150" text-anchor="middle">旧引用 #1</text>
+  <rect class="bx-g" x="580" y="124" width="120" height="44" rx="8"/><text class="sm on-g" x="640" y="150" text-anchor="middle">新引用 #2</text>
+  <text class="sm on-g" x="570" y="196" text-anchor="middle">Object.is(旧, 新) === false</text>
+  <text class="sm on-g" x="570" y="214" text-anchor="middle">React：“变了”，重新渲染</text>
+  <text class="lbl" x="380" y="258" text-anchor="middle">React 只比较引用（是不是同一个对象），不会深入比较内容 —— 所以“改了就要换一个新的”</text>
+</svg>
+<figcaption>图 2-8　React 通过引用判断状态是否改变</figcaption>
+</figure>
+
+<p>常用的不可变操作速查：</p>
+
+<div class="tw"><table>
+<thead><tr><th>目的</th><th>✗ 会修改原数据</th><th>✓ 返回新数据</th></tr></thead>
+<tbody>
+<tr><td>添加</td><td><code>arr.push(x)</code></td><td><code>[...arr, x]</code></td></tr>
+<tr><td>删除</td><td><code>arr.splice(i, 1)</code></td><td><code>arr.filter(n =&gt; n.id !== id)</code></td></tr>
+<tr><td>修改某一项</td><td><code>arr[i].title = 't'</code></td><td><code>arr.map(n =&gt; n.id === id ? { ...n, title: 't' } : n)</code></td></tr>
+<tr><td>排序</td><td><code>arr.sort(fn)</code></td><td><code>arr.toSorted(fn)</code></td></tr>
+<tr><td>修改对象属性</td><td><code>obj.a = 1</code></td><td><code>{ ...obj, a: 1 }</code></td></tr>
+</tbody>
+</table></div>
+
+<div class="code" data-lang="jsx"><pre>
+function addNote() {
+  const time = Date.now()
+  const note = {
+    id: crypto.randomUUID(),       // 浏览器内置的随机唯一 id
+    title: '新笔记 ' + (notes.length + 1),
+    content: '**你好！** 这个笔记本支持 [Markdown](https://commonmark.org/help/) 格式！',
+    created: time,
+    favorite: false,
+  }
+  setNotes([...notes, note])
+  setSelectedId(note.id)
+}
+</pre></div>
+
+<h3>事件与属性</h3>
+
+<p>按钮的点击用 <code>onClick</code>，鼠标悬停提示用 <code>title</code> 属性，值可以是任意表达式：</p>
+
+<div class="code" data-lang="jsx"><pre>
+&lt;aside className="side-bar"&gt;
+  &lt;div className="toolbar"&gt;
+    &lt;button onClick={addNote} title={`已有 ${notes.length} 条笔记`}&gt;
+      &lt;i className="material-icons"&gt;add&lt;/i&gt; 新建笔记
+    &lt;/button&gt;
+  &lt;/div&gt;
+&lt;/aside&gt;
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; 传函数，不要调用函数</div>
+  <p>
+    <code>onClick={addNote}</code> 是把函数交给 React，点击时才调用；<code>onClick={addNote()}</code> 则是<em>渲染时</em>就立刻调用了，
+    还会把返回值（<code>undefined</code>）当作处理函数。需要传参时写成箭头函数：<code>onClick={() =&gt; selectNote(note.id)}</code>。
+  </p>
+</div>
+
+<h3>渲染列表：map + key</h3>
+
+<p>JSX 里没有循环语句，列表用数组的 <code>map</code> 把每条数据变成一个元素：</p>
+
+<div class="code" data-lang="jsx"><pre>
+&lt;div className="notes"&gt;
+  {notes.map((note) =&gt; (
+    &lt;div key={note.id} className="note" onClick={() =&gt; setSelectedId(note.id)}&gt;
+      {note.title}
+    &lt;/div&gt;
+  ))}
+&lt;/div&gt;
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="map 把数组的每一项变成一个元素，key 标识身份">
+  <rect class="bx-b" x="20" y="40" width="230" height="130" rx="10"/>
+  <text class="ttl on-b" x="135" y="64" text-anchor="middle">notes 数组</text>
+  <text class="mono sm" x="40" y="92">{ id: 'a', title: '购物' }</text>
+  <text class="mono sm" x="40" y="116">{ id: 'b', title: '读书' }</text>
+  <text class="mono sm" x="40" y="140">{ id: 'c', title: '旅行' }</text>
+  <rect class="bx-a" x="290" y="62" width="180" height="86" rx="10"/>
+  <text class="ttl on-a" x="380" y="90" text-anchor="middle">notes.map(</text>
+  <text class="mono sm" x="380" y="114" text-anchor="middle">note =&gt; &lt;div key=</text>
+  <text class="mono sm" x="380" y="132" text-anchor="middle">{note.id}&gt;…)</text>
+  <path class="ln-a" d="M252 105 H286" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M472 105 H506" marker-end="url(#ar-a)"/>
+  <rect class="bx-g" x="510" y="40" width="230" height="130" rx="10"/>
+  <text class="ttl on-g" x="625" y="64" text-anchor="middle">元素数组</text>
+  <rect class="bx" x="530" y="76" width="190" height="24" rx="4"/><text class="mono sm" x="542" y="93">&lt;div key="a"&gt;购物</text>
+  <rect class="bx" x="530" y="106" width="190" height="24" rx="4"/><text class="mono sm" x="542" y="123">&lt;div key="b"&gt;读书</text>
+  <rect class="bx" x="530" y="136" width="190" height="24" rx="4"/><text class="mono sm" x="542" y="153">&lt;div key="c"&gt;旅行</text>
+  <text class="lbl" x="380" y="200" text-anchor="middle">key 是每一项的“身份证”：列表增删、排序时，React 靠它知道哪个元素对应哪条数据</text>
+</svg>
+<figcaption>图 2-9　map 渲染列表</figcaption>
+</figure>
+
+<div class="box key">
+  <div class="t">&#9733; key 的规则</div>
+  <ul>
+    <li>同一个列表里的 key 必须<strong>唯一</strong>，且对同一条数据<strong>保持稳定</strong>。用数据里的 id，<strong>不要用数组下标</strong>（排序或删除后下标会变，导致状态错乱）。</li>
+    <li>key 写在 <code>map</code> 直接返回的那个元素上。忘写时 React 会在控制台警告。</li>
+    <li>key 不会作为 prop 传给组件，组件内部读不到它。</li>
+  </ul>
+</div>
+
+<h3>动态 class 与条件渲染</h3>
+
+<p>选中的笔记要加上 <code>selected</code> 类。<code>className</code> 就是一个字符串，用模板字符串拼出来即可：</p>
+
+<div class="code" data-lang="jsx"><pre>
+&lt;div
+  key={note.id}
+  className={`note ${note.id === selectedId ? 'selected' : ''}`}
+  onClick={() =&gt; setSelectedId(note.id)}
+&gt;
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 类名多了用 clsx</div>
+  <p>工程化项目中常用小工具 <code>clsx</code>：<code>className={clsx('note', { selected: isSel, favorite: note.favorite })}</code>，写法类似对象形式的条件类名。</p>
+</div>
+
+<p>没有选中笔记时，编辑器和预览都不应该显示（否则 <code>selectedNote.content</code> 会报错）。JSX 中的条件渲染有三种常用写法：</p>
+
+<div class="tw"><table>
+<thead><tr><th>写法</th><th>用途</th></tr></thead>
+<tbody>
+<tr><td><code>{cond &amp;&amp; &lt;A /&gt;}</code></td><td>条件成立才显示</td></tr>
+<tr><td><code>{cond ? &lt;A /&gt; : &lt;B /&gt;}</code></td><td>二选一</td></tr>
+<tr><td><code>if (!cond) return null</code></td><td>在组件开头提前返回，整个组件不渲染</td></tr>
+</tbody>
+</table></div>
+
+<div class="code" data-lang="jsx"><pre>
+{selectedNote &amp;&amp; (
+  &lt;&gt;
+    &lt;section className="main"&gt;
+      &lt;textarea value={selectedNote.content} onChange={...} /&gt;
+    &lt;/section&gt;
+    &lt;aside className="preview" dangerouslySetInnerHTML={{ __html: notePreview }} /&gt;
+  &lt;/&gt;
+)}
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; &amp;&amp; 左边别放数字</div>
+  <p>
+    <code>{notes.length &amp;&amp; &lt;List /&gt;}</code> 在没有笔记时会在页面上渲染出一个 <strong>0</strong>（因为 <code>0 &amp;&amp; …</code> 的结果是 0，React 会显示数字）。
+    写成 <code>{notes.length &gt; 0 &amp;&amp; …}</code>。<code>&lt;&gt;…&lt;/&gt;</code> 是 Fragment，用来把多个元素包成一个而不产生额外的 DOM。
+  </p>
+</div>
+
+<h3>编辑选中的笔记</h3>
+
+<p>编辑器修改的是数组中某一条笔记的 <code>content</code>，用 <code>map</code> 生成新数组。我们写一个通用的更新函数，后面改标题、收藏都能复用：</p>
+
+<div class="code" data-lang="jsx"><pre>
+// 修改选中笔记的某些字段
+function updateSelected(changes) {
+  setNotes(notes.map((note) =&gt;
+    note.id === selectedId ? { ...note, ...changes } : note
+  ))
+}
+
+&lt;textarea
+  value={selectedNote.content}
+  onChange={(e) =&gt; updateSelected({ content: e.target.value })}
+/&gt;
+</pre></div>
+
+<p>预览也改成基于选中的笔记：</p>
+
+<div class="code" data-lang="jsx"><pre>
+const notePreview = useMemo(
+  () =&gt; selectedNote ? DOMPurify.sanitize(marked.parse(selectedNote.content)) : '',
+  [selectedNote],
+)
+</pre></div>
+
+<h3>保存笔记列表和选中状态</h3>
+
+<div class="code" data-lang="jsx"><pre>
+useEffect(() =&gt; {
+  localStorage.setItem('notes', JSON.stringify(notes))
+}, [notes])
+
+useEffect(() =&gt; {
+  if (selectedId) localStorage.setItem('selected-id', selectedId)
+  else localStorage.removeItem('selected-id')   // 不要把 null 存成字符串 "null"
+}, [selectedId])
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 不需要“深度侦听”</div>
+  <p>
+    因为我们每次修改都会创建新的 <code>notes</code> 数组，所以只要依赖 <code>[notes]</code>，任何修改（新增、改内容、改标题、删除）都能被 effect 察觉。
+    不可变更新让“检测变化”变得非常简单 —— 只需比较引用。
+  </p>
+</div>
+
+<h2 id="toolbar">笔记工具栏</h2>
+
+<div class="code" data-lang="jsx"><pre>
+function removeNote() {
+  if (selectedNote &amp;&amp; confirm('确定删除这条笔记吗？')) {
+    setNotes(notes.filter((note) =&gt; note.id !== selectedId))
+    setSelectedId(null)
+  }
+}
+
+function toggleFavorite() {
+  updateSelected({ favorite: !selectedNote.favorite })
+}
+</pre></div>
+
+<div class="code" data-lang="jsx"><pre>
+&lt;div className="toolbar"&gt;
+  &lt;input
+    value={selectedNote.title}
+    onChange={(e) =&gt; updateSelected({ title: e.target.value })}
+    placeholder="笔记标题"
+  /&gt;
+  &lt;button onClick={toggleFavorite} title="收藏"&gt;
+    &lt;i className="material-icons"&gt;{selectedNote.favorite ? 'star' : 'star_border'}&lt;/i&gt;
+  &lt;/button&gt;
+  &lt;button onClick={removeNote} title="删除笔记"&gt;
+    &lt;i className="material-icons"&gt;delete&lt;/i&gt;
+  &lt;/button&gt;
+&lt;/div&gt;
+</pre></div>
+
+<h3>排序：收藏的排前面</h3>
+
+<p>排序结果也是派生数据。注意要用不修改原数组的 <code>toSorted</code>：</p>
+
+<div class="code" data-lang="jsx"><pre>
+const sortedNotes = notes
+  .toSorted((a, b) =&gt; a.created - b.created)        // 按创建时间
+  .sort((a, b) =&gt; (a.favorite === b.favorite) ? 0   // 收藏优先（作用在新数组上，可以原地排）
+                  : a.favorite ? -1 : 1)
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="两次排序：先按时间，再把收藏的提到前面">
+  <text class="ttl" x="110" y="24" text-anchor="middle">notes</text>
+  <rect class="bx" x="30" y="36" width="160" height="28" rx="6"/><text class="sm" x="44" y="55">C · 3 号</text>
+  <rect class="bx-a" x="30" y="70" width="160" height="28" rx="6"/><text class="sm on-a" x="44" y="89">★ B · 2 号</text>
+  <rect class="bx" x="30" y="104" width="160" height="28" rx="6"/><text class="sm" x="44" y="123">A · 1 号</text>
+  <rect class="bx-a" x="30" y="138" width="160" height="28" rx="6"/><text class="sm on-a" x="44" y="157">★ D · 4 号</text>
+  <path class="ln" d="M200 100 H266" marker-end="url(#ar)"/><text class="mono sm" x="233" y="92" text-anchor="middle">toSorted</text>
+  <text class="ttl" x="350" y="24" text-anchor="middle">按时间</text>
+  <rect class="bx" x="270" y="36" width="160" height="28" rx="6"/><text class="sm" x="284" y="55">A · 1</text>
+  <rect class="bx-a" x="270" y="70" width="160" height="28" rx="6"/><text class="sm on-a" x="284" y="89">★ B · 2</text>
+  <rect class="bx" x="270" y="104" width="160" height="28" rx="6"/><text class="sm" x="284" y="123">C · 3</text>
+  <rect class="bx-a" x="270" y="138" width="160" height="28" rx="6"/><text class="sm on-a" x="284" y="157">★ D · 4</text>
+  <path class="ln" d="M440 100 H506" marker-end="url(#ar)"/><text class="mono sm" x="473" y="92" text-anchor="middle">sort</text>
+  <text class="ttl on-g" x="590" y="24" text-anchor="middle">sortedNotes</text>
+  <rect class="bx-a" x="510" y="36" width="160" height="28" rx="6"/><text class="sm on-a" x="524" y="55">★ B · 2</text>
+  <rect class="bx-a" x="510" y="70" width="160" height="28" rx="6"/><text class="sm on-a" x="524" y="89">★ D · 4</text>
+  <rect class="bx" x="510" y="104" width="160" height="28" rx="6"/><text class="sm" x="524" y="123">A · 1</text>
+  <rect class="bx" x="510" y="138" width="160" height="28" rx="6"/><text class="sm" x="524" y="157">C · 3</text>
+  <text class="lbl" x="380" y="192" text-anchor="middle">sort 是稳定排序：同为收藏或同为未收藏的笔记，保持按时间的顺序</text>
+</svg>
+<figcaption>图 2-10　两次排序得到“收藏优先、组内按时间”</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; 千万别在渲染时修改状态</div>
+  <p>
+    如果写成 <code>notes.sort(...)</code>，就是在渲染过程中<strong>原地修改了状态数组</strong>。React 要求组件是“纯函数”：同样的输入，同样的输出，不改动任何外部数据。
+    违反这一点会导致难以追踪的 bug。<code>toSorted</code>、<code>toReversed</code>、<code>with</code> 这些 ES2023 新方法都返回新数组，正好适合 React。
+  </p>
+</div>
+
+<p>列表改用 <code>sortedNotes</code>，并给收藏的笔记加上星标：</p>
+
+<div class="code" data-lang="jsx"><pre>
+{sortedNotes.map((note) =&gt; (
+  &lt;div key={note.id}
+       className={`note ${note.id === selectedId ? 'selected' : ''}`}
+       onClick={() =&gt; setSelectedId(note.id)}&gt;
+    {note.favorite &amp;&amp; &lt;i className="icon material-icons"&gt;star&lt;/i&gt;}
+    {note.title}
+  &lt;/div&gt;
+))}
+</pre></div>
+
+<h2 id="status">状态栏</h2>
+
+<p>创建时间用浏览器自带的 <code>Intl.DateTimeFormat</code> 格式化；行数、词数、字符数都是派生数据：</p>
+
+<div class="code" data-lang="jsx"><pre>
+// 放在组件外面：只创建一次
+const dateFormatter = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short' })
+const segmenter = new Intl.Segmenter('zh', { granularity: 'word' })
+
+function StatusBar({ note }) {
+  const text = note.content
+  const lines = text.split(/\r\n|\r|\n/).length
+  const words = [...segmenter.segment(text)].filter((s) =&gt; s.isWordLike).length
+  const chars = [...text].length   // 展开后 emoji 也只算一个字符
+
+  return (
+    &lt;div className="toolbar status-bar"&gt;
+      &lt;span className="date"&gt;&lt;span className="label"&gt;创建于&lt;/span&gt;&lt;span className="value"&gt;{dateFormatter.format(note.created)}&lt;/span&gt;&lt;/span&gt;
+      &lt;span className="lines"&gt;&lt;span className="label"&gt;行&lt;/span&gt;&lt;span className="value"&gt;{lines}&lt;/span&gt;&lt;/span&gt;
+      &lt;span className="words"&gt;&lt;span className="label"&gt;词&lt;/span&gt;&lt;span className="value"&gt;{words}&lt;/span&gt;&lt;/span&gt;
+      &lt;span className="characters"&gt;&lt;span className="label"&gt;字符&lt;/span&gt;&lt;span className="value"&gt;{chars}&lt;/span&gt;&lt;/span&gt;
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<p>
+  这是我们第一个“子组件”：它接收一个 <code>note</code> 参数（叫 <strong>props</strong>），在父组件里这样使用：<code>&lt;StatusBar note={selectedNote} /&gt;</code>。
+  <code>function StatusBar({ note })</code> 用的是参数解构。下一章会系统地讲组件和 props。
+</p>
+
+<div class="box deep">
+  <div class="t">&#128269; 为什么用 Intl.Segmenter 数词？</div>
+  <p>
+    英文可以按空格切分单词，但中文没有空格，“我爱学习 React”会被数成 2 个词。<code>Intl.Segmenter</code> 是浏览器内置的分词器，
+    会把它切成“我 / 爱 / 学习 / React”共 4 个词。另外 <code>'😀'.length</code> 是 2，<code>[...'😀'].length</code> 才是 1。
+  </p>
+</div>
+
+<h2 id="demo">在线试一试</h2>
+
+<p>下面是本章应用的精简版（去掉了 Markdown 渲染和本地存储）：</p>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · 迷你笔记本</div>
+  <div class="body"><div id="demo-notebook"><span class="muted">加载中……</span></div></div>
+</div>
+
+<h2 id="full">完整代码</h2>
+
+<p>把逻辑稍作拆分：<code>Notebook</code> 持有所有状态，<code>StatusBar</code> 只负责显示。</p>
+
+<div class="code" data-lang="jsx" data-file="&lt;script type=&quot;text/babel&quot; data-type=&quot;module&quot; data-presets=&quot;react&quot;&gt;"><pre>
+import React, { useState, useMemo, useEffect } from 'react'
+import { createRoot } from 'react-dom/client'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
+
+const dateFormatter = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short' })
+const segmenter = new Intl.Segmenter('zh', { granularity: 'word' })
+
+function StatusBar({ note }) {
+  const text = note.content
+  const lines = text.split(/\r\n|\r|\n/).length
+  const words = [...segmenter.segment(text)].filter((s) =&gt; s.isWordLike).length
+  const chars = [...text].length
+  return (
+    &lt;div className="toolbar status-bar"&gt;
+      &lt;span className="date"&gt;&lt;span className="label"&gt;创建于&lt;/span&gt;&lt;span className="value"&gt;{dateFormatter.format(note.created)}&lt;/span&gt;&lt;/span&gt;
+      &lt;span className="lines"&gt;&lt;span className="label"&gt;行&lt;/span&gt;&lt;span className="value"&gt;{lines}&lt;/span&gt;&lt;/span&gt;
+      &lt;span className="words"&gt;&lt;span className="label"&gt;词&lt;/span&gt;&lt;span className="value"&gt;{words}&lt;/span&gt;&lt;/span&gt;
+      &lt;span className="characters"&gt;&lt;span className="label"&gt;字符&lt;/span&gt;&lt;span className="value"&gt;{chars}&lt;/span&gt;&lt;/span&gt;
+    &lt;/div&gt;
+  )
+}
+
+function Notebook() {
+  // ---------- 状态（只存无法推导的数据） ----------
+  const [notes, setNotes] = useState(() =&gt; JSON.parse(localStorage.getItem('notes')) || [])
+  const [selectedId, setSelectedId] = useState(() =&gt; localStorage.getItem('selected-id'))
+
+  // ---------- 派生数据 ----------
+  const selectedNote = notes.find((note) =&gt; note.id === selectedId)
+  const sortedNotes = notes
+    .toSorted((a, b) =&gt; a.created - b.created)
+    .sort((a, b) =&gt; (a.favorite === b.favorite) ? 0 : a.favorite ? -1 : 1)
+  const notePreview = useMemo(
+    () =&gt; selectedNote ? DOMPurify.sanitize(marked.parse(selectedNote.content)) : '',
+    [selectedNote],
+  )
+
+  // ---------- 副作用：与 localStorage 同步 ----------
+  useEffect(() =&gt; {
+    localStorage.setItem('notes', JSON.stringify(notes))
+  }, [notes])
+
+  useEffect(() =&gt; {
+    if (selectedId) localStorage.setItem('selected-id', selectedId)
+    else localStorage.removeItem('selected-id')
+  }, [selectedId])
+
+  // ---------- 事件处理 ----------
+  function addNote() {
+    const note = {
+      id: crypto.randomUUID(),
+      title: '新笔记 ' + (notes.length + 1),
+      content: '**你好！** 这个笔记本支持 [Markdown](https://commonmark.org/help/) 格式！',
+      created: Date.now(),
+      favorite: false,
+    }
+    setNotes([...notes, note])
+    setSelectedId(note.id)
+  }
+
+  function updateSelected(changes) {
+    setNotes(notes.map((note) =&gt; note.id === selectedId ? { ...note, ...changes } : note))
+  }
+
+  function removeNote() {
+    if (selectedNote &amp;&amp; confirm('确定删除这条笔记吗？')) {
+      setNotes(notes.filter((note) =&gt; note.id !== selectedId))
+      setSelectedId(null)
+    }
+  }
+
+  // ---------- 界面 ----------
+  return (
+    &lt;div id="notebook"&gt;
+      &lt;aside className="side-bar"&gt;
+        &lt;div className="toolbar"&gt;
+          &lt;button onClick={addNote} title={`已有 ${notes.length} 条笔记`}&gt;
+            &lt;i className="material-icons"&gt;add&lt;/i&gt; 新建笔记
+          &lt;/button&gt;
+        &lt;/div&gt;
+        &lt;div className="notes"&gt;
+          {sortedNotes.map((note) =&gt; (
+            &lt;div key={note.id}
+                 className={`note ${note.id === selectedId ? 'selected' : ''}`}
+                 onClick={() =&gt; setSelectedId(note.id)}&gt;
+              {note.favorite &amp;&amp; &lt;i className="icon material-icons"&gt;star&lt;/i&gt;}
+              {note.title}
+            &lt;/div&gt;
+          ))}
+        &lt;/div&gt;
+      &lt;/aside&gt;
+
+      {selectedNote &amp;&amp; (
+        &lt;&gt;
+          &lt;section className="main"&gt;
+            &lt;div className="toolbar"&gt;
+              &lt;input value={selectedNote.title} placeholder="笔记标题"
+                     onChange={(e) =&gt; updateSelected({ title: e.target.value })} /&gt;
+              &lt;button onClick={() =&gt; updateSelected({ favorite: !selectedNote.favorite })} title="收藏"&gt;
+                &lt;i className="material-icons"&gt;{selectedNote.favorite ? 'star' : 'star_border'}&lt;/i&gt;
+              &lt;/button&gt;
+              &lt;button onClick={removeNote} title="删除笔记"&gt;
+                &lt;i className="material-icons"&gt;delete&lt;/i&gt;
+              &lt;/button&gt;
+            &lt;/div&gt;
+            &lt;textarea value={selectedNote.content}
+                      onChange={(e) =&gt; updateSelected({ content: e.target.value })} /&gt;
+            &lt;StatusBar note={selectedNote} /&gt;
+          &lt;/section&gt;
+          &lt;aside className="preview" dangerouslySetInnerHTML={{ __html: notePreview }} /&gt;
+        &lt;/&gt;
+      )}
+    &lt;/div&gt;
+  )
+}
+
+createRoot(document.getElementById('root')).render(&lt;Notebook /&gt;)
+</pre></div>
+
+<details class="box deep">
+<summary class="t" style="cursor:pointer">&#128269; 进阶：用 useReducer 整理状态逻辑（点击展开）</summary>
+<p>
+  事件处理函数越来越多，而且它们都在“计算下一个 notes 数组”。<code>useReducer</code> 可以把这些逻辑集中到一个纯函数里：
+  组件只<strong>描述发生了什么</strong>（dispatch 一个 action），reducer 负责<strong>计算新状态</strong>。下一章的游戏会正式使用它。
+</p>
+<div class="code" data-lang="jsx"><pre>
+function notesReducer(notes, action) {
+  switch (action.type) {
+    case 'added':   return [...notes, action.note]
+    case 'updated': return notes.map((n) =&gt; n.id === action.id ? { ...n, ...action.changes } : n)
+    case 'removed': return notes.filter((n) =&gt; n.id !== action.id)
+    default: throw new Error('未知的 action：' + action.type)
+  }
+}
+
+const [notes, dispatch] = useReducer(notesReducer, null, () =&gt; JSON.parse(localStorage.getItem('notes')) || [])
+
+dispatch({ type: 'updated', id: selectedId, changes: { title: '新标题' } })
+</pre></div>
+</details>
+
+<h2 id="summary">小结</h2>
+
+<div class="tw"><table>
+<thead><tr><th>概念</th><th>写法</th><th>一句话</th></tr></thead>
+<tbody>
+<tr><td>状态</td><td><code>useState</code></td><td>只存无法推导的数据；初始值昂贵时传函数</td></tr>
+<tr><td>派生数据</td><td>渲染时直接计算</td><td>不要放进状态</td></tr>
+<tr><td>缓存计算</td><td><code>useMemo(fn, deps)</code></td><td>只在确实昂贵时使用</td></tr>
+<tr><td>副作用</td><td><code>useEffect(fn, deps)</code></td><td>与外部系统同步；可返回清理函数</td></tr>
+<tr><td>不可变更新</td><td><code>[...a, x]</code>、<code>map</code>、<code>filter</code>、<code>{ ...o }</code></td><td>改了就换一个新的</td></tr>
+<tr><td>事件</td><td><code>onClick={fn}</code></td><td>传函数，不要调用函数</td></tr>
+<tr><td>列表</td><td><code>arr.map(x =&gt; &lt;li key={x.id}&gt;)</code></td><td>key 用稳定唯一的 id</td></tr>
+<tr><td>条件</td><td><code>&amp;&amp;</code>、三元、提前 <code>return null</code></td><td>小心 <code>0 &amp;&amp;</code></td></tr>
+<tr><td>原始 HTML</td><td><code>dangerouslySetInnerHTML</code></td><td>用户内容务必先消毒</td></tr>
+</tbody>
+</table></div>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>给侧边栏加一个搜索框，筛选出标题或内容包含关键字的笔记（筛选结果是派生数据，不要存进状态）。</li>
+    <li>新建笔记后，让光标自动聚焦到编辑器（提示：<code>useRef</code> + <code>useEffect</code>，或 <code>autoFocus</code> 属性）。</li>
+    <li>在状态栏加上“预计阅读时间”，按每分钟 300 字估算。</li>
+    <li>故意把 <code>updateSelected</code> 改成直接修改对象（<code>selectedNote.title = ...; setNotes(notes)</code>），观察界面为什么不更新。</li>
+    <li>按“进阶”部分的提示，把状态逻辑改写为 <code>useReducer</code>。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+<script type="module">
+  import { createElement, useState } from 'react'
+  import { createRoot } from 'react-dom/client'
+  import htm from 'htm'
+  const html = htm.bind(createElement)
+  const fmt = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short' })
+  const seg = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter('zh', { granularity: 'word' }) : null
+  const now = Date.now()
+  let n = 0
+
+  function Demo() {
+    const [notes, setNotes] = useState([
+      { id: 'a', title: '读书笔记', content: '# 第 2 章\n我爱学习 React！\n不可变更新很重要。', created: now - 86400000, favorite: false },
+      { id: 'b', title: '购物清单', content: '- 牛奶\n- 面包\n- 咖啡 ☕', created: now - 3600000, favorite: true },
+    ])
+    const [selectedId, setSelectedId] = useState('a')
+    const sel = notes.find((x) => x.id === selectedId)
+    const sorted = notes.toSorted((a, b) => a.created - b.created).sort((a, b) => a.favorite === b.favorite ? 0 : a.favorite ? -1 : 1)
+    const update = (c) => setNotes(notes.map((x) => x.id === selectedId ? { ...x, ...c } : x))
+    const add = () => {
+      const note = { id: 'n' + (++n), title: '新笔记 ' + (notes.length + 1), content: '**你好！**', created: Date.now(), favorite: false }
+      setNotes([...notes, note]); setSelectedId(note.id)
+    }
+    const remove = () => { setNotes(notes.filter((x) => x.id !== selectedId)); setSelectedId(null) }
+    const text = sel ? sel.content : ''
+    const words = seg ? [...seg.segment(text)].filter((s) => s.isWordLike).length : text.trim().split(/\s+/).filter(Boolean).length
+    const item = (x) => html`<div key=${x.id} onClick=${() => setSelectedId(x.id)} style=${{
+      padding: '6px 10px', marginTop: '6px', borderRadius: '6px', cursor: 'pointer', fontSize: '14px',
+      background: x.id === selectedId ? 'var(--accent-bg)' : 'var(--panel-2)',
+      color: x.id === selectedId ? 'var(--accent-2)' : 'inherit' }}>${x.favorite ? '★ ' : ''}${x.title}</div>`
+    return html`<div className="nb-demo">
+      <div>
+        <button onClick=${add} title=${`已有 ${notes.length} 条笔记`} style=${{ width: '100%' }}>＋ 新建笔记</button>
+        ${sorted.map(item)}
+      </div>
+      ${sel ? html`<div>
+        <div style=${{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+          <input value=${sel.title} onChange=${(e) => update({ title: e.target.value })} style=${{ flex: 1, minWidth: 0 }} />
+          <button className="ghost" onClick=${() => update({ favorite: !sel.favorite })}>${sel.favorite ? '★' : '☆'}</button>
+          <button className="ghost" onClick=${remove}>删除</button>
+        </div>
+        <textarea value=${sel.content} onChange=${(e) => update({ content: e.target.value })}></textarea>
+        <div className="muted">创建于 ${fmt.format(sel.created)} · ${text.split(/\r\n|\r|\n/).length} 行 · ${words} 词 · ${[...text].length} 字符</div>
+      </div>` : html`<div className="muted" style=${{ alignSelf: 'center' }}>← 选择或新建一条笔记</div>`}
+    </div>`
+  }
+  createRoot(document.getElementById('demo-notebook')).render(html`<${Demo} />`)
+</script>
+</body>
+</html>

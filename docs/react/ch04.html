@@ -1,0 +1,660 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 4 章 · 工程化：Vite 与渲染原理 — React 项目实战教程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="assets/react.css">
+<style>
+  .rr-tree { display: grid; gap: 10px; }
+  .rr-box { border: 1px solid var(--line-2); border-radius: 8px; padding: 8px 12px; background: var(--panel); }
+  .rr-box .rr-h { display: flex; justify-content: space-between; font-size: 13.5px; font-weight: 700; }
+  .rr-box .rr-n { font-family: var(--mono); font-size: 12px; color: var(--fg-faint); font-weight: 400; }
+  .rr-kids { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "react": "https://esm.sh/react@19.2.0",
+  "react-dom/client": "https://esm.sh/react-dom@19.2.0/client?external=react",
+  "htm": "https://esm.sh/htm@3.1.1"
+} }
+</script>
+</head>
+<body data-chapter="4">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 4 章</span>
+<h1>工程化：Vite 与渲染原理</h1>
+<p class="lede">
+  上一章我们用 Vite 起了个项目，但还没细看它。这一章补上工程化的基本功：项目结构、开发服务器、构建与部署、样式方案；
+  再深入一步，弄清 React 到底<strong>什么时候</strong>、<strong>为什么</strong>重新渲染组件，以及 React Compiler 如何替你做性能优化。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>了解创建 React 项目的几种主流方式，以及为什么不再用 Create React App</li>
+    <li>看懂 Vite 项目结构：<code>index.html</code> → <code>main.jsx</code> → <code>App.jsx</code></li>
+    <li>理解“触发 → 渲染 → 提交”三个阶段，知道组件在哪些情况下会重新渲染</li>
+    <li>会用 <code>memo</code>、<code>useMemo</code>、<code>useCallback</code>，并知道 React Compiler 可以自动完成这些</li>
+    <li>选择合适的样式方案：普通 CSS、CSS Modules、Tailwind CSS</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="choose">怎样开始一个 React 项目</h2>
+
+<p>
+  早年大家都用 Create React App（CRA）创建项目，它基于 webpack，启动慢、配置被隐藏，已在 2025 年被官方正式弃用。今天的主流选择是：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="三种创建 React 项目的方式：Vite 单页应用、React Router 框架模式、Next.js">
+  <rect class="bx-a" x="20" y="30" width="230" height="200" rx="14"/>
+  <text class="ttl on-a" x="135" y="58" text-anchor="middle">Vite（构建工具）</text>
+  <text class="mono sm" x="135" y="84" text-anchor="middle">npm create vite@latest</text>
+  <text class="sm" x="135" y="114" text-anchor="middle">✓ 最轻量，什么都自己选</text>
+  <text class="sm" x="135" y="136" text-anchor="middle">✓ 纯前端单页应用（SPA）</text>
+  <text class="sm" x="135" y="158" text-anchor="middle">✓ 最适合学习原理</text>
+  <text class="sm on-a" x="135" y="200" text-anchor="middle">本教程第 3–6 章使用</text>
+
+  <rect class="bx-b" x="265" y="30" width="230" height="200" rx="14"/>
+  <text class="ttl on-b" x="380" y="58" text-anchor="middle">React Router 框架模式</text>
+  <text class="mono sm" x="380" y="84" text-anchor="middle">npx create-react-router</text>
+  <text class="sm" x="380" y="114" text-anchor="middle">✓ 基于 Vite</text>
+  <text class="sm" x="380" y="136" text-anchor="middle">✓ 文件路由、数据加载</text>
+  <text class="sm" x="380" y="158" text-anchor="middle">✓ 可选 SSR（原 Remix）</text>
+  <text class="sm on-b" x="380" y="200" text-anchor="middle">第 5 章用它的库模式</text>
+
+  <rect class="bx-p" x="510" y="30" width="230" height="200" rx="14"/>
+  <text class="ttl on-p" x="625" y="58" text-anchor="middle">Next.js（全栈框架）</text>
+  <text class="mono sm" x="625" y="84" text-anchor="middle">npx create-next-app</text>
+  <text class="sm" x="625" y="114" text-anchor="middle">✓ 服务端组件、SSR、SSG</text>
+  <text class="sm" x="625" y="136" text-anchor="middle">✓ 文件路由、API 路由</text>
+  <text class="sm" x="625" y="158" text-anchor="middle">✓ React 官方文档首推</text>
+  <text class="sm on-p" x="625" y="200" text-anchor="middle">第 7 章使用</text>
+  <text class="lbl" x="380" y="258" text-anchor="middle">React 官方建议：新项目优先考虑框架；只想做纯前端应用或学习时，用 Vite 这样的构建工具</text>
+</svg>
+<figcaption>图 4-1　三种主流起步方式</figcaption>
+</figure>
+
+<h2 id="env">开发环境</h2>
+
+<ul>
+  <li><strong>Node.js</strong>：从官网安装 LTS 版本，npm 会一起装好（<code>node -v</code> 检查）。</li>
+  <li><strong>编辑器</strong>：VS Code 原生支持 JSX，再装上 <strong>ESLint</strong> 扩展（第 7 章会配置规则）。</li>
+  <li><strong>React DevTools</strong>：浏览器扩展，第 1 章介绍过。</li>
+</ul>
+
+<h2 id="vite">用 Vite 创建项目</h2>
+
+<div class="code" data-lang="bash" data-file="终端"><pre>
+npm create vite@latest demo
+# 选择框架：React
+# 选择变体：JavaScript（或 TypeScript）
+cd demo
+npm install
+npm run dev
+</pre></div>
+
+<p>也可以一步指定模板：<code>npm create vite@latest demo -- --template react</code>（TypeScript 版用 <code>react-ts</code>）。</p>
+
+<h3>Vite 为什么快</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="打包式开发服务器与 Vite 按需编译的对比">
+  <text class="ttl" x="190" y="22" text-anchor="middle">传统（CRA / webpack）：先全部打包</text>
+  <rect class="bx" x="20" y="40" width="80" height="26" rx="5"/><text class="sm" x="60" y="58" text-anchor="middle">main.jsx</text>
+  <rect class="bx" x="20" y="72" width="80" height="26" rx="5"/><text class="sm" x="60" y="90" text-anchor="middle">App.jsx</text>
+  <rect class="bx" x="20" y="104" width="80" height="26" rx="5"/><text class="sm" x="60" y="122" text-anchor="middle">页面 A</text>
+  <rect class="bx" x="20" y="136" width="80" height="26" rx="5"/><text class="sm" x="60" y="154" text-anchor="middle">… 几百个</text>
+  <path class="ln" d="M102 100 H140" marker-end="url(#ar)"/>
+  <rect class="bx-r" x="144" y="60" width="110" height="80" rx="10"/>
+  <text class="on-r" x="199" y="94" text-anchor="middle">打包全部</text>
+  <text class="sm" x="199" y="116" text-anchor="middle">项目越大越慢</text>
+  <path class="ln" d="M256 100 H290" marker-end="url(#ar)"/>
+  <rect class="bx" x="294" y="76" width="66" height="48" rx="8"/>
+  <text class="sm" x="327" y="104" text-anchor="middle">bundle</text>
+  <text class="sm on-r" x="190" y="196" text-anchor="middle">启动要等，改一行也要重新打包相关部分</text>
+
+  <path class="ln-d" d="M380 14 V220"/>
+
+  <text class="ttl on-a" x="570" y="22" text-anchor="middle">Vite：先启动，按需编译</text>
+  <rect class="bx-g" x="396" y="40" width="110" height="44" rx="8"/>
+  <text class="on-g" x="451" y="60" text-anchor="middle">浏览器</text>
+  <text class="sm" x="451" y="76" text-anchor="middle">原生 import</text>
+  <rect class="bx-a" x="620" y="40" width="120" height="44" rx="8"/>
+  <text class="on-a" x="680" y="60" text-anchor="middle">Vite 服务器</text>
+  <text class="sm" x="680" y="76" text-anchor="middle">毫秒级启动</text>
+  <path class="ln-g" d="M508 52 H616" marker-end="url(#ar)"/>
+  <text class="halo mono sm" x="562" y="46" text-anchor="middle">GET /App.jsx</text>
+  <path class="ln-a" d="M616 72 H510" marker-end="url(#ar-a)"/>
+  <text class="sm" x="460" y="120" text-anchor="middle">请求到哪个文件</text>
+  <text class="sm" x="460" y="138" text-anchor="middle">才编译哪个文件</text>
+  <rect class="bx" x="600" y="104" width="64" height="26" rx="5"/><text class="sm" x="632" y="122" text-anchor="middle">App</text>
+  <rect class="bx-d" x="676" y="104" width="64" height="26" rx="5"/><text class="sm" x="708" y="122" text-anchor="middle">页面 A</text>
+  <text class="sm on-g" x="570" y="196" text-anchor="middle">改一个文件只重新编译它，Fast Refresh 毫秒级生效</text>
+  <text class="lbl" x="380" y="242" text-anchor="middle">生产构建（npm run build）时 Vite 仍会打包、压缩、拆分代码，因为线上不适合几百个小文件</text>
+</svg>
+<figcaption>图 4-2　开发时按需编译，构建时才打包</figcaption>
+</figure>
+
+<h3>项目结构</h3>
+
+<div class="tree"><b>demo/</b>
+├── <b>index.html</b>        <i># 入口页面（在根目录）</i>
+├── package.json
+├── vite.config.js    <i># Vite 配置</i>
+├── eslint.config.js  <i># 代码检查配置（第 7 章）</i>
+├── public/           <i># 原样复制的静态文件</i>
+└── <b>src/</b>
+    ├── <b>main.jsx</b>      <i># JS 入口：createRoot().render()</i>
+    ├── <b>App.jsx</b>       <i># 根组件</i>
+    ├── App.css
+    ├── index.css
+    └── assets/       <i># 会被构建处理的图片等</i></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 180" role="img" aria-label="引用链：index.html → main.jsx → App.jsx → 子组件">
+  <rect class="bx" x="20" y="50" width="160" height="80" rx="10"/>
+  <text class="ttl" x="100" y="76" text-anchor="middle">index.html</text>
+  <text class="mono sm" x="100" y="98" text-anchor="middle">&lt;div id="root"&gt;</text>
+  <text class="mono sm" x="100" y="116" text-anchor="middle">&lt;script type="module"&gt;</text>
+  <path class="ln" d="M182 90 H226" marker-end="url(#ar)"/>
+  <rect class="bx-b" x="230" y="50" width="190" height="80" rx="10"/>
+  <text class="ttl on-b" x="325" y="76" text-anchor="middle">src/main.jsx</text>
+  <text class="mono sm" x="325" y="98" text-anchor="middle">createRoot(…)</text>
+  <text class="mono sm" x="325" y="116" text-anchor="middle">.render(&lt;App /&gt;)</text>
+  <path class="ln" d="M422 90 H466" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="470" y="50" width="120" height="80" rx="10"/>
+  <text class="ttl on-a" x="530" y="96" text-anchor="middle">App.jsx</text>
+  <path class="ln" d="M592 76 L636 50" marker-end="url(#ar)"/>
+  <path class="ln" d="M592 104 L636 130" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="640" y="26" width="100" height="40" rx="8"/><text class="sm on-g" x="690" y="51" text-anchor="middle">Header.jsx</text>
+  <rect class="bx-g" x="640" y="114" width="100" height="40" rx="8"/><text class="sm on-g" x="690" y="139" text-anchor="middle">Movies.jsx</text>
+</svg>
+<figcaption>图 4-3　从页面到组件的引用链</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="vite.config.js"><pre>
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],   // 负责编译 JSX、提供 Fast Refresh
+})
+</pre></div>
+
+<div class="code" data-lang="json" data-file="package.json（节选）"><pre>
+{
+  "type": "module",
+  "scripts": {
+    "dev": "vite",              // 开发服务器
+    "build": "vite build",      // 生产构建
+    "lint": "eslint .",         // 代码检查
+    "preview": "vite preview"   // 预览构建结果
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.0",
+    "vite": "^7.0.0"
+  }
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; react 和 react-dom 为什么是两个包</div>
+  <p>
+    <code>react</code> 只包含组件、Hooks 等与平台无关的核心；<code>react-dom</code> 负责把它渲染到浏览器 DOM。
+    同样的 React 组件，配上 React Native 就能渲染成手机原生界面 —— 这就是分成两个包的原因。
+  </p>
+</div>
+
+<h3>JSX 的编译与 Fast Refresh</h3>
+
+<p>Vite 的 React 插件会把 JSX 编译成函数调用。新的“自动运行时”会自动导入需要的函数，所以组件文件里不必再写 <code>import React</code>：</p>
+
+<div class="vs">
+  <div class="old"><div class="h">你写的</div>
+<div class="code" data-lang="jsx"><pre>
+export default function Hello({ name }) {
+  return &lt;h1 className="title"&gt;Hi {name}&lt;/h1&gt;
+}
+</pre></div></div>
+  <div class="new"><div class="h">编译后（示意）</div>
+<div class="code" data-lang="js"><pre>
+import { jsxs } from 'react/jsx-runtime'
+export default function Hello({ name }) {
+  return jsxs('h1', { className: 'title',
+                      children: ['Hi ', name] })
+}
+</pre></div></div>
+</div>
+
+<p>
+  修改组件文件并保存，页面会立即更新，而且组件里的状态（比如输入框里打了一半的字）会被保留 —— 这叫 <strong>Fast Refresh</strong>。
+  为了让它正常工作，一个 <code>.jsx</code> 文件最好<strong>只导出组件</strong>；把常量、工具函数放到单独的 <code>.js</code> 文件里。
+</p>
+
+<h2 id="render">React 如何渲染：触发、渲染、提交</h2>
+
+<p>
+  第 1 章说过“状态一变，React 就重新执行组件函数”。现在把这个过程看得更仔细一点。React 把一次界面更新分成三个阶段：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="React 更新的三个阶段：触发、渲染、提交">
+  <rect class="bx-b" x="20" y="40" width="210" height="150" rx="14"/>
+  <text class="ttl on-b" x="125" y="66" text-anchor="middle">① 触发 Trigger</text>
+  <text class="sm" x="125" y="94" text-anchor="middle">首次 root.render()</text>
+  <text class="sm" x="125" y="116" text-anchor="middle">或某个组件 setState</text>
+  <text class="sm" x="125" y="146" text-anchor="middle">多个 setState 会被</text>
+  <text class="sm" x="125" y="164" text-anchor="middle">合并成一次更新（批处理）</text>
+  <path class="ln" d="M232 115 H272" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="276" y="40" width="210" height="150" rx="14"/>
+  <text class="ttl on-a" x="381" y="66" text-anchor="middle">② 渲染 Render</text>
+  <text class="sm" x="381" y="94" text-anchor="middle">调用组件函数</text>
+  <text class="sm" x="381" y="116" text-anchor="middle">得到新的元素树</text>
+  <text class="sm" x="381" y="146" text-anchor="middle">与上一次比较（协调）</text>
+  <text class="sm" x="381" y="164" text-anchor="middle">纯计算，不碰 DOM</text>
+  <path class="ln" d="M488 115 H528" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="532" y="40" width="210" height="150" rx="14"/>
+  <text class="ttl on-g" x="637" y="66" text-anchor="middle">③ 提交 Commit</text>
+  <text class="sm" x="637" y="94" text-anchor="middle">把差异应用到真实 DOM</text>
+  <text class="sm" x="637" y="116" text-anchor="middle">浏览器重新绘制</text>
+  <text class="sm" x="637" y="146" text-anchor="middle">然后运行 effect</text>
+  <text class="sm" x="637" y="164" text-anchor="middle">（useEffect）</text>
+  <text class="lbl" x="380" y="226" text-anchor="middle">“渲染”只是调用函数、算出界面描述，并不一定会改 DOM。</text>
+  <text class="lbl" x="380" y="246" text-anchor="middle">如果算出来和上次一样，提交阶段什么都不做。</text>
+</svg>
+<figcaption>图 4-4　一次更新的三个阶段（类比餐厅：顾客下单 → 厨房做菜 → 上菜）</figcaption>
+</figure>
+
+<h3>组件什么时候会重新渲染</h3>
+
+<p>有三种情况会让一个组件重新渲染：</p>
+
+<ol>
+  <li>它<strong>自己的状态</strong>变了（<code>setState</code> / <code>dispatch</code>）；</li>
+  <li>它读取的 <strong>Context</strong> 的值变了；</li>
+  <li>它的<strong>父组件重新渲染了</strong> —— 默认情况下，父组件渲染时，所有子组件都会跟着渲染，<em>不管 props 有没有变</em>。</li>
+</ol>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="父组件状态变化后，整棵子树默认都会重新渲染">
+  <rect class="bx-r" x="300" y="20" width="160" height="50" rx="10"/>
+  <text class="ttl on-r" x="380" y="42" text-anchor="middle">App</text>
+  <text class="sm" x="380" y="60" text-anchor="middle">setCount(…) ✱</text>
+  <path class="ln-r" d="M340 72 L210 112" marker-end="url(#ar)"/>
+  <path class="ln-r" d="M420 72 L550 112" marker-end="url(#ar)"/>
+  <rect class="bx-r" x="130" y="116" width="160" height="44" rx="10"/>
+  <text class="on-r" x="210" y="136" text-anchor="middle">Header</text>
+  <text class="sm" x="210" y="152" text-anchor="middle">props 没变，也渲染</text>
+  <rect class="bx-r" x="470" y="116" width="160" height="44" rx="10"/>
+  <text class="on-r" x="550" y="136" text-anchor="middle">Counter</text>
+  <text class="sm" x="550" y="152" text-anchor="middle">count 变了，应该渲染</text>
+  <path class="ln-r" d="M170 162 L120 196" marker-end="url(#ar)"/>
+  <path class="ln-r" d="M250 162 L300 196" marker-end="url(#ar)"/>
+  <rect class="bx-r" x="50" y="200" width="140" height="40" rx="8"/><text class="sm on-r" x="120" y="225" text-anchor="middle">Logo</text>
+  <rect class="bx-r" x="230" y="200" width="140" height="40" rx="8"/><text class="sm on-r" x="300" y="225" text-anchor="middle">Nav</text>
+  <rect class="bx" x="440" y="196" width="300" height="56" rx="10"/>
+  <text class="sm" x="590" y="218" text-anchor="middle">红色 = 本次被重新渲染的组件</text>
+  <text class="sm" x="590" y="238" text-anchor="middle">大多数时候这完全没问题，渲染很快</text>
+</svg>
+<figcaption>图 4-5　默认情况下，重新渲染会沿组件树向下传播</figcaption>
+</figure>
+
+<div class="box key">
+  <div class="t">&#9733; 不要害怕重新渲染</div>
+  <p>
+    “渲染”只是调用函数，真正昂贵的 DOM 操作只发生在有差异的地方。绝大多数应用里，多余的渲染根本感觉不到。
+    只有当某个组件的渲染本身很重（大列表、复杂计算），并且被频繁触发时，才值得优化。
+  </p>
+</div>
+
+<p>下面这个演示可以直观地看到哪些组件被重新渲染了（每次渲染时闪一下并计数）：</p>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · 谁被重新渲染了？</div>
+  <div class="body"><div id="demo-render"><span class="muted">加载中……</span></div></div>
+</div>
+
+<h3>手动优化：memo、useMemo、useCallback</h3>
+
+<div class="tw"><table>
+<thead><tr><th>API</th><th>作用</th><th>例子</th></tr></thead>
+<tbody>
+<tr><td><code>memo(Component)</code></td><td>props 没变（浅比较）时跳过该组件的渲染</td><td><code>const Header = memo(function Header(props) {...})</code></td></tr>
+<tr><td><code>useMemo(fn, deps)</code></td><td>缓存计算结果（上一章用过）</td><td><code>useMemo(() =&gt; filter(list), [list])</code></td></tr>
+<tr><td><code>useCallback(fn, deps)</code></td><td>缓存函数本身，让它在多次渲染间保持同一个引用</td><td><code>useCallback(() =&gt; save(id), [id])</code></td></tr>
+</tbody>
+</table></div>
+
+<p>
+  为什么需要 <code>useCallback</code>？因为每次渲染，组件里的函数都是<strong>新创建</strong>的。如果把 <code>onClick={() =&gt; ...}</code> 传给一个 <code>memo</code> 组件，
+  它每次都会收到一个“新的”函数，浅比较永远不相等，<code>memo</code> 就失效了：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="每次渲染都创建新函数导致 memo 失效，useCallback 保持同一引用">
+  <rect class="bx-r" x="20" y="30" width="340" height="150" rx="12"/>
+  <text class="ttl on-r" x="190" y="54" text-anchor="middle">✗ 每次渲染一个新函数</text>
+  <text class="mono sm" x="40" y="84">const onSave = () =&gt; save(id)</text>
+  <text class="mono sm" x="40" y="106">&lt;MemoButton onClick={onSave} /&gt;</text>
+  <text class="sm" x="40" y="138">第 1 次渲染：函数 #1</text>
+  <text class="sm" x="40" y="158">第 2 次渲染：函数 #2 ≠ #1 → memo 失效</text>
+
+  <rect class="bx-g" x="400" y="30" width="340" height="150" rx="12"/>
+  <text class="ttl on-g" x="570" y="54" text-anchor="middle">✓ useCallback 缓存函数</text>
+  <text class="mono sm" x="420" y="84">const onSave = useCallback(</text>
+  <text class="mono sm" x="436" y="106">() =&gt; save(id), [id])</text>
+  <text class="sm" x="420" y="138">id 没变：始终是函数 #1</text>
+  <text class="sm" x="420" y="158">→ MemoButton 跳过渲染</text>
+  <text class="lbl" x="380" y="210" text-anchor="middle">手动维护这些依赖数组既繁琐又容易出错 —— 这正是 React Compiler 要解决的问题</text>
+</svg>
+<figcaption>图 4-6　memo 和 useCallback 需要配合使用</figcaption>
+</figure>
+
+<h3>React Compiler：自动记忆化</h3>
+
+<p>
+  <strong>React Compiler</strong>（2025 年 10 月发布 1.0）是一个构建期工具：它分析你的组件代码，<strong>自动</strong>插入相当于 <code>memo</code>、<code>useMemo</code>、<code>useCallback</code> 的缓存逻辑，
+  而且比手写更精细。启用它之后，绝大多数情况下你都不需要再手写这三个 API。
+</p>
+
+<div class="code" data-lang="bash"><pre>
+npm install -D babel-plugin-react-compiler
+</pre></div>
+
+<div class="code" data-lang="js" data-file="vite.config.js"><pre>
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [
+    react({
+      babel: {
+        plugins: ['babel-plugin-react-compiler'],   // 启用 React Compiler
+      },
+    }),
+  ],
+})
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="React Compiler 在构建时把普通组件代码变成带缓存的代码">
+  <rect class="bx" x="20" y="40" width="250" height="130" rx="12"/>
+  <text class="ttl" x="145" y="64" text-anchor="middle">你写的（普通代码）</text>
+  <text class="mono sm" x="36" y="92">function List({ items }) {</text>
+  <text class="mono sm" x="48" y="112">const sorted = items.toSorted()</text>
+  <text class="mono sm" x="48" y="132">return &lt;ul&gt;{…}&lt;/ul&gt;</text>
+  <text class="mono sm" x="36" y="152">}</text>
+  <path class="ln-a" d="M272 105 H336" marker-end="url(#ar-a)"/>
+  <rect class="bx-a" x="340" y="70" width="140" height="70" rx="12"/>
+  <text class="ttl on-a" x="410" y="100" text-anchor="middle">React</text>
+  <text class="ttl on-a" x="410" y="120" text-anchor="middle">Compiler</text>
+  <path class="ln-a" d="M482 105 H536" marker-end="url(#ar-a)"/>
+  <rect class="bx-g" x="540" y="40" width="200" height="130" rx="12"/>
+  <text class="ttl on-g" x="640" y="64" text-anchor="middle">编译产物</text>
+  <text class="sm" x="640" y="92" text-anchor="middle">items 没变 → 复用</text>
+  <text class="sm" x="640" y="112" text-anchor="middle">上次的 sorted 和 JSX</text>
+  <text class="sm" x="640" y="140" text-anchor="middle">（自动、细粒度的缓存）</text>
+  <text class="lbl" x="380" y="200" text-anchor="middle">前提：你的组件遵守 React 的规则（纯函数、不修改 props 和状态、Hooks 只在顶层调用）</text>
+</svg>
+<figcaption>图 4-7　React Compiler 在构建时自动加缓存</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; 编译器依赖“遵守规则”</div>
+  <p>
+    Compiler 假设你的组件是纯的。如果代码在渲染时修改了外部变量、直接改了状态对象，编译器会跳过这个组件（或者优化后行为出错）。
+    第 7 章配置的 <code>eslint-plugin-react-hooks</code> 包含了编译器相关的检查规则，能提前发现这类问题。前两章反复强调的“纯函数”和“不可变更新”，在这里得到了回报。
+  </p>
+</div>
+
+<h3>StrictMode：开发时的“体检”</h3>
+
+<p>
+  <code>main.jsx</code> 里的 <code>&lt;StrictMode&gt;</code> 只在开发环境生效。它会故意<strong>把组件函数调用两次</strong>、<strong>把 effect 挂载 → 清理 → 再挂载一次</strong>，
+  以暴露不纯的渲染和缺失的清理函数。所以开发时看到 <code>console.log</code> 打印两遍是正常的，生产环境不会这样。
+</p>
+
+<h2 id="css">样式方案</h2>
+
+<p>React 本身不规定怎么写样式。常见的选择：</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#127912;</span><h4>普通 CSS</h4><p><code>import './App.css'</code>。简单直接，但所有类名都是全局的，项目大了容易冲突。</p></div>
+  <div class="card"><span class="ic">&#128274;</span><h4>CSS Modules</h4><p>文件名以 <code>.module.css</code> 结尾，类名会被自动加上唯一后缀，天然隔离。Vite 内置支持。</p></div>
+  <div class="card"><span class="ic">&#127788;</span><h4>Tailwind CSS</h4><p>直接在 <code>className</code> 里组合原子类（<code>p-4 text-lg</code>）。目前 React 社区最流行的方案之一。</p></div>
+  <div class="card"><span class="ic">&#129520;</span><h4>Sass 等预处理器</h4><p><code>npm i -D sass-embedded</code> 后直接 <code>import './App.scss'</code>，也可以和 CSS Modules 组合：<code>.module.scss</code>。</p></div>
+</div>
+
+<h3>CSS Modules</h3>
+
+<div class="code" data-lang="css" data-file="src/Movie.module.css"><pre>
+.movie {
+  padding: 6px 0;
+  border-bottom: 1px solid rgb(0 0 0 / .1);
+}
+.title {
+  font-weight: bold;
+}
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="src/Movie.jsx"><pre>
+import styles from './Movie.module.css'   // 得到一个“类名映射”对象
+
+export default function Movie({ movie }) {
+  return (
+    &lt;li className={styles.movie}&gt;
+      &lt;span className={styles.title}&gt;{movie.title}&lt;/span&gt;
+    &lt;/li&gt;
+  )
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="CSS Modules 把类名编译成带唯一后缀的名字">
+  <rect class="bx" x="20" y="40" width="280" height="120" rx="12"/>
+  <text class="ttl" x="160" y="64" text-anchor="middle">你写的</text>
+  <text class="mono sm" x="40" y="94">.movie { … }</text>
+  <text class="mono sm" x="40" y="122">className={styles.movie}</text>
+  <path class="ln-a" d="M302 100 H416" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="359" y="92" text-anchor="middle">构建</text>
+  <rect class="bx-a" x="420" y="40" width="320" height="120" rx="12"/>
+  <text class="ttl on-a" x="580" y="64" text-anchor="middle">实际生成的</text>
+  <text class="mono sm" x="440" y="94">._movie_1x7q3_1 { … }</text>
+  <text class="mono sm" x="440" y="122">class="_movie_1x7q3_1"</text>
+  <text class="lbl" x="380" y="190" text-anchor="middle">每个文件的类名都有自己的后缀，可以放心使用 .title、.item 这类通用名字</text>
+</svg>
+<figcaption>图 4-8　CSS Modules 的类名隔离</figcaption>
+</figure>
+
+<h3>Tailwind CSS</h3>
+
+<div class="code" data-lang="bash"><pre>
+npm install tailwindcss @tailwindcss/vite
+</pre></div>
+
+<div class="code" data-lang="js" data-file="vite.config.js"><pre>
+import tailwindcss from '@tailwindcss/vite'
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+})
+</pre></div>
+
+<div class="code" data-lang="css" data-file="src/index.css"><pre>
+@import "tailwindcss";
+</pre></div>
+
+<div class="code" data-lang="jsx"><pre>
+&lt;ul className="list-none rounded bg-black/10 p-3"&gt;
+  &lt;li className="border-b border-black/10 py-1.5 last:border-0"&gt;Star Wars&lt;/li&gt;
+&lt;/ul&gt;
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 怎么选？</div>
+  <p>
+    学习阶段用普通 CSS 或 CSS Modules 就好，概念最少。团队项目中 Tailwind 很常见，好处是不用起类名、样式和结构放在一起、未使用的样式会被自动剔除。
+    本教程后面的项目沿用原书提供的样式文件（普通 CSS），以便聚焦在 React 本身。
+  </p>
+</div>
+
+<h2 id="organize">组件的组织方式</h2>
+
+<ul>
+  <li><strong>一个文件一个组件</strong>，文件名和组件名一致，用 PascalCase：<code>MovieList.jsx</code>。</li>
+  <li>默认导出（<code>export default function Movie</code>）或具名导出（<code>export function Movie</code>）都可以，团队内统一即可。</li>
+  <li><strong>就近放置</strong>：组件的样式、测试、只在它这里用的小组件，放在同一个文件夹里。</li>
+  <li>组件变得太大时就拆分：一个经验法则是，组件超过一屏、或者同时负责好几件互不相关的事情。</li>
+</ul>
+
+<div class="code" data-lang="jsx" data-file="src/Movies.jsx"><pre>
+import { useState } from 'react'
+import Movie from './Movie.jsx'
+
+export default function Movies() {
+  const [movies] = useState([
+    { id: 0, title: 'Star Wars' },
+    { id: 1, title: 'Blade Runner' },
+  ])
+  return (
+    &lt;ul className="movies"&gt;
+      {movies.map((movie) =&gt; &lt;Movie key={movie.id} movie={movie} /&gt;)}
+    &lt;/ul&gt;
+  )
+}
+</pre></div>
+
+<details class="box deep">
+<summary class="t" style="cursor:pointer">&#128269; 可选：TypeScript（点击展开）</summary>
+<p>React 社区里 TypeScript 已经非常普遍。用 <code>react-ts</code> 模板创建项目后，组件文件改为 <code>.tsx</code>，props 可以用类型描述：</p>
+<div class="code" data-lang="tsx"><pre>
+type MovieProps = {
+  movie: { id: number; title: string }
+  highlighted?: boolean
+  onSelect?: (id: number) =&gt; void
+}
+
+export default function Movie({ movie, highlighted = false, onSelect }: MovieProps) {
+  return &lt;li onClick={() =&gt; onSelect?.(movie.id)}&gt;{movie.title}&lt;/li&gt;
+}
+</pre></div>
+<p>本教程为了照顾初学者使用 JavaScript，所有示例都能平滑迁移到 TypeScript。</p>
+</details>
+
+<h2 id="build">构建与部署</h2>
+
+<div class="code" data-lang="bash"><pre>
+npm run build      # 输出到 dist/
+npm run preview    # 本地预览
+</pre></div>
+
+<div class="tree"><b>dist/</b>
+├── index.html
+└── assets/
+    ├── index-<b>BmT3xQk9</b>.js     <i># 文件名带内容哈希，可以永久缓存</i>
+    └── index-<b>D4fK2s1a</b>.css</div>
+
+<p>把 <code>dist/</code> 上传到任何静态托管服务即可（GitHub Pages、Netlify、Vercel、Cloudflare Pages……）。两个常见的坑：</p>
+
+<ul>
+  <li><strong>子路径部署</strong>：比如 GitHub Pages 的 <code>https://用户名.github.io/仓库名/</code>，要在 <code>vite.config.js</code> 里设置 <code>base: '/仓库名/'</code>。</li>
+  <li><strong>前端路由刷新 404</strong>：下一章使用 React Router 后，直接访问 <code>/tickets</code> 这样的地址，服务器上并没有这个文件，需要配置“找不到就返回 index.html”。</li>
+</ul>
+
+<h3>依赖版本</h3>
+
+<p>
+  <code>package.json</code> 里的 <code>"^19.2.0"</code> 表示“19.x.x 中不低于 19.2.0 的版本”（语义化版本：主版本.次版本.修订号）。
+  用 <code>npm outdated</code> 查看可更新的包，<code>npm update</code> 在允许范围内更新；跨主版本升级前先读更新日志。
+</p>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li>新项目用 Vite（纯前端）或框架（React Router 框架模式、Next.js），不要再用 Create React App。</li>
+  <li>Vite 开发时按需编译、Fast Refresh 保留状态；<code>vite build</code> 负责生产打包。</li>
+  <li>一次更新 = 触发 → 渲染（调用函数、比较）→ 提交（改 DOM、运行 effect）。</li>
+  <li>组件在自身状态变化、读取的 Context 变化、父组件渲染时会重新渲染；这通常不是问题。</li>
+  <li><code>memo</code> / <code>useMemo</code> / <code>useCallback</code> 可以手动优化，React Compiler 能自动完成大部分。</li>
+  <li>样式：普通 CSS、CSS Modules、Tailwind 各有适用场景。</li>
+</ul>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>用 <code>npm create vite@latest</code> 创建项目，把第 2 章的笔记本迁移过来，拆成 <code>NoteList</code>、<code>NoteEditor</code>、<code>NotePreview</code> 三个组件，Markdown 改用 <code>react-markdown</code>。</li>
+    <li>打开 React DevTools 的 Profiler，录制一次输入操作，看看哪些组件被重新渲染了。</li>
+    <li>启用 React Compiler，再录制一次，对比渲染的组件数量。</li>
+    <li>把 <code>Movie</code> 组件的样式改写为 CSS Modules，在开发者工具里观察生成的类名。</li>
+    <li>运行 <code>npm run build</code>，查看 <code>dist/</code>；设置 <code>base</code> 后再构建一次，对比 <code>index.html</code> 里资源路径的变化。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+<script type="module">
+  import { createElement, useState, useEffect, useRef, memo } from 'react'
+  import { createRoot } from 'react-dom/client'
+  import htm from 'htm'
+  const html = htm.bind(createElement)
+
+  // 每次渲染后闪一下，并累计渲染次数
+  function useRenderFlash() {
+    const box = useRef(null), count = useRef(0), label = useRef(null)
+    useEffect(() => {
+      count.current++
+      if (label.current) label.current.textContent = `渲染 ${count.current} 次`
+      box.current?.animate([{ background: 'var(--accent-bg)', borderColor: 'var(--accent)' }, {}], { duration: 700 })
+    })
+    return { box, label }
+  }
+
+  function Child({ title, value }) {
+    const { box, label } = useRenderFlash()
+    return html`<div className="rr-box" ref=${box}>
+      <div className="rr-h"><span>${title}</span><span className="rr-n" ref=${label}></span></div>
+      <div className="muted">${value === undefined ? '没有接收任何会变的 props' : `props.value = ${value}`}</div>
+    </div>`
+  }
+  const MemoChild = memo(Child)
+
+  function Demo() {
+    const [count, setCount] = useState(0)
+    const [text, setText] = useState('')
+    const [useMemoChild, setUseMemoChild] = useState(false)
+    const { box, label } = useRenderFlash()
+    const Static = useMemoChild ? MemoChild : Child
+    return html`<div className="rr-tree">
+      <div style=${{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+        <button onClick=${() => setCount(count + 1)}>count + 1</button>
+        <input placeholder="在父组件里打字" value=${text} onChange=${(e) => setText(e.target.value)} />
+        <label style=${{ fontSize: '14px' }}><input type="checkbox" checked=${useMemoChild}
+          onChange=${(e) => setUseMemoChild(e.target.checked)} /> 给“静态子组件”加上 memo</label>
+      </div>
+      <div className="rr-box" ref=${box}>
+        <div className="rr-h"><span>父组件 App（count = ${count}）</span><span className="rr-n" ref=${label}></span></div>
+        <div className="rr-kids">
+          <${Static} title=${useMemoChild ? '静态子组件（memo）' : '静态子组件'} />
+          <${Child} title="计数子组件" value=${count} />
+        </div>
+      </div>
+    </div>`
+  }
+  createRoot(document.getElementById('demo-render')).render(html`<${Demo} />`)
+</script>
+</body>
+</html>

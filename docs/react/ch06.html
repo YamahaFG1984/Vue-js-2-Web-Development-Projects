@@ -1,0 +1,1258 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 6 章 · 项目四：地理定位博客 — React 项目实战教程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="assets/react.css">
+</head>
+<body data-chapter="6">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 6 章 · 项目四</span>
+<h1>地理定位博客</h1>
+<p class="lede">
+  一个以地图为中心的博客：用户用 Google 账号登录，在地图上点一下就能在那个位置发帖，点击标记查看帖子和评论。
+  这一章的主角是<strong>全局状态管理</strong> —— 我们用轻量的 <strong>Zustand</strong> 管理用户、地图和帖子三个 store；
+  还会学习 OAuth 弹窗登录、用 react-leaflet 集成地图、render props 与 Hook 的取舍，以及乐观更新。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>理解 Context 的局限，掌握 Zustand 的 store、selector 和 action</li>
+    <li>在组件之外（请求层、路由）读写 store</li>
+    <li>用 OAuth 弹窗 + <code>postMessage</code> 实现第三方登录</li>
+    <li>用 react-leaflet 声明式地使用地图，理解它“哪些属性只在初始化时生效”</li>
+    <li>写一个 render props 组件，再改写成自定义 Hook，比较两者</li>
+    <li>处理请求竞态，实现评论的乐观更新</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="overview">应用全貌</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="地理定位博客界面：顶部菜单栏，左侧地图，右侧内容面板">
+  <rect class="bx" x="20" y="14" width="720" height="262" rx="12"/>
+  <rect class="bx-a" x="34" y="26" width="692" height="38" rx="8"/>
+  <text class="ttl on-a" x="60" y="50">📍 GeoBlog</text>
+  <circle class="bx" cx="530" cy="45" r="11"/>
+  <text class="sm" x="550" y="50">张三</text>
+  <text class="sm" x="620" y="50">◎ 定位</text>
+  <text class="sm" x="680" y="50">⏻</text>
+  <text class="sm" x="300" y="50">&lt;AppMenu&gt;：头像、名字、回到我的位置、登出</text>
+  <rect class="bx-g" x="34" y="74" width="452" height="190" rx="8"/>
+  <text class="ttl on-g" x="260" y="96" text-anchor="middle">&lt;BlogMap&gt;：地图</text>
+  <circle cx="120" cy="150" r="10" style="fill:var(--panel);stroke:var(--fg-soft);stroke-width:1.5"/>
+  <circle cx="230" cy="190" r="10" style="fill:var(--accent);stroke:var(--accent-2);stroke-width:1.5"/>
+  <circle cx="340" cy="140" r="10" style="fill:var(--panel);stroke:var(--fg-soft);stroke-width:1.5"/>
+  <circle cx="400" cy="220" r="10" style="fill:var(--panel);stroke:var(--fg-soft);stroke-width:1.5;stroke-dasharray:3 2;opacity:.7"/>
+  <circle cx="180" cy="230" r="6" style="fill:var(--blue)"/>
+  <text class="sm" x="196" y="234">我的位置</text>
+  <text class="sm" x="246" y="194">选中的帖子</text>
+  <text class="sm" x="416" y="224">草稿</text>
+  <text class="sm" x="260" y="120" text-anchor="middle">点击空白处 → 在这里发帖</text>
+  <rect class="bx-b" x="496" y="74" width="230" height="190" rx="8"/>
+  <text class="ttl on-b" x="611" y="96" text-anchor="middle">&lt;BlogContent&gt;</text>
+  <rect class="bx" x="510" y="106" width="202" height="34" rx="6"/>
+  <text class="sm" x="611" y="128" text-anchor="middle">LocationInfo：地点名称和地址</text>
+  <rect class="bx" x="510" y="148" width="202" height="104" rx="6"/>
+  <text class="sm" x="611" y="172" text-anchor="middle">三选一：</text>
+  <text class="sm" x="611" y="194" text-anchor="middle">NoContent（提示点地图）</text>
+  <text class="sm" x="611" y="214" text-anchor="middle">CreatePost（发帖表单）</text>
+  <text class="sm" x="611" y="234" text-anchor="middle">PostContent（帖子 + 评论）</text>
+</svg>
+<figcaption>图 6-1　界面结构</figcaption>
+</figure>
+
+<h2 id="setup">项目搭建</h2>
+
+<div class="code" data-lang="bash" data-file="终端"><pre>
+npm create vite@latest geoblog -- --template react
+cd geoblog
+npm install
+npm install react-router zustand leaflet react-leaflet
+</pre></div>
+
+<p>
+  从上一章复制 <code>api.js</code>（<code>$fetch</code>）、<code>utils/format.js</code>、<code>Loading</code>、<code>NotFound</code> 组件和 Vite 代理配置；
+  从仓库 <code>Chapter06/chapter6-full/client/src/styles</code> 复制样式。
+</p>
+
+<div class="tree"><b>src/</b>
+├── main.jsx
+├── router.jsx
+├── api.js
+├── <b>stores/</b>              <i># Zustand stores</i>
+│   ├── user.js
+│   ├── map.js
+│   └── posts.js
+├── components/
+│   ├── App.jsx  GeoBlog.jsx  Login.jsx  AppMenu.jsx  BlogMap.jsx
+│   └── content/         <i># 右侧面板里的组件</i>
+└── styles/</div>
+
+<div class="code" data-lang="jsx" data-file="src/router.jsx（初版）"><pre>
+import { createBrowserRouter } from 'react-router'
+import App from './components/App.jsx'
+import GeoBlog from './components/GeoBlog.jsx'
+import Login from './components/Login.jsx'
+import NotFound from './components/NotFound.jsx'
+import { RequireAuth, GuestOnly } from './components/guards.jsx'
+
+export const router = createBrowserRouter([
+  {
+    path: '/',
+    Component: App,
+    children: [
+      { Component: RequireAuth, children: [{ index: true, Component: GeoBlog }] },
+      { Component: GuestOnly, children: [{ path: 'login', Component: Login }] },
+      { path: '*', Component: NotFound },
+    ],
+  },
+])
+</pre></div>
+
+<h2 id="why-store">为什么需要状态管理库</h2>
+
+<p>
+  上一章用 Context 共享了当前用户。这个项目里，共享的东西多得多：用户、地图中心、用户位置、帖子列表、草稿、选中的帖子……而且很多组件既要读又要改。
+  只用 Context 会遇到两个问题：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="Context 中任何值变化都会让所有消费者重新渲染；Zustand 只让选择了变化部分的组件重新渲染">
+  <text class="ttl on-r" x="190" y="22" text-anchor="middle">Context：一变全变</text>
+  <rect class="bx-r" x="90" y="40" width="200" height="56" rx="10"/>
+  <text class="on-r ttl" x="190" y="62" text-anchor="middle">AppContext</text>
+  <text class="mono sm" x="190" y="82" text-anchor="middle">{ user, center, posts… }</text>
+  <rect class="bx-r" x="30" y="150" width="100" height="40" rx="8"/><text class="sm on-r" x="80" y="175" text-anchor="middle">AppMenu</text>
+  <rect class="bx-r" x="140" y="150" width="100" height="40" rx="8"/><text class="sm on-r" x="190" y="175" text-anchor="middle">BlogMap</text>
+  <rect class="bx-r" x="250" y="150" width="100" height="40" rx="8"/><text class="sm on-r" x="300" y="175" text-anchor="middle">PostContent</text>
+  <path class="ln-r" d="M150 98 L90 146" marker-end="url(#ar)"/>
+  <path class="ln-r" d="M190 98 V146" marker-end="url(#ar)"/>
+  <path class="ln-r" d="M230 98 L290 146" marker-end="url(#ar)"/>
+  <text class="sm" x="190" y="222" text-anchor="middle">地图中心变了 → 三个组件全部重新渲染</text>
+  <text class="sm" x="190" y="242" text-anchor="middle">（AppMenu 根本不关心地图）</text>
+  <text class="sm" x="190" y="262" text-anchor="middle">还要自己写 Provider、useReducer……</text>
+
+  <path class="ln-d" d="M380 14 V276"/>
+
+  <text class="ttl on-a" x="570" y="22" text-anchor="middle">Zustand：按需订阅</text>
+  <rect class="bx-a" x="470" y="40" width="200" height="56" rx="10"/>
+  <text class="on-a ttl" x="570" y="62" text-anchor="middle">store</text>
+  <text class="mono sm" x="570" y="82" text-anchor="middle">{ user, center, posts… }</text>
+  <rect class="bx" x="410" y="150" width="100" height="40" rx="8"/><text class="sm" x="460" y="175" text-anchor="middle">AppMenu</text>
+  <rect class="bx-g" x="520" y="150" width="100" height="40" rx="8"/><text class="sm on-g" x="570" y="175" text-anchor="middle">BlogMap</text>
+  <rect class="bx" x="630" y="150" width="100" height="40" rx="8"/><text class="sm" x="680" y="175" text-anchor="middle">PostContent</text>
+  <path class="ln-d" d="M530 98 L470 146"/>
+  <path class="ln-g" d="M570 98 V146" marker-end="url(#ar)"/>
+  <path class="ln-d" d="M610 98 L670 146"/>
+  <text class="mono sm" x="460" y="208" text-anchor="middle">s =&gt; s.user</text>
+  <text class="mono sm on-g" x="570" y="208" text-anchor="middle">s =&gt; s.center</text>
+  <text class="mono sm" x="680" y="208" text-anchor="middle">s =&gt; s.posts</text>
+  <text class="sm" x="570" y="242" text-anchor="middle">每个组件只“选择”自己需要的部分，</text>
+  <text class="sm" x="570" y="262" text-anchor="middle">那部分变了才重新渲染；不需要 Provider</text>
+</svg>
+<figcaption>图 6-2　Context 广播 vs. Zustand 精确订阅</figcaption>
+</figure>
+
+<p>React 生态里常见的状态管理库：</p>
+
+<div class="tw"><table>
+<thead><tr><th>库</th><th>特点</th><th>适合</th></tr></thead>
+<tbody>
+<tr><td><strong>Zustand</strong></td><td>极简：一个函数创建 store，无需 Provider，按 selector 订阅</td><td>大多数中小型应用（本章使用）</td></tr>
+<tr><td>Redux Toolkit</td><td>Redux 的官方现代写法，结构严格，生态和调试工具最完善</td><td>大型团队、需要严格约定的项目</td></tr>
+<tr><td>Jotai</td><td>“原子”式：很多个小状态自由组合</td><td>状态零散、相互派生较多的场景</td></tr>
+<tr><td>TanStack Query</td><td>专门管理<em>服务器</em>数据（上一章用过）</td><td>和以上任何一个搭配使用</td></tr>
+</tbody>
+</table></div>
+
+<div class="box note">
+  <div class="t">&#9432; 不是每个项目都需要</div>
+  <p>原型、小组件、页面不多的应用，<code>useState</code> + 少量 Context 就够了。当很多组件开始共享复杂的状态和逻辑时，再引入状态管理库。</p>
+</div>
+
+<h2 id="zustand">Zustand 入门</h2>
+
+<h3>创建 store</h3>
+
+<div class="code" data-lang="js" data-file="src/stores/user.js（初版）"><pre>
+import { create } from 'zustand'
+
+// create 接收一个函数，返回一个 Hook：useUserStore
+export const useUserStore = create((set, get) =&gt; ({
+  // 状态
+  user: null,
+
+  // action：直接写在 store 里的函数
+  login: (user) =&gt; set({ user }),     // set 会把对象“合并”进状态
+  logout: () =&gt; set({ user: null }),
+}))
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="Zustand store：状态和 action 放在一起，组件用 selector 订阅，action 用 set 更新">
+  <rect class="bx-a" x="250" y="30" width="260" height="170" rx="14"/>
+  <text class="ttl on-a" x="380" y="56" text-anchor="middle">useUserStore</text>
+  <rect class="bx" x="270" y="70" width="220" height="44" rx="8"/>
+  <text class="sm" x="380" y="90" text-anchor="middle">状态</text>
+  <text class="mono sm" x="380" y="106" text-anchor="middle">user: { … }</text>
+  <rect class="bx-p" x="270" y="122" width="220" height="62" rx="8"/>
+  <text class="sm on-p" x="380" y="142" text-anchor="middle">actions</text>
+  <text class="mono sm" x="380" y="160" text-anchor="middle">login(user) · logout()</text>
+  <text class="mono sm" x="380" y="176" text-anchor="middle">内部调用 set({...})</text>
+  <rect class="bx-g" x="20" y="60" width="180" height="56" rx="10"/>
+  <text class="on-g" x="110" y="82" text-anchor="middle">组件读取</text>
+  <text class="mono sm" x="110" y="102" text-anchor="middle">useUserStore(s =&gt; s.user)</text>
+  <path class="ln-g" d="M248 90 H204" marker-end="url(#ar)"/>
+  <rect class="bx-p" x="20" y="140" width="180" height="56" rx="10"/>
+  <text class="on-p" x="110" y="162" text-anchor="middle">组件调用 action</text>
+  <text class="mono sm" x="110" y="182" text-anchor="middle">logout()</text>
+  <path class="ln-p" d="M202 168 H266" marker-end="url(#ar)"/>
+  <rect class="bx-b" x="560" y="60" width="180" height="56" rx="10"/>
+  <text class="on-b" x="650" y="82" text-anchor="middle">组件外读取</text>
+  <text class="mono sm" x="650" y="102" text-anchor="middle">useUserStore.getState()</text>
+  <path class="ln-b" d="M512 90 H556" marker-end="url(#ar)"/>
+  <rect class="bx-b" x="560" y="140" width="180" height="56" rx="10"/>
+  <text class="on-b" x="650" y="162" text-anchor="middle">请求层、路由 loader</text>
+  <text class="sm" x="650" y="182" text-anchor="middle">不需要 Hook 也能用</text>
+  <text class="lbl" x="380" y="240" text-anchor="middle">store 是一个模块级的单例，不需要 Provider 包裹</text>
+</svg>
+<figcaption>图 6-3　Zustand 的 store 结构</figcaption>
+</figure>
+
+<h3>在组件中使用：selector</h3>
+
+<div class="code" data-lang="jsx"><pre>
+// 只订阅 user：只有 user 变了，这个组件才会重新渲染
+const user = useUserStore((s) =&gt; s.user)
+
+// action 在 store 里是固定不变的函数，选取它不会导致额外渲染
+const logout = useUserStore((s) =&gt; s.logout)
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; selector 不要返回新对象</div>
+  <p>
+    <code>useUserStore((s) =&gt; ({ user: s.user, logout: s.logout }))</code> 每次都返回一个<strong>新对象</strong>，Zustand 用 <code>Object.is</code> 比较会认为“变了”，导致无限重新渲染。
+    要么分开写多个 selector，要么用 Zustand 提供的 <code>useShallow</code> 做浅比较：
+    <code>const { user, logout } = useUserStore(useShallow((s) =&gt; ({ user: s.user, logout: s.logout })))</code>。
+  </p>
+</div>
+
+<h3>派生数据：写成 selector 函数</h3>
+
+<div class="code" data-lang="js"><pre>
+// 和 store 放在同一个文件里导出
+export const selectUserPicture = (s) =&gt; s.user?.profile.photos?.[0]?.value ?? null
+
+// 组件里
+const picture = useUserStore(selectUserPicture)
+</pre></div>
+
+<h3>顶部菜单</h3>
+
+<div class="code" data-lang="jsx" data-file="src/components/AppMenu.jsx"><pre>
+import { useUserStore, selectUserPicture } from '../stores/user.js'
+import { useMapStore } from '../stores/map.js'
+
+export default function AppMenu() {
+  const user = useUserStore((s) =&gt; s.user)
+  const picture = useUserStore(selectUserPicture)
+  const logout = useUserStore((s) =&gt; s.logout)
+  const centerOnUser = useMapStore((s) =&gt; s.centerOnUser)
+
+  return (
+    &lt;div className="app-menu"&gt;
+      &lt;div className="header"&gt;&lt;i className="material-icons"&gt;place&lt;/i&gt; GeoBlog&lt;/div&gt;
+      &lt;div className="user"&gt;
+        {user &amp;&amp; (
+          &lt;div className="info"&gt;
+            {picture &amp;&amp; &lt;span className="picture"&gt;&lt;img src={picture} /&gt;&lt;/span&gt;}
+            &lt;span className="username"&gt;{user.profile.displayName}&lt;/span&gt;
+          &lt;/div&gt;
+        )}
+        &lt;a onClick={centerOnUser}&gt;&lt;i className="material-icons"&gt;my_location&lt;/i&gt;&lt;/a&gt;
+        &lt;a onClick={logout}&gt;&lt;i className="material-icons"&gt;power_settings_new&lt;/i&gt;&lt;/a&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 调试：Redux DevTools</div>
+  <p>
+    用 Zustand 的 <code>devtools</code> 中间件包一层：<code>create(devtools((set) =&gt; ({...}), { name: 'user' }))</code>，
+    就能在 Redux DevTools 浏览器扩展里看到每次状态变化，甚至“时间旅行”回到之前的状态。
+  </p>
+</div>
+
+<h2 id="auth">Google 登录</h2>
+
+<h3>在 Google Cloud 控制台配置</h3>
+
+<ol class="steps">
+  <li>打开 <a href="https://console.cloud.google.com/">Google Cloud 控制台</a>，新建项目。</li>
+  <li>配置 <strong>OAuth 同意屏幕</strong>：应用名称、支持邮箱；测试阶段把自己的账号加为测试用户。</li>
+  <li><strong>凭据 → 创建凭据 → OAuth 客户端 ID</strong>，类型“Web 应用”：授权的 JavaScript 来源填 <code>http://localhost:3000</code>，重定向 URI 填 <code>http://localhost:3000/auth/google/callback</code>。</li>
+  <li>得到客户端 ID 和密钥。密钥只放在服务器的环境变量里，不要进前端代码，也不要提交到 Git。</li>
+</ol>
+
+<div class="box warn">
+  <div class="t">&#9888; 原书用的 Google+ API 已经关闭</div>
+  <p>
+    仓库 <code>Chapter06/chapter6-full/server</code> 是配套服务器，它请求的作用域是 Google+ 的 <code>plus.login</code>，该 API 已在 2019 年关闭。
+    要改成标准的 OpenID Connect 作用域 <code>['openid', 'profile', 'email']</code>，并把 <code>passport-google-oauth</code> 换成仍在维护的 <code>passport-google-oauth20</code>。
+    启动前设置 <code>GOOGLE_CLIENT_ID</code>、<code>GOOGLE_CLIENT_SECRET</code>、<code>CLIENT_ORIGIN=http://localhost:5173</code> 环境变量。
+  </p>
+</div>
+
+<h3>弹窗 + postMessage</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 340" role="img" aria-label="OAuth 弹窗登录时序图">
+  <rect class="bx-g" x="20" y="14" width="150" height="34" rx="8"/><text class="on-g ttl" x="95" y="36" text-anchor="middle">React 应用</text>
+  <rect class="bx-p" x="220" y="14" width="140" height="34" rx="8"/><text class="on-p ttl" x="290" y="36" text-anchor="middle">弹窗</text>
+  <rect class="bx-a" x="410" y="14" width="150" height="34" rx="8"/><text class="on-a ttl" x="485" y="36" text-anchor="middle">我们的服务器</text>
+  <rect class="bx-b" x="610" y="14" width="130" height="34" rx="8"/><text class="on-b ttl" x="675" y="36" text-anchor="middle">Google</text>
+  <path class="ln-d" d="M95 50 V330"/><path class="ln-d" d="M290 50 V330"/><path class="ln-d" d="M485 50 V330"/><path class="ln-d" d="M675 50 V330"/>
+  <path class="ln" d="M95 78 H286" marker-end="url(#ar)"/>
+  <text class="halo sm" x="190" y="72" text-anchor="middle">① window.open('/auth/google')</text>
+  <path class="ln" d="M290 104 H481" marker-end="url(#ar)"/>
+  <text class="halo sm" x="386" y="98" text-anchor="middle">② GET /auth/google</text>
+  <path class="ln" d="M485 130 H294" marker-end="url(#ar)"/>
+  <text class="halo sm" x="390" y="124" text-anchor="middle">③ 重定向到 Google</text>
+  <path class="ln" d="M290 156 H671" marker-end="url(#ar)"/>
+  <text class="halo sm" x="480" y="150" text-anchor="middle">④ 用户登录并授权</text>
+  <path class="ln" d="M675 182 H294" marker-end="url(#ar)"/>
+  <text class="halo sm" x="480" y="176" text-anchor="middle">⑤ 带授权码回到 /auth/google/callback</text>
+  <path class="ln" d="M290 208 H481" marker-end="url(#ar)"/>
+  <path class="ln" d="M485 222 H671" marker-end="url(#ar)"/>
+  <text class="halo sm" x="580" y="216" text-anchor="middle">⑥ 用授权码换取用户资料</text>
+  <path class="ln" d="M675 236 H489" marker-end="url(#ar)"/>
+  <path class="ln-a" d="M485 262 H294" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="390" y="256" text-anchor="middle">⑦ 建立会话，返回一小段 HTML</text>
+  <path class="ln-a" d="M290 290 H99" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="190" y="284" text-anchor="middle">⑧ postMessage('success')</text>
+  <path class="ln-g" d="M95 316 H481" marker-end="url(#ar)"/>
+  <text class="halo sm on-g" x="290" y="310" text-anchor="middle">⑨ login()：GET /user 拿到用户资料</text>
+</svg>
+<figcaption>图 6-4　OAuth 弹窗登录时序（客户端密钥只出现在服务器上）</figcaption>
+</figure>
+
+<div class="code" data-lang="jsx" data-file="src/components/Login.jsx"><pre>
+import { useEffect } from 'react'
+import { useUserStore } from '../stores/user.js'
+
+const SERVER_ORIGIN = 'http://localhost:3000'
+
+export default function Login() {
+  const login = useUserStore((s) =&gt; s.login)
+
+  useEffect(() =&gt; {
+    function handleMessage({ data, origin }) {
+      if (origin !== SERVER_ORIGIN) return       // 安全：只接受来自我们服务器的消息
+      if (data === 'success') login()
+    }
+    window.addEventListener('message', handleMessage)
+    return () =&gt; window.removeEventListener('message', handleMessage)
+  }, [login])
+
+  function openGoogleSignin() {
+    window.open(`${SERVER_ORIGIN}/auth/google`, 'google_login', 'width=500,height=600')
+  }
+
+  return (
+    &lt;div className="welcome"&gt;
+      &lt;h1&gt;欢迎&lt;/h1&gt;
+      &lt;div className="actions"&gt;
+        &lt;button onClick={openGoogleSignin}&gt;使用 Google 登录&lt;/button&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<div class="box warn">
+  <div class="t">&#9888; 永远检查 postMessage 的 origin</div>
+  <p>任何网页都能向你的窗口发送消息。不检查 <code>origin</code>，恶意页面就能伪造“登录成功”之类的消息。</p>
+</div>
+
+<h3>完整的用户 store：在组件之外使用</h3>
+
+<div class="code" data-lang="js" data-file="src/stores/user.js"><pre>
+import { create } from 'zustand'
+import { $fetch } from '../api.js'
+import { router } from '../router.jsx'
+import { usePostsStore } from './posts.js'
+
+export const useUserStore = create((set, get) =&gt; ({
+  user: null,
+
+  // 应用启动时调用：只检查是否已有会话
+  async init() {
+    try {
+      set({ user: await $fetch('user') })
+    } catch (e) {
+      console.warn(e)
+    }
+  },
+
+  // 弹窗登录成功后调用：获取用户，并跳回原本想去的页面
+  async login() {
+    try {
+      const user = await $fetch('user')
+      set({ user })
+      if (user) {
+        const redirect = new URLSearchParams(location.search).get('redirect')
+        router.navigate(redirect || '/', { replace: true })   // 数据路由可以在组件外导航
+        usePostsStore.getState().onLoggedIn()                  // 调用另一个 store 的 action
+      }
+    } catch (e) {
+      console.warn(e)
+    }
+  },
+
+  logout() {
+    set({ user: null })
+    $fetch('logout')
+    usePostsStore.getState().reset()
+  },
+}))
+
+export const selectUserPicture = (s) =&gt; s.user?.profile.photos?.[0]?.value ?? null
+</pre></div>
+
+<div class="box key">
+  <div class="t">&#9733; store 可以在 React 之外使用</div>
+  <p>
+    这是 Zustand 相比 Context 的一大优势。上一章为了让 <code>$fetch</code> 在收到 403 时能登出，我们绕了一圈“注册处理函数”；现在直接一行：
+  </p>
+</div>
+
+<div class="code" data-lang="js" data-file="src/api.js（403 处理）"><pre>
+import { useUserStore } from './stores/user.js'
+
+// ...
+if (response.status === 403) {
+  useUserStore.getState().logout()
+  throw new Error('会话已过期')
+}
+</pre></div>
+
+<p>守卫组件和上一章一样，只是从 store 里读用户：</p>
+
+<div class="code" data-lang="jsx" data-file="src/components/guards.jsx"><pre>
+import { Navigate, Outlet, useLocation } from 'react-router'
+import { useUserStore } from '../stores/user.js'
+
+export function RequireAuth() {
+  const user = useUserStore((s) =&gt; s.user)
+  const location = useLocation()
+  if (!user) return &lt;Navigate to={`/login?redirect=${encodeURIComponent(location.pathname)}`} replace /&gt;
+  return &lt;Outlet /&gt;
+}
+
+export function GuestOnly() {
+  const user = useUserStore((s) =&gt; s.user)
+  return user ? &lt;Navigate to="/" replace /&gt; : &lt;Outlet /&gt;
+}
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="src/main.jsx"><pre>
+import { createRoot } from 'react-dom/client'
+import { RouterProvider } from 'react-router'
+import { router } from './router.jsx'
+import { useUserStore } from './stores/user.js'
+import 'leaflet/dist/leaflet.css'
+import './styles/main.styl'
+
+async function main() {
+  await useUserStore.getState().init()      // 先检查会话，再渲染
+  createRoot(document.getElementById('root')).render(&lt;RouterProvider router={router} /&gt;)
+}
+main()
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 循环导入</div>
+  <p>
+    <code>user.js</code> 导入 <code>posts.js</code>，<code>posts.js</code> 又导入 <code>user.js</code>，这在 ES 模块里是允许的，
+    只要你只在<strong>函数内部</strong>（action 执行时）使用对方，而不是在模块顶层立刻使用。
+  </p>
+</div>
+
+<h2 id="map">嵌入地图：react-leaflet</h2>
+
+<p>
+  我们使用开源地图库 <a href="https://leafletjs.com/">Leaflet</a> + <a href="https://www.openstreetmap.org/">OpenStreetMap</a> 的免费瓦片（不需要 API Key），
+  以及它的 React 封装 <a href="https://react-leaflet.js.org/">react-leaflet</a>。
+</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#128273;</span><h4>不需要 API Key</h4><p>Google Maps 需要创建 Key 并绑定信用卡；OSM 瓦片可以直接用（遵守使用政策）。</p></div>
+  <div class="card"><span class="ic">&#129513;</span><h4>声明式的地图</h4><p>react-leaflet 把地图、图层、标记都变成了组件，用 JSX 描述“地图上有什么”。</p></div>
+  <div class="card"><span class="ic">&#128279;</span><h4>需要 Google Maps？</h4><p>可以使用 <code>@vis.gl/react-google-maps</code>（由 Google 地图团队参与维护），store 的设计完全不变。</p></div>
+</div>
+
+<h3>声明式封装背后的命令式库</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 280" role="img" aria-label="react-leaflet 把 JSX 翻译成对 Leaflet 命令式 API 的调用">
+  <rect class="bx-a" x="20" y="40" width="260" height="190" rx="12"/>
+  <text class="ttl on-a" x="150" y="64" text-anchor="middle">你写的 JSX（声明式）</text>
+  <text class="mono sm" x="36" y="94">&lt;MapContainer center zoom&gt;</text>
+  <text class="mono sm" x="52" y="116">&lt;TileLayer url=… /&gt;</text>
+  <text class="mono sm" x="52" y="138">{posts.map(p =&gt;</text>
+  <text class="mono sm" x="68" y="160">&lt;Marker position=… /&gt;)}</text>
+  <text class="mono sm" x="36" y="182">&lt;/MapContainer&gt;</text>
+
+  <rect class="bx-b" x="320" y="80" width="140" height="110" rx="12"/>
+  <text class="ttl on-b" x="390" y="110" text-anchor="middle">react-leaflet</text>
+  <text class="sm" x="390" y="134" text-anchor="middle">组件挂载/更新/卸载</text>
+  <text class="sm" x="390" y="152" text-anchor="middle">→ 调用 Leaflet API</text>
+  <path class="ln-a" d="M282 135 H316" marker-end="url(#ar-a)"/>
+  <path class="ln-b" d="M462 135 H496" marker-end="url(#ar)"/>
+
+  <rect class="bx-g" x="500" y="40" width="240" height="190" rx="12"/>
+  <text class="ttl on-g" x="620" y="64" text-anchor="middle">Leaflet（命令式）</text>
+  <text class="mono sm" x="516" y="94">L.map(el).setView(…)</text>
+  <text class="mono sm" x="516" y="116">L.tileLayer(url).addTo(map)</text>
+  <text class="mono sm" x="516" y="138">L.marker(pos).addTo(map)</text>
+  <text class="mono sm" x="516" y="160">marker.setLatLng(…)</text>
+  <text class="mono sm" x="516" y="182">marker.remove()</text>
+  <text class="lbl" x="380" y="262" text-anchor="middle">注意：MapContainer 的 center、zoom 只在第一次渲染时生效，之后修改它们不会移动地图</text>
+</svg>
+<figcaption>图 6-5　react-leaflet 把 JSX 翻译成 Leaflet 调用</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; MapContainer 的属性是“非受控”的</div>
+  <p>
+    为了性能，<code>MapContainer</code> 的 <code>center</code>、<code>zoom</code> 等属性<strong>只在创建地图时使用</strong>，之后改变它们不会有任何效果。
+    要在程序里移动地图（比如“回到我的位置”按钮），需要在地图内部的子组件里用 <code>useMap()</code> 拿到 Leaflet 实例，命令式地调用 <code>map.setView()</code>。
+  </p>
+</div>
+
+<h3>地图 store</h3>
+
+<div class="code" data-lang="js" data-file="src/stores/map.js"><pre>
+import { create } from 'zustand'
+import { usePostsStore } from './posts.js'
+
+export const useMapStore = create((set, get) =&gt; ({
+  // 只存普通的 { lat, lng }，不存 Leaflet 的类实例
+  center: { lat: 48.8538302, lng: 2.2982161 },
+  zoom: 15,
+  userPosition: null,
+
+  setView: (center, zoom) =&gt; set({ center, zoom }),
+
+  setUserPosition(position) {
+    const first = !get().userPosition
+    set({ userPosition: position })
+    if (first) get().centerOnUser()       // 第一次拿到位置时自动居中
+  },
+
+  centerOnUser() {
+    const pos = get().userPosition
+    if (pos) set({ center: { ...pos } })
+  },
+
+  // 地图移动结束：让帖子 store 加载可见范围内的帖子
+  setBounds: (bounds) =&gt; usePostsStore.getState().fetchPosts({ mapBounds: bounds }),
+}))
+</pre></div>
+
+<h3>地图组件</h3>
+
+<div class="code" data-lang="jsx" data-file="src/components/BlogMap.jsx"><pre>
+import { useEffect } from 'react'
+import { MapContainer, TileLayer, Marker, useMap, useMapEvents } from 'react-leaflet'
+import L from 'leaflet'
+import { useMapStore } from '../stores/map.js'
+import { usePostsStore, selectCurrentPost } from '../stores/posts.js'
+
+const toLatLng = ({ lat, lng }) =&gt; ({ lat, lng })
+const toBounds = (b) =&gt; ({ ne: toLatLng(b.getNorthEast()), sw: toLatLng(b.getSouthWest()) })
+
+// 用 Material Icons 做图标（也避开了 Leaflet 默认图标在打包工具里的路径问题）
+const icon = (name, cls = '') =&gt; L.divIcon({
+  className: `map-marker ${cls}`,
+  html: `&lt;i class="material-icons"&gt;${name}&lt;/i&gt;`,
+  iconSize: [32, 32],
+  iconAnchor: [16, 32],
+})
+
+// 地图事件 → store（这个组件不渲染任何东西，只负责“接线”）
+function MapEvents() {
+  const setView = useMapStore((s) =&gt; s.setView)
+  const setBounds = useMapStore((s) =&gt; s.setBounds)
+  const setUserPosition = useMapStore((s) =&gt; s.setUserPosition)
+  const setDraftLocation = usePostsStore((s) =&gt; s.setDraftLocation)
+
+  const map = useMapEvents({
+    click: (e) =&gt; setDraftLocation({ position: toLatLng(e.latlng) }),
+    moveend: () =&gt; {
+      setView(toLatLng(map.getCenter()), map.getZoom())
+      setBounds(toBounds(map.getBounds()))
+    },
+    locationfound: (e) =&gt; setUserPosition(toLatLng(e.latlng)),
+  })
+
+  useEffect(() =&gt; {
+    map.locate({ watch: true })               // 浏览器会请求定位权限
+    setBounds(toBounds(map.getBounds()))      // 首次加载帖子
+    return () =&gt; map.stopLocate()
+  }, [map, setBounds])
+
+  return null
+}
+
+// store → 地图：center 变了就移动地图
+function SyncCenter() {
+  const map = useMap()
+  const center = useMapStore((s) =&gt; s.center)
+  useEffect(() =&gt; {
+    const cur = map.getCenter()
+    if (cur.lat !== center.lat || cur.lng !== center.lng) map.setView(center)   // 避免和 moveend 互相触发
+  }, [map, center])
+  return null
+}
+
+export default function BlogMap() {
+  const initialCenter = useMapStore.getState().center    // 只用作初始值
+  const zoom = useMapStore.getState().zoom
+  const posts = usePostsStore((s) =&gt; s.posts)
+  const draft = usePostsStore((s) =&gt; s.draft)
+  const currentPost = usePostsStore(selectCurrentPost)
+  const selectPost = usePostsStore((s) =&gt; s.selectPost)
+
+  return (
+    &lt;MapContainer className="blog-map" center={initialCenter} zoom={zoom} zoomControl={false}&gt;
+      &lt;TileLayer
+        url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+        attribution="&amp;copy; OpenStreetMap contributors"
+        maxZoom={19}
+      /&gt;
+      &lt;MapEvents /&gt;
+      &lt;SyncCenter /&gt;
+
+      {posts.map((post) =&gt; (
+        &lt;Marker
+          key={post._id}
+          position={post.position}
+          icon={icon('face', post._id === currentPost?._id ? 'selected' : '')}
+          eventHandlers={{ click: () =&gt; selectPost(post._id) }}
+        /&gt;
+      ))}
+
+      {draft?.position &amp;&amp; (
+        &lt;Marker position={draft.position} icon={icon('add_circle', 'draft')} opacity={0.75} interactive={false} /&gt;
+      )}
+    &lt;/MapContainer&gt;
+  )
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="地图与 store 双向同步：MapEvents 把事件写入 store，SyncCenter 和 Marker 把 store 反映到地图">
+  <rect class="bx-a" x="20" y="60" width="220" height="140" rx="12"/>
+  <text class="ttl on-a" x="130" y="86" text-anchor="middle">Zustand stores</text>
+  <text class="mono sm" x="40" y="114">map.center / zoom</text>
+  <text class="mono sm" x="40" y="136">posts.posts</text>
+  <text class="mono sm" x="40" y="158">posts.draft</text>
+  <text class="mono sm" x="40" y="180">posts.currentPost</text>
+  <rect class="bx-g" x="520" y="60" width="220" height="140" rx="12"/>
+  <text class="ttl on-g" x="630" y="86" text-anchor="middle">Leaflet 地图实例</text>
+  <text class="sm" x="630" y="114" text-anchor="middle">用户拖动、缩放、点击</text>
+  <text class="sm" x="630" y="136" text-anchor="middle">浏览器定位</text>
+  <rect class="bx-b" x="290" y="20" width="180" height="56" rx="10"/>
+  <text class="on-b" x="380" y="42" text-anchor="middle">&lt;SyncCenter&gt; / &lt;Marker&gt;</text>
+  <text class="sm" x="380" y="62" text-anchor="middle">store → 地图</text>
+  <rect class="bx-p" x="290" y="174" width="180" height="56" rx="10"/>
+  <text class="on-p" x="380" y="196" text-anchor="middle">&lt;MapEvents&gt;</text>
+  <text class="sm" x="380" y="216" text-anchor="middle">地图事件 → store action</text>
+  <path class="ln-a" d="M242 90 C270 60 270 48 286 48" marker-end="url(#ar-a)"/>
+  <path class="ln-a" d="M472 48 C500 48 500 70 516 90" marker-end="url(#ar-a)"/>
+  <path class="ln-p" d="M516 170 C500 200 490 202 474 202" marker-end="url(#ar)"/>
+  <path class="ln-p" d="M288 202 C270 202 260 190 244 170" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 6-6　“只负责接线、返回 null”的组件，是集成命令式库的常用技巧</figcaption>
+</figure>
+
+<div class="box tip">
+  <div class="t">&#10003; 别把第三方实例放进 store 或 state</div>
+  <p>
+    Leaflet 的 <code>LatLng</code>、<code>LatLngBounds</code> 是带方法的类实例。我们在存进 store 之前统一转换成 <code>{ lat, lng }</code> 这样的纯数据：
+    可以直接 <code>JSON.stringify</code> 发给服务器、可以比较、可以在调试工具里查看。地图实例本身则由 react-leaflet 内部管理，通过 <code>useMap()</code> 获取。
+  </p>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 关于 OSM 服务的使用政策</div>
+  <p>OpenStreetMap 官方瓦片和 Nominatim 地理编码服务由志愿者维护，适合学习和小流量使用。正式产品请使用商业瓦片服务（MapTiler、Stadia Maps 等）或自建服务，并保留版权署名。</p>
+</div>
+
+<h2 id="posts">帖子 store</h2>
+
+<div class="code" data-lang="js" data-file="src/stores/posts.js"><pre>
+import { create } from 'zustand'
+import { $fetch } from '../api.js'
+import { useUserStore } from './user.js'
+
+let fetchPostsUid = 0
+
+const sameBounds = (a, b) =&gt; a &amp;&amp; b &amp;&amp;
+  a.ne.lat === b.ne.lat &amp;&amp; a.ne.lng === b.ne.lng &amp;&amp; a.sw.lat === b.sw.lat &amp;&amp; a.sw.lng === b.sw.lng
+
+export const usePostsStore = create((set, get) =&gt; ({
+  draft: null,                 // 正在创建的帖子
+  mapBounds: null,             // 上次加载的地图范围
+  posts: [],                   // 范围内的帖子
+  selectedPostId: null,
+  selectedPostDetails: null,   // 选中帖子的详情（含评论）
+
+  // ---------- 草稿 ----------
+  clearDraft: () =&gt; set({ draft: null }),
+
+  setDraftLocation({ position, placeId = null }) {
+    const draft = get().draft ?? { title: '', content: '' }
+    set({ draft: { ...draft, position, placeId } })     // 不可变更新
+  },
+
+  updateDraft: (changes) =&gt; set((s) =&gt; ({ draft: { ...s.draft, ...changes } })),
+
+  async createPost() {
+    const result = await $fetch('posts/new', {
+      method: 'POST',
+      body: JSON.stringify(get().draft),
+    })
+    set((s) =&gt; ({ draft: null, posts: [...s.posts, result] }))
+    get().selectPost(result._id)
+  },
+
+  // ---------- 加载帖子（防竞态） ----------
+  async fetchPosts({ mapBounds, force = false }) {
+    if (!force &amp;&amp; sameBounds(get().mapBounds, mapBounds)) return
+    const requestId = ++fetchPostsUid
+    const query = new URLSearchParams({
+      ne: `${mapBounds.ne.lat},${mapBounds.ne.lng}`,
+      sw: `${mapBounds.sw.lat},${mapBounds.sw.lng}`,
+    })
+    const posts = await $fetch(`posts?${query}`)
+    if (requestId === fetchPostsUid) {      // 期间又发起了新请求？那这个结果已过期
+      set({ posts, mapBounds })
+    }
+  },
+
+  // ---------- 选中 ----------
+  async selectPost(id) {
+    set({ selectedPostId: id, selectedPostDetails: null })
+    const details = await $fetch(`posts/${id}`)
+    if (get().selectedPostId === id) set({ selectedPostDetails: details })
+  },
+
+  unselectPost: () =&gt; set({ selectedPostId: null }),
+
+  // ---------- 登录 / 登出 ----------
+  reset: () =&gt; set({ posts: [], mapBounds: null, selectedPostDetails: null }),
+
+  onLoggedIn() {
+    const { mapBounds, selectedPostId } = get()
+    if (mapBounds) get().fetchPosts({ mapBounds, force: true })
+    if (selectedPostId) get().selectPost(selectedPostId)
+  },
+}))
+
+// ---------- 派生数据 ----------
+export const selectSelectedPost = (s) =&gt; s.posts.find((p) =&gt; p._id === s.selectedPostId)
+export const selectCurrentPost = (s) =&gt; s.draft || selectSelectedPost(s)   // 草稿优先
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; set 的两种写法</div>
+  <p>
+    <code>set({ draft: null })</code>：直接给出要合并的新值。<code>set((s) =&gt; ({ posts: [...s.posts, x] }))</code>：基于当前状态计算，适合依赖旧值的更新。
+    和 React 的状态一样，Zustand 里也要做<strong>不可变更新</strong>（嫌麻烦可以用 Zustand 的 <code>immer</code> 中间件）。
+  </p>
+</div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="两次请求响应乱序，用请求编号丢弃过期的响应">
+  <path class="ln" d="M60 40 H740" marker-end="url(#ar)"/>
+  <text class="sm" x="740" y="30" text-anchor="end">时间 →</text>
+  <text class="sm" x="20" y="44">用户</text>
+  <circle class="bx-b" cx="110" cy="40" r="6"/><text class="sm on-b" x="110" y="26" text-anchor="middle">移动地图</text>
+  <circle class="bx-b" cx="260" cy="40" r="6"/><text class="sm on-b" x="260" y="26" text-anchor="middle">再次移动</text>
+  <text class="sm" x="20" y="94">请求 A</text>
+  <rect class="bx" x="110" y="80" width="470" height="24" rx="5"/>
+  <text class="sm" x="345" y="97" text-anchor="middle">很慢……（id = 1）</text>
+  <text class="sm" x="20" y="134">请求 B</text>
+  <rect class="bx-g" x="260" y="120" width="160" height="24" rx="5"/>
+  <text class="sm on-g" x="340" y="137" text-anchor="middle">很快（id = 2）</text>
+  <path class="ln-g" d="M420 146 V176" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="340" y="180" width="160" height="40" rx="6"/>
+  <text class="sm on-g" x="420" y="198" text-anchor="middle">显示 B 的帖子 ✓</text>
+  <text class="sm" x="420" y="214" text-anchor="middle">2 === 当前 id</text>
+  <path class="ln-r" d="M580 106 V176" marker-end="url(#ar)"/>
+  <rect class="bx-r" x="520" y="180" width="200" height="40" rx="6"/>
+  <text class="sm on-r" x="620" y="198" text-anchor="middle">A 晚到：丢弃</text>
+  <text class="sm" x="620" y="214" text-anchor="middle">1 !== 当前 id(2)</text>
+  <text class="lbl" x="200" y="200" text-anchor="middle">没有这个检查，</text>
+  <text class="lbl" x="200" y="218" text-anchor="middle">旧的 A 会覆盖新的 B</text>
+</svg>
+<figcaption>图 6-7　竞态条件：只采纳最新一次请求的结果</figcaption>
+</figure>
+
+<h2 id="content">右侧内容面板</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="内容面板的三种状态及其切换">
+  <rect class="bx" x="20" y="90" width="180" height="70" rx="12"/>
+  <text class="ttl" x="110" y="118" text-anchor="middle">NoContent</text>
+  <text class="sm" x="110" y="140" text-anchor="middle">currentPost 为空</text>
+  <rect class="bx-a" x="290" y="20" width="180" height="70" rx="12"/>
+  <text class="ttl on-a" x="380" y="48" text-anchor="middle">CreatePost</text>
+  <text class="sm" x="380" y="70" text-anchor="middle">有 draft</text>
+  <rect class="bx-b" x="290" y="160" width="180" height="70" rx="12"/>
+  <text class="ttl on-b" x="380" y="188" text-anchor="middle">PostContent</text>
+  <text class="sm" x="380" y="210" text-anchor="middle">有选中的帖子</text>
+  <path class="ln-a" d="M202 110 L286 66" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="220" y="76">点击地图空白处</text>
+  <path class="ln-b" d="M202 140 L286 186" marker-end="url(#ar)"/>
+  <text class="halo sm on-b" x="214" y="186">点击标记</text>
+  <path class="ln-b" d="M380 92 V156" marker-end="url(#ar)"/>
+  <text class="halo sm" x="390" y="130">发布成功：自动选中新帖子</text>
+  <path class="ln" d="M472 46 C560 46 560 110 470 110 H204" marker-end="url(#ar)"/>
+  <text class="halo sm" x="560" y="90">丢弃草稿</text>
+  <path class="ln" d="M472 206 C620 206 620 125 204 125" marker-end="url(#ar)"/>
+  <text class="halo sm" x="620" y="170">关闭</text>
+</svg>
+<figcaption>图 6-8　内容面板是一个由 store 驱动的小状态机</figcaption>
+</figure>
+
+<div class="code" data-lang="jsx" data-file="src/components/content/BlogContent.jsx"><pre>
+import { usePostsStore, selectCurrentPost } from '../../stores/posts.js'
+import LocationInfo from './LocationInfo.jsx'
+import NoContent from './NoContent.jsx'
+import CreatePost from './CreatePost.jsx'
+import PostContent from './PostContent.jsx'
+
+export default function BlogContent() {
+  const currentPost = usePostsStore(selectCurrentPost)
+  const hasDraft = usePostsStore((s) =&gt; s.draft !== null)
+
+  const Content = !currentPost ? NoContent : hasDraft ? CreatePost : PostContent
+
+  return (
+    &lt;div className={`blog-content ${currentPost ? 'has-content' : ''}`}&gt;
+      &lt;LocationInfo /&gt;
+      &lt;Content /&gt;
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="src/components/content/CreatePost.jsx"><pre>
+import { usePostsStore } from '../../stores/posts.js'
+
+export default function CreatePost() {
+  const draft = usePostsStore((s) =&gt; s.draft)
+  const updateDraft = usePostsStore((s) =&gt; s.updateDraft)
+  const clearDraft = usePostsStore((s) =&gt; s.clearDraft)
+  const createPost = usePostsStore((s) =&gt; s.createPost)
+  const formValid = draft.title &amp;&amp; draft.content
+
+  function handleSubmit(e) {
+    e.preventDefault()
+    if (formValid) createPost()
+  }
+
+  return (
+    &lt;form className="create-post" onSubmit={handleSubmit}&gt;
+      &lt;input name="title" value={draft.title} placeholder="标题" required
+             onChange={(e) =&gt; updateDraft({ title: e.target.value })} /&gt;
+      &lt;textarea name="content" value={draft.content} placeholder="内容" required
+                onChange={(e) =&gt; updateDraft({ content: e.target.value })} /&gt;
+      &lt;div className="actions"&gt;
+        &lt;button type="button" className="secondary" onClick={clearDraft}&gt;
+          &lt;i className="material-icons"&gt;delete&lt;/i&gt; 丢弃
+        &lt;/button&gt;
+        &lt;button type="submit" disabled={!formValid}&gt;
+          &lt;i className="material-icons"&gt;save&lt;/i&gt; 发布
+        &lt;/button&gt;
+      &lt;/div&gt;
+    &lt;/form&gt;
+  )
+}
+</pre></div>
+
+<p>输入框直接受控于 store 里的草稿：用户输入 → <code>updateDraft</code> → store 更新 → 所有用到草稿的组件刷新。地图上草稿标记的位置和这里的表单，读的是同一份数据。</p>
+
+<h2 id="render-props">地点信息：render props 与 Hook</h2>
+
+<p>
+  面板顶部要显示帖子所在位置的地名和地址（“坐标 → 地址”叫<strong>反向地理编码</strong>，这里用 OpenStreetMap 的 Nominatim 服务）。
+  我们希望“获取地址”的逻辑和“怎么显示”分开，以便在不同地方以不同样式复用。React 里有两种做法。
+</p>
+
+<h3>做法一：render props</h3>
+
+<p><strong>render props</strong> 是指：组件的 children（或某个 prop）是一个<strong>函数</strong>，组件把自己的数据作为参数传给它，由它决定渲染什么：</p>
+
+<div class="code" data-lang="jsx" data-file="src/components/content/ReverseGeocode.jsx"><pre>
+import { useState, useEffect } from 'react'
+
+export default function ReverseGeocode({ position, children }) {
+  const [result, setResult] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() =&gt; {
+    const controller = new AbortController()       // 位置变了：取消上一次请求
+    setLoading(true)
+    setResult(null)
+    const params = new URLSearchParams({
+      format: 'jsonv2', lat: position.lat, lon: position.lng, 'accept-language': 'zh-CN',
+    })
+    fetch(`https://nominatim.openstreetmap.org/reverse?${params}`, { signal: controller.signal })
+      .then((r) =&gt; r.json())
+      .then(setResult)
+      .catch((e) =&gt; { if (e.name !== 'AbortError') console.error(e) })
+      .finally(() =&gt; { if (!controller.signal.aborted) setLoading(false) })
+    return () =&gt; controller.abort()
+  }, [position.lat, position.lng])
+
+  return children({ result, loading })    // 自己不渲染任何外观，全部交给调用者
+}
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="使用"><pre>
+&lt;ReverseGeocode position={post.position}&gt;
+  {({ result, loading }) =&gt;
+    loading ? &lt;div className="hint"&gt;正在查询地址……&lt;/div&gt;
+    : result &amp;&amp; &lt;PlaceDetails name={result.name || '未命名地点'} address={result.display_name} /&gt;
+  }
+&lt;/ReverseGeocode&gt;
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="render props：子组件把数据传给父组件提供的渲染函数">
+  <rect class="bx-g" x="20" y="20" width="320" height="140" rx="12"/>
+  <text class="ttl on-g" x="180" y="44" text-anchor="middle">ReverseGeocode</text>
+  <text class="sm" x="40" y="70">负责“取数据”：</text>
+  <text class="mono sm" x="40" y="92">const [result] = useState(…)</text>
+  <text class="mono sm" x="40" y="112">useEffect(() =&gt; fetch…)</text>
+  <rect class="bx-a" x="40" y="122" width="280" height="28" rx="6"/>
+  <text class="mono sm on-a" x="180" y="141" text-anchor="middle">return children({ result, loading })</text>
+  <rect class="bx-b" x="420" y="20" width="320" height="140" rx="12"/>
+  <text class="ttl on-b" x="580" y="44" text-anchor="middle">调用者（LocationInfo）</text>
+  <text class="sm" x="440" y="70">负责“怎么显示”：</text>
+  <text class="mono sm" x="440" y="94">&lt;ReverseGeocode position&gt;</text>
+  <rect class="bx-a" x="456" y="102" width="270" height="22" rx="4"/>
+  <text class="mono sm on-a" x="466" y="118">{({ result }) =&gt; &lt;PlaceDetails…/&gt;}</text>
+  <text class="mono sm" x="440" y="144">&lt;/ReverseGeocode&gt;</text>
+  <path class="ln-a" d="M322 136 C380 136 400 113 452 113" marker-end="url(#ar-a)"/>
+  <rect class="bx" x="20" y="190" width="720" height="56" rx="12"/>
+  <text class="sm" x="380" y="212" text-anchor="middle">children 不一定是 JSX —— 它可以是任何值，包括函数。</text>
+  <text class="sm" x="380" y="232" text-anchor="middle">这种“只提供数据、不决定外观”的组件也叫无渲染组件（renderless component）</text>
+</svg>
+<figcaption>图 6-9　render props：子组件出数据，调用者出外观</figcaption>
+</figure>
+
+<h3>做法二：自定义 Hook（更常用）</h3>
+
+<p>同样的逻辑写成 Hook，使用起来更直接，也不会产生额外的嵌套层级：</p>
+
+<div class="code" data-lang="js" data-file="src/hooks/useReverseGeocode.js"><pre>
+import { useState, useEffect } from 'react'
+
+export function useReverseGeocode(position) {
+  const [result, setResult] = useState(null)
+  const [loading, setLoading] = useState(false)
+  useEffect(() =&gt; {
+    if (!position) return
+    // ……和上面完全相同的请求逻辑……
+  }, [position?.lat, position?.lng])
+  return { result, loading }
+}
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="src/components/content/LocationInfo.jsx"><pre>
+import { usePostsStore, selectCurrentPost } from '../../stores/posts.js'
+import { useReverseGeocode } from '../../hooks/useReverseGeocode.js'
+
+function PlaceDetails({ name, address }) {
+  return (
+    &lt;div className="details"&gt;
+      &lt;div className="name"&gt;&lt;i className="material-icons"&gt;place&lt;/i&gt; {name}&lt;/div&gt;
+      &lt;div className="address"&gt;{address}&lt;/div&gt;
+    &lt;/div&gt;
+  )
+}
+
+export default function LocationInfo() {
+  const position = usePostsStore(selectCurrentPost)?.position
+  const { result, loading } = useReverseGeocode(position)
+
+  if (!position) return null
+  return (
+    &lt;div className="location-info"&gt;
+      {loading ? &lt;div className="hint"&gt;正在查询地址……&lt;/div&gt;
+        : result &amp;&amp; &lt;PlaceDetails name={result.name || result.address?.road || '未命名地点'}
+                                  address={result.display_name} /&gt;}
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<div class="box key">
+  <div class="t">&#9733; Hook 出现后，render props 用得少了</div>
+  <p>
+    在 Hooks 出现之前（2019 年），render props 和“高阶组件”是 React 复用有状态逻辑的主要手段，代价是组件层层嵌套。
+    现在复用逻辑首选自定义 Hook；render props 仍然有用，主要在需要让调用者控制<strong>某一小块渲染内容</strong>的场景，比如列表组件的 <code>renderItem={(item) =&gt; …}</code>。
+  </p>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 注意 Hook 的调用位置</div>
+  <p>
+    <code>LocationInfo</code> 里，<code>useReverseGeocode</code> 必须在 <code>if (!position) return null</code> <strong>之前</strong>调用 —— Hooks 不能放在条件分支之后。
+    所以我们让 Hook 自己处理“position 为空”的情况。
+  </p>
+</div>
+
+<h2 id="comments">评论与乐观更新</h2>
+
+<p>评论只需要显示，写成一个简单的组件：</p>
+
+<div class="code" data-lang="jsx" data-file="src/components/content/Comment.jsx"><pre>
+import { formatDate } from '../../utils/format.js'
+
+export default function Comment({ comment }) {
+  return (
+    &lt;div className="comment"&gt;
+      &lt;img className="avatar" src={comment.author.profile.photos[0].value} /&gt;
+      &lt;div className="message"&gt;
+        &lt;div className="info"&gt;
+          &lt;span className="name"&gt;{comment.author.profile.displayName}&lt;/span&gt;
+          &lt;span className="date"&gt;{formatDate(comment.date)}&lt;/span&gt;
+        &lt;/div&gt;
+        &lt;div className="content"&gt;{comment.content}&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<p>
+  发送评论时，如果等服务器返回再显示，用户会感到明显的延迟。<strong>乐观更新</strong>的做法是：先假设请求会成功，立即把评论显示出来，再在后台发请求。
+  React 19 专门提供了 <code>useOptimistic</code>：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="useOptimistic：请求进行中显示乐观值，完成后回到真实状态">
+  <rect class="bx-b" x="20" y="80" width="150" height="60" rx="10"/>
+  <text class="on-b ttl" x="95" y="106" text-anchor="middle">真实状态</text>
+  <text class="sm" x="95" y="126" text-anchor="middle">3 条评论</text>
+  <path class="ln" d="M172 110 H226" marker-end="url(#ar)"/>
+  <text class="halo sm" x="199" y="102" text-anchor="middle">点击发送</text>
+  <rect class="bx-a" x="230" y="64" width="230" height="92" rx="12"/>
+  <text class="on-a ttl" x="345" y="90" text-anchor="middle">乐观状态（请求进行中）</text>
+  <text class="sm" x="345" y="114" text-anchor="middle">4 条评论，新的一条半透明</text>
+  <text class="sm" x="345" y="134" text-anchor="middle">用户立即看到结果 ⚡</text>
+  <path class="ln-g" d="M462 92 L536 60" marker-end="url(#ar)"/>
+  <path class="ln-r" d="M462 128 L536 160" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="540" y="30" width="200" height="60" rx="10"/>
+  <text class="on-g" x="640" y="54" text-anchor="middle">成功：真实状态更新</text>
+  <text class="sm" x="640" y="74" text-anchor="middle">4 条评论</text>
+  <rect class="bx-r" x="540" y="130" width="200" height="60" rx="10"/>
+  <text class="on-r" x="640" y="154" text-anchor="middle">失败：自动回到 3 条</text>
+  <text class="sm" x="640" y="174" text-anchor="middle">再提示用户</text>
+  <text class="lbl" x="380" y="216" text-anchor="middle">乐观值只在 Action（异步过渡）进行期间存在，结束后自动丢弃</text>
+</svg>
+<figcaption>图 6-10　乐观更新</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="src/stores/posts.js（新增 action）"><pre>
+async sendComment(content) {
+  const post = get().selectedPostDetails
+  const user = useUserStore.getState().user
+  await $fetch(`posts/${post._id}/comment`, {
+    method: 'POST',
+    body: JSON.stringify({ content }),
+  })
+  // 成功后再写入真实状态
+  const comment = { content, date: new Date().toISOString(), user_id: user._id, author: user }
+  set((s) =&gt; ({
+    selectedPostDetails: { ...s.selectedPostDetails, comments: [...s.selectedPostDetails.comments, comment] },
+  }))
+},
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="src/components/content/PostContent.jsx"><pre>
+import { useState, useOptimistic, startTransition } from 'react'
+import { usePostsStore } from '../../stores/posts.js'
+import { useUserStore } from '../../stores/user.js'
+import { formatDate } from '../../utils/format.js'
+import Comment from './Comment.jsx'
+import Loading from '../Loading.jsx'
+
+export default function PostContent() {
+  const details = usePostsStore((s) =&gt; s.selectedPostDetails)
+  const sendComment = usePostsStore((s) =&gt; s.sendComment)
+  const unselectPost = usePostsStore((s) =&gt; s.unselectPost)
+  const user = useUserStore((s) =&gt; s.user)
+  const [text, setText] = useState('')
+
+  // 乐观的评论列表：真实列表 + 正在发送的评论
+  const [comments, addOptimistic] = useOptimistic(
+    details?.comments ?? [],
+    (current, newComment) =&gt; [...current, newComment],
+  )
+
+  function submitComment() {
+    const content = text.trim()
+    if (!content) return
+    setText('')
+    startTransition(async () =&gt; {
+      addOptimistic({ content, date: new Date().toISOString(), author: user, pending: true })
+      try {
+        await sendComment(content)
+      } catch {
+        alert('评论发送失败')     // 乐观的那条会自动消失
+      }
+    })
+  }
+
+  if (!details) return &lt;Loading /&gt;
+
+  return (
+    &lt;div className="post-content"&gt;
+      &lt;div className="title"&gt;
+        &lt;img src={details.author.profile.photos[0].value} /&gt;
+        &lt;span&gt;
+          &lt;span&gt;{details.title}&lt;/span&gt;
+          &lt;span className="info"&gt;
+            &lt;span className="name"&gt;{details.author.profile.displayName}&lt;/span&gt;
+            &lt;span className="date"&gt;{formatDate(details.date)}&lt;/span&gt;
+          &lt;/span&gt;
+        &lt;/span&gt;
+      &lt;/div&gt;
+      &lt;div className="content"&gt;{details.content}&lt;/div&gt;
+
+      &lt;div className="comments"&gt;
+        {comments.map((c, i) =&gt; (
+          &lt;div key={i} style={{ opacity: c.pending ? 0.5 : 1 }}&gt;
+            &lt;Comment comment={c} /&gt;
+          &lt;/div&gt;
+        ))}
+      &lt;/div&gt;
+
+      &lt;div className="actions"&gt;
+        &lt;button type="button" className="icon-button secondary" onClick={unselectPost}&gt;
+          &lt;i className="material-icons"&gt;close&lt;/i&gt;
+        &lt;/button&gt;
+        &lt;input value={text} placeholder="写一条评论" onChange={(e) =&gt; setText(e.target.value)}
+               onKeyDown={(e) =&gt; e.key === 'Enter' &amp;&amp; submitComment()} /&gt;
+        &lt;button type="button" className="icon-button" disabled={!text.trim()} onClick={submitComment}&gt;
+          &lt;i className="material-icons"&gt;send&lt;/i&gt;
+        &lt;/button&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; startTransition 是什么</div>
+  <p>
+    <code>useOptimistic</code> 的乐观值只在一个“过渡（Transition）”进行期间有效。把异步操作包进 <code>startTransition(async () =&gt; …)</code>，
+    React 就知道“这段时间要显示乐观值，结束后回到真实状态”。表单的 <code>action</code> 本身就运行在过渡中，所以在第 5 章那种表单 Action 里可以直接调用乐观更新函数。
+  </p>
+</div>
+
+<h2 id="architecture">整体架构回顾</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 340" role="img" aria-label="组件与三个 Zustand store 之间的关系">
+  <path class="ln-a" d="M130 52 V22 H630 V48" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="380" y="26" text-anchor="middle">logout → reset()　login → onLoggedIn()</text>
+  <rect class="bx-a" x="20" y="52" width="220" height="90" rx="12"/>
+  <text class="ttl on-a" x="130" y="78" text-anchor="middle">useUserStore</text>
+  <text class="mono sm" x="130" y="100" text-anchor="middle">user</text>
+  <text class="mono sm" x="130" y="120" text-anchor="middle">login · logout</text>
+  <rect class="bx-a" x="270" y="52" width="220" height="90" rx="12"/>
+  <text class="ttl on-a" x="380" y="78" text-anchor="middle">useMapStore</text>
+  <text class="mono sm" x="380" y="100" text-anchor="middle">center · zoom</text>
+  <text class="mono sm" x="380" y="120" text-anchor="middle">centerOnUser · setBounds</text>
+  <rect class="bx-a" x="520" y="52" width="220" height="90" rx="12"/>
+  <text class="ttl on-a" x="630" y="78" text-anchor="middle">usePostsStore</text>
+  <text class="mono sm" x="630" y="100" text-anchor="middle">posts · draft · details</text>
+  <text class="mono sm" x="630" y="120" text-anchor="middle">fetchPosts · createPost</text>
+  <path class="ln-a" d="M492 97 H516" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="505" y="160" text-anchor="middle">fetchPosts()</text>
+  <path class="ln-d" d="M505 150 V102"/>
+  <rect class="bx-g" x="20" y="210" width="130" height="40" rx="8"/><text class="sm on-g" x="85" y="235" text-anchor="middle">Login</text>
+  <rect class="bx-g" x="170" y="210" width="130" height="40" rx="8"/><text class="sm on-g" x="235" y="235" text-anchor="middle">AppMenu</text>
+  <rect class="bx-g" x="320" y="210" width="130" height="40" rx="8"/><text class="sm on-g" x="385" y="235" text-anchor="middle">BlogMap</text>
+  <rect class="bx-g" x="470" y="210" width="130" height="40" rx="8"/><text class="sm on-g" x="535" y="235" text-anchor="middle">CreatePost</text>
+  <rect class="bx-g" x="620" y="210" width="130" height="40" rx="8"/><text class="sm on-g" x="685" y="235" text-anchor="middle">PostContent</text>
+  <path class="ln" d="M85 208 L110 144"/>
+  <path class="ln" d="M235 208 L160 144"/>
+  <path class="ln" d="M235 208 L330 144"/>
+  <path class="ln" d="M385 208 L385 176"/>
+  <path class="ln" d="M405 208 L600 144"/>
+  <path class="ln" d="M535 208 L620 144"/>
+  <path class="ln" d="M685 208 L660 144"/>
+  <rect class="bx" x="20" y="276" width="720" height="50" rx="10"/>
+  <text class="sm" x="380" y="298" text-anchor="middle">组件只做两件事：用 selector 读取需要的状态来渲染，调用 action 响应用户操作。</text>
+  <text class="sm" x="380" y="316" text-anchor="middle">请求、竞态处理、登录流程都在 store 里；$fetch 和路由也可以通过 getState() 直接使用 store。</text>
+</svg>
+<figcaption>图 6-11　组件 ↔ store 的关系</figcaption>
+</figure>
+
+<h2 id="summary">小结</h2>
+
+<div class="tw"><table>
+<thead><tr><th>主题</th><th>React 生态的做法</th></tr></thead>
+<tbody>
+<tr><td>全局状态</td><td>Zustand：<code>create((set, get) =&gt; ({ ... }))</code></td></tr>
+<tr><td>在组件中读取</td><td><code>useStore((s) =&gt; s.x)</code>；多个值用 <code>useShallow</code></td></tr>
+<tr><td>派生数据</td><td>导出 selector 函数</td></tr>
+<tr><td>组件外使用</td><td><code>useStore.getState()</code></td></tr>
+<tr><td>store 之间调用</td><td>在 action 里 <code>useOtherStore.getState().action()</code></td></tr>
+<tr><td>第三方登录</td><td>OAuth 弹窗 + <code>postMessage</code>（检查 origin）</td></tr>
+<tr><td>地图</td><td>react-leaflet；<code>useMapEvents</code>、<code>useMap</code></td></tr>
+<tr><td>集成命令式库</td><td>“返回 null 的接线组件” + effect；只在 store 里存纯数据</td></tr>
+<tr><td>逻辑与外观分离</td><td>自定义 Hook（首选）或 render props</td></tr>
+<tr><td>竞态</td><td>请求编号 / <code>AbortController</code></td></tr>
+<tr><td>乐观更新</td><td>React 19 <code>useOptimistic</code> + <code>startTransition</code></td></tr>
+</tbody>
+</table></div>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>在帖子标记上显示点赞数（服务器有 <code>POST /posts/:id/like</code>），并在 <code>PostContent</code> 里加点赞按钮，同样做成乐观更新。</li>
+    <li>给 <code>useMapStore</code> 加上 Zustand 的 <code>persist</code> 中间件，刷新页面后地图回到上次的位置和缩放级别。</li>
+    <li>用 TanStack Query 改写帖子详情的加载（<code>queryKey: ['post', id]</code>），比较它和 store 里手写 <code>selectPost</code> 的区别。</li>
+    <li>写一个 <code>&lt;MouseTracker&gt;{({ x, y }) =&gt; …}&lt;/MouseTracker&gt;</code> render props 组件，再把它改写成 <code>useMouse()</code> Hook。</li>
+    <li>（进阶）服务器支持 Socket.IO 实时推送新帖子。用 <code>socket.io-client</code> 连接，在 posts store 里收到新帖子时加入列表。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

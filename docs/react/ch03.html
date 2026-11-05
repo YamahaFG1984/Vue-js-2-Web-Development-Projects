@@ -1,0 +1,1500 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 3 章 · 项目二：城堡决斗卡牌游戏 — React 项目实战教程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="assets/react.css">
+<style>
+  .mini-hand { display: flex; gap: 10px; justify-content: center; min-height: 128px; align-items: flex-end; }
+  .mini-card {
+    width: 78px; height: 110px; border-radius: 9px; cursor: pointer; flex: none;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #fff; font-weight: 700; font-size: 13px; text-align: center; line-height: 1.3;
+    box-shadow: 0 3px 10px rgb(0 0 0 / .18); user-select: none;
+  }
+  .mini-card small { font-weight: 400; font-size: 11px; opacity: .85; margin-top: 4px; }
+  .mini-card.type-attack  { background: #b5413a; }
+  .mini-card.type-support { background: #2f7d51; }
+  .mini-card.type-special { background: #6b46c1; }
+  .demo-log { font-family: var(--mono); font-size: 12px; color: var(--fg-faint); min-height: 1.6em; }
+  @media (width <= 600px) { .mini-hand { gap: 5px; } .mini-card { width: 54px; height: 82px; font-size: 11px; } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "react": "https://esm.sh/react@19.2.0",
+  "react/jsx-runtime": "https://esm.sh/react@19.2.0/jsx-runtime",
+  "react-dom": "https://esm.sh/react-dom@19.2.0?external=react",
+  "react-dom/client": "https://esm.sh/react-dom@19.2.0/client?external=react",
+  "motion/react": "https://esm.sh/motion@12.23.12/react?external=react,react-dom",
+  "htm": "https://esm.sh/htm@3.1.1"
+} }
+</script>
+</head>
+<body data-chapter="3">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 3 章 · 项目二</span>
+<h1>城堡决斗：浏览器卡牌游戏</h1>
+<p class="lede">
+  这次做一个双人回合制卡牌游戏：两位玩家各守一座城堡，用行动卡把对手的粮食或生命打到零。
+  借这个项目，我们系统学习 React 的<strong>组件</strong>：props、回调、children，再用 <code>useReducer</code> 管理复杂的游戏状态，
+  用 <strong>Motion</strong> 做进出场和列表动画，用 SVG 画会动的旗帜。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>把界面拆成组件树；父传子用 <strong>props</strong>，子传父用<strong>回调函数</strong></li>
+    <li>用 <code>children</code> 让组件接收任意内容，用“组件映射表”动态切换组件</li>
+    <li>用 <code>useReducer</code> + Immer 管理复杂状态，理解 reducer 为什么必须是纯函数</li>
+    <li>用 Motion 的 <code>AnimatePresence</code> 和 <code>layout</code> 做进出场与列表动画，再次理解 <code>key</code></li>
+    <li>写自定义 Hook；用 <code>useRef</code> 直接操作 DOM，做不触发重新渲染的高频动画</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="rules">游戏规则</h2>
+
+<ul>
+  <li>两位玩家轮流行动，每人开局有 10 点生命、10 点粮食和 5 张手牌；生命和粮食都不能超过 10。</li>
+  <li>粮食或生命降到 0 即失败；两人可能同时失败。</li>
+  <li>每个回合，当前玩家<strong>必须且只能打出一张牌</strong>，打出的牌进入弃牌堆。</li>
+  <li>每个回合开始时抽一张牌（每人的第一回合除外），所以回合开始时手里总是 5 张。抽牌堆空了就把弃牌堆洗回去。</li>
+  <li>卡牌可以改变双方的生命和粮食，有的还能让某个玩家跳过回合。</li>
+</ul>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="游戏画面结构：顶栏、世界层、手牌和浮层">
+  <rect class="bx" x="20" y="14" width="720" height="272" rx="12"/>
+  <rect class="bx-b" x="34" y="26" width="692" height="36" rx="8"/>
+  <text class="sm on-b" x="100" y="49" text-anchor="middle">玩家 1</text>
+  <text class="sm on-b" x="380" y="49" text-anchor="middle">◀ 第 3 回合</text>
+  <text class="sm on-b" x="660" y="49" text-anchor="middle">玩家 2</text>
+  <text class="sm" x="480" y="49">&lt;TopBar&gt;</text>
+  <rect class="bx-g" x="34" y="72" width="692" height="126" rx="8"/>
+  <text class="sm on-g" x="380" y="90" text-anchor="middle">世界层：天空、云朵、地面、城堡</text>
+  <ellipse class="bx" cx="240" cy="110" rx="34" ry="11"/>
+  <ellipse class="bx" cx="520" cy="104" rx="40" ry="12"/>
+  <rect class="bx-a" x="70" y="118" width="80" height="64" rx="4"/>
+  <text class="sm on-a" x="110" y="155" text-anchor="middle">城堡 1</text>
+  <rect class="bx-a" x="610" y="118" width="80" height="64" rx="4"/>
+  <text class="sm on-a" x="650" y="155" text-anchor="middle">城堡 2</text>
+  <rect class="bx-g" x="160" y="104" width="10" height="50" rx="1"/>
+  <rect class="bx-r" x="176" y="104" width="10" height="36" rx="1"/>
+  <text class="sm" x="196" y="136">旗帜：粮食 / 生命</text>
+  <rect class="bx-p" x="200" y="208" width="360" height="68" rx="8"/>
+  <text class="sm on-p" x="380" y="224" text-anchor="middle">&lt;CardHand&gt;（当前玩家的 5 张牌）</text>
+  <rect class="bx" x="232" y="232" width="48" height="38" rx="4"/>
+  <rect class="bx" x="292" y="232" width="48" height="38" rx="4"/>
+  <rect class="bx" x="352" y="232" width="48" height="38" rx="4"/>
+  <rect class="bx" x="412" y="232" width="48" height="38" rx="4"/>
+  <rect class="bx" x="472" y="232" width="48" height="38" rx="4"/>
+  <rect class="bx-d" x="580" y="208" width="146" height="68" rx="8"/>
+  <text class="sm" x="653" y="236" text-anchor="middle">浮层出现时</text>
+  <text class="sm" x="653" y="254" text-anchor="middle">手牌会隐藏</text>
+</svg>
+<figcaption>图 3-1　游戏画面：“世界”（场景）+“界面”（顶栏、手牌、浮层）</figcaption>
+</figure>
+
+<p>三种<strong>浮层</strong>会轮流盖住手牌：“轮到你了”（提醒两人交换设备）、“对手出了什么”、“游戏结束”（点击重新开始）。</p>
+
+<h2 id="setup">用 Vite 起步</h2>
+
+<p>
+  这个游戏有十几个组件，适合分成多个文件。上一章的“浏览器内 Babel”只能编译页面里的内联脚本，没法编译被 <code>import</code> 的 <code>.jsx</code> 文件。
+  所以从这一章开始，我们用一条命令创建一个 <strong>Vite</strong> 项目（需要先安装 <a href="https://nodejs.org/">Node.js</a> 的 LTS 版本）。
+  Vite 的原理和项目结构下一章细讲，现在只要会用这三条命令：
+</p>
+
+<div class="code" data-lang="bash" data-file="终端"><pre>
+npm create vite@latest castle-duel -- --template react
+cd castle-duel
+npm install
+npm install motion immer      # 动画库 Motion、不可变更新工具 Immer
+npm run dev                   # 打开 http://localhost:5173
+</pre></div>
+
+<p>
+  清空 <code>src</code> 目录，然后从仓库 <code>Chapter03/chapter3-download</code> 复制素材：<code>svg/</code> 文件夹放进 <code>public/</code>（这样就能用 <code>/svg/xxx.svg</code> 访问），
+  <code>style.css</code> 和 <code>cards.js</code> 放进 <code>src/</code>。<code>cards.js</code> 末尾加上 <code>export</code>，让别的文件能导入它：
+</p>
+
+<div class="code" data-lang="js" data-file="src/cards.js（末尾）"><pre>
+// 原文件里 cards 是一个数组，转换成以 id 为键的对象，方便查找
+export const cardsById = Object.fromEntries(cards.map((card) =&gt; [card.id, card]))
+export { pile }
+</pre></div>
+
+<div class="tree"><b>castle-duel/</b>
+├── index.html
+├── public/svg/             <i># 游戏图片（原样复制）</i>
+└── <b>src/</b>
+    ├── main.jsx            <i># 入口：createRoot(...).render(&lt;Game /&gt;)</i>
+    ├── style.css           <i># 游戏样式（直接复制）</i>
+    ├── cards.js            <i># 卡牌数据（直接复制并导出）</i>
+    ├── <b>game.js</b>             <i># 游戏状态与规则：reducer</i>
+    ├── <b>hooks.js</b>            <i># 自定义 Hook</i>
+    └── <b>components/</b>         <i># 各个组件</i></div>
+
+<div class="code" data-lang="jsx" data-file="src/main.jsx"><pre>
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './style.css'
+import Game from './components/Game.jsx'
+
+createRoot(document.getElementById('root')).render(
+  &lt;StrictMode&gt;
+    &lt;Game /&gt;
+  &lt;/StrictMode&gt;
+)
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 和上一章相比</div>
+  <p>
+    不再需要 import map 和 Babel：<code>import ... from 'react'</code> 由 Vite 从 <code>node_modules</code> 解析；JSX 由 Vite 编译，而且用的是自动 JSX 运行时，
+    所以<strong>不用再写 <code>import React from 'react'</code></strong>。<code>&lt;StrictMode&gt;</code> 会在开发时做一些额外检查，帮你提前发现问题。
+  </p>
+</div>
+
+<h2 id="components">组件与组件树</h2>
+
+<p>
+  组件是 React 应用的积木。一个组件应该<strong>小、职责单一、可复用</strong>。整个游戏会是这样一棵组件树：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 320" role="img" aria-label="城堡决斗的组件树">
+  <rect class="bx-a" x="310" y="14" width="140" height="38" rx="9"/>
+  <text class="ttl on-a" x="380" y="38" text-anchor="middle">Game（持有状态）</text>
+  <path class="ln" d="M380 54 V70 H95 V86"/>
+  <path class="ln" d="M380 70 H285 V86"/>
+  <path class="ln" d="M380 70 H475 V86"/>
+  <path class="ln" d="M380 70 H665 V86"/>
+  <rect class="bx-b" x="40" y="88" width="110" height="34" rx="8"/><text class="on-b" x="95" y="110" text-anchor="middle">TopBar</text>
+  <rect class="bx-g" x="215" y="88" width="140" height="34" rx="8"/><text class="on-g" x="285" y="110" text-anchor="middle">World</text>
+  <rect class="bx-p" x="415" y="88" width="120" height="34" rx="8"/><text class="on-p" x="475" y="110" text-anchor="middle">CardHand</text>
+  <rect class="bx-r" x="595" y="88" width="140" height="34" rx="8"/><text class="on-r" x="665" y="110" text-anchor="middle">GameOverlay</text>
+  <path class="ln" d="M285 124 V140 H230 V156"/>
+  <path class="ln" d="M285 140 H340 V156"/>
+  <rect class="bx-g" x="175" y="158" width="110" height="32" rx="8"/><text class="sm on-g" x="230" y="179" text-anchor="middle">Castle ×2</text>
+  <rect class="bx-g" x="295" y="158" width="100" height="32" rx="8"/><text class="sm on-g" x="345" y="179" text-anchor="middle">Cloud ×10</text>
+  <path class="ln" d="M230 192 V210"/>
+  <rect class="bx-g" x="170" y="212" width="120" height="32" rx="8"/><text class="sm on-g" x="230" y="233" text-anchor="middle">CastleBanners</text>
+  <path class="ln" d="M230 246 V258 H180 V270"/>
+  <path class="ln" d="M230 258 H280 V270"/>
+  <rect class="bx-g" x="130" y="272" width="100" height="30" rx="7"/><text class="sm on-g" x="180" y="292" text-anchor="middle">StatBubble ×2</text>
+  <rect class="bx-g" x="236" y="272" width="96" height="30" rx="7"/><text class="sm on-g" x="284" y="292" text-anchor="middle">BannerBar ×2</text>
+  <path class="ln" d="M475 124 V156"/>
+  <rect class="bx-p" x="420" y="158" width="110" height="32" rx="8"/><text class="sm on-p" x="475" y="179" text-anchor="middle">GameCard ×5</text>
+  <path class="ln" d="M665 124 V140 H610 V156"/>
+  <path class="ln" d="M665 140 H710 V156"/>
+  <rect class="bx-r" x="555" y="158" width="110" height="44" rx="8"/>
+  <text class="sm on-r" x="610" y="176" text-anchor="middle">children：</text>
+  <text class="sm on-r" x="610" y="194" text-anchor="middle">三种浮层内容</text>
+  <rect class="bx-r" x="670" y="158" width="80" height="44" rx="8"/>
+  <text class="sm on-r" x="710" y="176" text-anchor="middle">GameCard</text>
+  <text class="sm on-r" x="710" y="194" text-anchor="middle">复用</text>
+  <text class="lbl" x="560" y="262" text-anchor="middle">状态集中在顶层的 Game，</text>
+  <text class="lbl" x="560" y="280" text-anchor="middle">通过 props 一层层往下传</text>
+</svg>
+<figcaption>图 3-2　本章的组件树</figcaption>
+</figure>
+
+<h3>第一个组件：顶栏</h3>
+
+<p>
+  顶栏要显示两位玩家的名字和回合数，还有一个箭头指向当前玩家。组件需要的数据通过 <strong>props</strong> 从父组件传入。
+  props 就是组件函数的第一个参数（一个对象），通常直接解构：
+</p>
+
+<div class="code" data-lang="jsx" data-file="src/components/TopBar.jsx"><pre>
+export default function TopBar({ players, currentPlayerIndex, turn }) {
+  return (
+    &lt;div className={`top-bar player-${currentPlayerIndex}`}&gt;
+      &lt;div className="player p0"&gt;{players[0].name}&lt;/div&gt;
+      &lt;div className="turn-counter"&gt;
+        &lt;img className="arrow" src="/svg/turn.svg" /&gt;
+        &lt;div className="turn"&gt;第 {turn} 回合&lt;/div&gt;
+      &lt;/div&gt;
+      &lt;div className="player p1"&gt;{players[1].name}&lt;/div&gt;
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<p>父组件像写 HTML 属性一样传值，花括号里是任意 JS 表达式：</p>
+
+<div class="code" data-lang="jsx"><pre>
+&lt;TopBar players={state.players} currentPlayerIndex={state.currentPlayerIndex} turn={state.turn} /&gt;
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="props 向下传递，回调函数让子组件通知父组件">
+  <rect class="bx-a" x="250" y="20" width="260" height="70" rx="12"/>
+  <text class="ttl on-a" x="380" y="46" text-anchor="middle">父组件 Game</text>
+  <text class="mono sm" x="380" y="70" text-anchor="middle">state + dispatch</text>
+  <rect class="bx-g" x="250" y="160" width="260" height="70" rx="12"/>
+  <text class="ttl on-g" x="380" y="186" text-anchor="middle">子组件 GameCard</text>
+  <text class="mono sm" x="380" y="210" text-anchor="middle">function GameCard({ def, onPlay })</text>
+  <path class="ln-a" d="M330 92 V156" marker-end="url(#ar-a)"/>
+  <text class="halo on-a ttl" x="320" y="118" text-anchor="end">数据 props 向下</text>
+  <text class="halo mono sm" x="320" y="138" text-anchor="end">def={card.def}</text>
+  <path class="ln-p" d="M430 158 V94" marker-end="url(#ar)"/>
+  <text class="halo on-p ttl" x="440" y="118">调用回调 向上</text>
+  <text class="halo mono sm" x="440" y="138">onPlay={() =&gt; …}</text>
+  <text class="lbl" x="20" y="120">props 只读：</text>
+  <text class="lbl" x="20" y="138">子组件不能修改</text>
+  <text class="lbl" x="620" y="120">回调也是一个 prop，</text>
+  <text class="lbl" x="620" y="138">只不过值是函数</text>
+</svg>
+<figcaption>图 3-3　单向数据流：数据向下，事件通过回调向上</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; props 是只读的</div>
+  <p>
+    组件绝不能修改自己的 props（<code>props.turn = 4</code>）。React 要求组件像纯函数一样：相同的 props，渲染出相同的结果。
+    子组件想改变数据，就调用父组件传下来的回调，由<strong>拥有这份状态</strong>的组件去改。
+  </p>
+</div>
+
+<h3>卡牌组件：回调让子组件“通知”父组件</h3>
+
+<p>每个卡牌定义有 <code>id</code>、<code>type</code>（决定颜色）、<code>title</code>、<code>description</code>（HTML 文本）、可选的 <code>note</code>，以及出牌时调用的 <code>play(player, opponent)</code>。</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="卡牌组件的结构">
+  <rect class="bx-r" x="260" y="14" width="170" height="226" rx="14"/>
+  <text class="ttl on-r" x="345" y="46" text-anchor="middle">Archers</text>
+  <path class="ln-r" d="M285 62 H405"/>
+  <text x="345" y="110" text-anchor="middle">Spend 3 Food</text>
+  <text x="345" y="132" text-anchor="middle">Deal 3 Damage</text>
+  <rect class="bx" x="278" y="168" width="134" height="56" rx="8"/>
+  <text class="sm" x="345" y="192" text-anchor="middle">«Ready your bows!</text>
+  <text class="sm" x="345" y="210" text-anchor="middle">Nock! Draw! Loose!»</text>
+  <path class="ln-d" d="M432 40 H500"/><text class="mono sm" x="506" y="44">.title　{def.title}</text>
+  <path class="ln-d" d="M432 65 H500"/><text class="mono sm" x="506" y="69">img.separator</text>
+  <path class="ln-d" d="M432 120 H500"/><text class="mono sm" x="506" y="124">.description（HTML 文本）</text>
+  <path class="ln-d" d="M432 196 H500"/><text class="mono sm" x="506" y="200">.note　{def.note &amp;&amp; …}</text>
+  <path class="ln-d" d="M258 30 H200"/>
+  <text class="mono sm" x="194" y="26" text-anchor="end">类名 type-{def.type}</text>
+  <text class="sm" x="194" y="44" text-anchor="end">attack → 红色背景</text>
+  <path class="ln-d" d="M258 220 H200"/>
+  <text class="mono sm" x="194" y="216" text-anchor="end">onClick={onPlay}</text>
+  <text class="sm" x="194" y="234" text-anchor="end">点击时通知父组件</text>
+</svg>
+<figcaption>图 3-4　GameCard 组件</figcaption>
+</figure>
+
+<div class="code" data-lang="jsx" data-file="src/components/GameCard.jsx"><pre>
+export default function GameCard({ def, onPlay }) {
+  return (
+    &lt;div className={`card type-${def.type}`} onClick={onPlay}&gt;
+      &lt;div className="title"&gt;{def.title}&lt;/div&gt;
+      &lt;img className="separator" src="/svg/card-separator.svg" /&gt;
+      &lt;div className="description"&gt;
+        &lt;div dangerouslySetInnerHTML={{ __html: def.description }} /&gt;
+      &lt;/div&gt;
+      {def.note &amp;&amp; (
+        &lt;div className="note"&gt;
+          &lt;div dangerouslySetInnerHTML={{ __html: def.note }} /&gt;
+        &lt;/div&gt;
+      )}
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 这里用 dangerouslySetInnerHTML 是安全的</div>
+  <p>卡牌文字是我们自己写在 <code>cards.js</code> 里的，不来自用户输入。多套一层 <code>div</code> 是为了用 flexbox 垂直居中。</p>
+</div>
+
+<p>
+  <code>onPlay</code> 是一个回调 prop。卡牌组件不关心“出牌之后发生什么”，它只负责在被点击时<strong>通知</strong>父组件。
+  将来要加“键盘选中 + 回车出牌”，也只需在卡牌组件内部再调用一次 <code>onPlay</code>。
+</p>
+
+<div class="box tip">
+  <div class="t">&#10003; 命名约定</div>
+  <p>回调 prop 以 <code>on</code> 开头（<code>onPlay</code>、<code>onClose</code>），父组件里处理它的函数常以 <code>handle</code> 开头（<code>handlePlayCard</code>）。</p>
+</div>
+
+<h2 id="state">游戏状态：useReducer</h2>
+
+<p>
+  游戏有很多相互关联的状态：回合数、两位玩家的数值和手牌、当前玩家、牌堆、当前浮层……如果全用 <code>useState</code>，每个事件处理函数都要同时修改好几个状态，很容易出错。
+  这正是 <code>useReducer</code> 的用武之地：<strong>把所有“状态如何变化”的规则集中到一个函数里</strong>。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="useReducer 数据流：组件 dispatch action，reducer 计算新状态，组件重新渲染">
+  <rect class="bx-g" x="20" y="90" width="180" height="80" rx="12"/>
+  <text class="ttl on-g" x="110" y="118" text-anchor="middle">组件</text>
+  <text class="sm" x="110" y="140" text-anchor="middle">用户点击一张牌</text>
+  <text class="sm" x="110" y="156" text-anchor="middle">只描述“发生了什么”</text>
+  <path class="ln-p" d="M202 110 H286" marker-end="url(#ar)"/>
+  <text class="halo mono sm" x="244" y="96" text-anchor="middle">dispatch(action)</text>
+  <rect class="bx-p" x="290" y="60" width="200" height="140" rx="14"/>
+  <text class="ttl on-p" x="390" y="88" text-anchor="middle">reducer(state, action)</text>
+  <text class="mono sm" x="390" y="114" text-anchor="middle">{ type: 'cardPlayed',</text>
+  <text class="mono sm" x="390" y="132" text-anchor="middle">card }</text>
+  <text class="sm" x="390" y="160" text-anchor="middle">纯函数：根据旧状态和</text>
+  <text class="sm" x="390" y="176" text-anchor="middle">action 算出新状态</text>
+  <path class="ln-a" d="M492 130 H556" marker-end="url(#ar-a)"/>
+  <rect class="bx-a" x="560" y="90" width="180" height="80" rx="12"/>
+  <text class="ttl on-a" x="650" y="118" text-anchor="middle">新状态</text>
+  <text class="sm" x="650" y="140" text-anchor="middle">React 用它重新渲染</text>
+  <path class="ln-d" d="M650 172 V230 H110 V174" marker-end="url(#ar)"/>
+  <text class="halo sm" x="380" y="234" text-anchor="middle">state 作为 props 传给各组件</text>
+</svg>
+<figcaption>图 3-5　useReducer 的数据流</figcaption>
+</figure>
+
+<h3>状态的形状</h3>
+
+<div class="code" data-lang="js" data-file="src/game.js"><pre>
+import { produce } from 'immer'
+import { cardsById, pile } from './cards.js'
+
+export const maxHealth = 10
+export const maxFood = 10
+const handSize = 5
+
+function createPlayer(name) {
+  return {
+    name,
+    food: 10,
+    health: 10,
+    skipTurn: false,       // 下回合是否要被跳过
+    skippedTurn: false,    // 上回合是否被跳过了
+    hand: [],              // [{ uid, id, def }]
+    lastPlayedCardId: null,
+    dead: false,
+  }
+}
+
+// 创建开局状态：两位玩家各抽 5 张
+// （初始化函数里用随机数没问题：即使 StrictMode 调用它两次，React 也只采用其中一次的结果）
+export function createInitialState() {
+  return produce({
+    turn: 1,
+    players: [createPlayer('克里维斯的安妮'), createPlayer('秃头威廉')],
+    currentPlayerIndex: Math.round(Math.random()),  // 随机决定先手
+    activeOverlay: 'player-turn',
+    drawPile: { ...pile },                          // { 卡牌id: 张数 }
+    discardPile: {},
+    canPlay: false,
+    playingCard: null,
+    pendingDraw: false,                             // 是否等待抽牌（见后文）
+    nextUid: 0,
+  }, (draft) =&gt; {
+    for (const player of draft.players) {
+      for (let i = 0; i &lt; handSize; i++) drawCard(draft, player, Math.random())
+    }
+  })
+}
+
+// 两个辅助函数：当前玩家、对手
+export const currentPlayer = (s) =&gt; s.players[s.currentPlayerIndex]
+export const currentOpponent = (s) =&gt; s.players[1 - s.currentPlayerIndex]
+</pre></div>
+
+<h3>Immer：用“修改”的写法得到不可变的结果</h3>
+
+<p>
+  上一章我们手写 <code>{ ...note, ...changes }</code> 做不可变更新。游戏状态嵌套很深（玩家 → 手牌数组），而且 <code>cards.js</code> 里每张牌的 <code>play</code> 函数都是这样写的：
+  <code>player.food -= 1; opponent.health -= 1</code> —— 直接修改对象。手写不可变更新会非常痛苦。
+</p>
+
+<p>
+  <a href="https://immerjs.github.io/immer/">Immer</a> 解决了这个问题：你在一个“草稿（draft）”上随便修改，它会自动生成一份新的不可变状态，没改动的部分保持原样（结构共享）：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 240" role="img" aria-label="Immer 的 produce：在草稿上修改，生成新状态，未修改部分共享">
+  <rect class="bx" x="20" y="40" width="200" height="150" rx="12"/>
+  <text class="ttl" x="120" y="64" text-anchor="middle">旧状态</text>
+  <rect class="bx" x="40" y="80" width="160" height="30" rx="6"/><text class="sm" x="120" y="100" text-anchor="middle">players[0]</text>
+  <rect class="bx" x="40" y="118" width="160" height="30" rx="6"/><text class="sm" x="120" y="138" text-anchor="middle">players[1]</text>
+  <rect class="bx" x="40" y="156" width="160" height="26" rx="6"/><text class="sm" x="120" y="174" text-anchor="middle">drawPile …</text>
+
+  <rect class="bx-p" x="280" y="60" width="200" height="110" rx="12"/>
+  <text class="ttl on-p" x="380" y="86" text-anchor="middle">produce(state, draft =&gt; {</text>
+  <text class="mono sm" x="380" y="112" text-anchor="middle">draft.players[0].food -= 1</text>
+  <text class="ttl on-p" x="380" y="150" text-anchor="middle">})</text>
+  <path class="ln" d="M222 115 H276" marker-end="url(#ar)"/>
+  <path class="ln-p" d="M482 115 H536" marker-end="url(#ar)"/>
+
+  <rect class="bx-a" x="540" y="40" width="200" height="150" rx="12"/>
+  <text class="ttl on-a" x="640" y="64" text-anchor="middle">新状态（新引用）</text>
+  <rect class="bx-a" x="560" y="80" width="160" height="30" rx="6"/><text class="sm on-a" x="640" y="100" text-anchor="middle">players[0]（新）</text>
+  <rect class="bx" x="560" y="118" width="160" height="30" rx="6"/><text class="sm" x="640" y="138" text-anchor="middle">players[1]（共享）</text>
+  <rect class="bx" x="560" y="156" width="160" height="26" rx="6"/><text class="sm" x="640" y="174" text-anchor="middle">drawPile（共享）</text>
+  <path class="ln-d" d="M202 133 C380 210 400 210 558 133"/>
+  <text class="halo sm" x="380" y="214" text-anchor="middle">没改的部分直接复用，不复制</text>
+</svg>
+<figcaption>图 3-6　Immer：写起来像修改，结果是不可变的</figcaption>
+</figure>
+
+<p>把 reducer 包进 <code>produce</code>，就能在里面直接写修改语句。先写两个牌堆相关的辅助函数：</p>
+
+<div class="code" data-lang="js" data-file="src/game.js"><pre>
+function pileCount(p) {
+  return Object.values(p).reduce((sum, n) =&gt; sum + n, 0)
+}
+
+// 从抽牌堆按张数加权随机抽一张，放进玩家手牌。random 是 0~1 的随机数，由外部传入
+function drawCard(draft, player, random) {
+  if (pileCount(draft.drawPile) === 0) {
+    draft.drawPile = draft.discardPile          // 抽牌堆空了：把弃牌堆倒回来
+    draft.discardPile = {}
+  }
+  let choice = Math.floor(random * pileCount(draft.drawPile))
+  for (const id in draft.drawPile) {
+    choice -= draft.drawPile[id]
+    if (choice &lt; 0) {
+      draft.drawPile[id]--
+      player.hand.push({ uid: draft.nextUid++, id, def: cardsById[id] })
+      return
+    }
+  }
+}
+
+function clampStats(player) {
+  player.health = Math.min(Math.max(player.health, 0), maxHealth)
+  player.food = Math.min(Math.max(player.food, 0), maxFood)
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="抽牌堆、手牌、弃牌堆之间的流转">
+  <rect class="bx-b" x="20" y="40" width="200" height="100" rx="12"/>
+  <text class="ttl on-b" x="120" y="66" text-anchor="middle">drawPile</text>
+  <text class="mono sm" x="120" y="92" text-anchor="middle">{ pikemen: 4, … }</text>
+  <text class="sm" x="120" y="118" text-anchor="middle">按张数加权随机</text>
+  <rect class="bx-p" x="290" y="40" width="180" height="100" rx="12"/>
+  <text class="ttl on-p" x="380" y="66" text-anchor="middle">player.hand</text>
+  <text class="mono sm" x="380" y="92" text-anchor="middle">[{ uid, id, def }]</text>
+  <text class="sm" x="380" y="118" text-anchor="middle">每张有唯一 uid</text>
+  <rect class="bx" x="540" y="40" width="200" height="100" rx="12"/>
+  <text class="ttl" x="640" y="66" text-anchor="middle">discardPile</text>
+  <text class="mono sm" x="640" y="92" text-anchor="middle">{ catapult: 1, … }</text>
+  <path class="ln-b" d="M222 90 H286" marker-end="url(#ar)"/>
+  <text class="halo mono sm on-b" x="254" y="82" text-anchor="middle">drawCard</text>
+  <path class="ln-p" d="M472 90 H536" marker-end="url(#ar)"/>
+  <text class="halo mono sm on-p" x="504" y="82" text-anchor="middle">出牌</text>
+  <path class="ln-a" d="M640 142 V170 H120 V144" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="380" y="174" text-anchor="middle">抽牌堆空了：弃牌堆倒回去</text>
+</svg>
+<figcaption>图 3-7　卡牌的循环</figcaption>
+</figure>
+
+<h3>reducer 必须是纯函数</h3>
+
+<div class="box key">
+  <div class="t">&#9733; 为什么随机数要从外面传进来</div>
+  <p>
+    reducer 必须是<strong>纯函数</strong>：同样的 state 和 action，永远得到同样的结果，不能有副作用（不能发请求、不能设定时器、也不能调用 <code>Math.random()</code>）。
+    开发模式下 StrictMode 会故意把 reducer 调用两次来检查这一点 —— 如果里面有 <code>Math.random()</code>，两次结果不同，你会看到奇怪的 bug。
+    所以抽牌需要的随机数放进 action，由事件处理函数生成：<code>dispatch({ type: 'cardDrawn', random: Math.random() })</code>。
+    这样做还有个好处：测试时传入固定的数，结果就可以预测。
+  </p>
+</div>
+
+<p>现在写 reducer。每种 action 对应游戏里的一个事件：</p>
+
+<div class="code" data-lang="js" data-file="src/game.js"><pre>
+export const gameReducer = produce((draft, action) =&gt; {
+  const player = currentPlayer(draft)
+  const opponent = currentOpponent(draft)
+
+  switch (action.type) {
+    // 玩家点击了一张牌：从手牌移到弃牌堆（会触发离开动画）
+    case 'cardPlayed': {
+      if (!draft.canPlay) return              // 不许作弊：一回合只能出一张
+      draft.canPlay = false
+      const index = player.hand.findIndex((c) =&gt; c.uid === action.card.uid)
+      player.hand.splice(index, 1)
+      draft.discardPile[action.card.id] = (draft.discardPile[action.card.id] ?? 0) + 1
+      draft.playingCard = action.card
+      return
+    }
+
+    // 出牌动画结束：结算效果
+    case 'cardApplied': {
+      const card = draft.playingCard
+      player.lastPlayedCardId = card.id
+      card.def.play(player, opponent)         // cards.js 里的函数直接修改草稿
+      draft.players.forEach(clampStats)
+      return
+    }
+
+    // 稍等片刻后：判断胜负，或者进入下一回合
+    case 'turnEnded': {
+      draft.playingCard = null
+      for (const p of draft.players) p.dead = p.health === 0 || p.food === 0
+      if (draft.players.some((p) =&gt; p.dead)) {
+        draft.activeOverlay = 'game-over'
+      } else {
+        nextTurn(draft)
+      }
+      return
+    }
+
+    // 点击浮层
+    case 'overlayClosed': {
+      if (draft.activeOverlay === 'player-turn' &amp;&amp; draft.turn &gt; 1) {
+        draft.activeOverlay = 'last-play'      // 先看看对手出了什么
+      } else {
+        newTurn(draft)
+      }
+      return
+    }
+
+    // 回合开始后的抽牌
+    case 'cardDrawn': {
+      drawCard(draft, player, action.random)
+      draft.pendingDraw = false
+      draft.canPlay = true
+      return
+    }
+
+    case 'restarted':
+      return createInitialState()             // 返回一个全新的状态，替换掉草稿
+  }
+})
+
+function nextTurn(draft) {
+  draft.turn++
+  draft.currentPlayerIndex = 1 - draft.currentPlayerIndex
+  draft.activeOverlay = 'player-turn'
+}
+
+function newTurn(draft) {
+  draft.activeOverlay = null
+  const player = currentPlayer(draft)
+  if (player.skipTurn) {                       // 被卡牌效果跳过
+    player.skippedTurn = true
+    player.skipTurn = false
+    nextTurn(draft)
+  } else {
+    player.skippedTurn = false
+    if (draft.turn &gt; 2) draft.pendingDraw = true   // 抽牌要延迟 800ms，交给组件里的 effect
+    else draft.canPlay = true
+  }
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 延时怎么办？</div>
+  <p>
+    原书在游戏逻辑里直接写 <code>setTimeout</code>。reducer 里不能有定时器，所以我们把“需要延时做的事”变成状态（<code>pendingDraw: true</code>），
+    由组件里的 <code>useEffect</code> 负责等待 800ms 后 dispatch。后面组装 <code>Game</code> 组件时会看到。
+  </p>
+</div>
+
+<h2 id="hand">手牌与列表动画</h2>
+
+<h3>先不加动画</h3>
+
+<div class="code" data-lang="jsx" data-file="src/components/CardHand.jsx（初版）"><pre>
+import GameCard from './GameCard.jsx'
+
+export default function CardHand({ cards, onCardPlay }) {
+  return (
+    &lt;div className="hand"&gt;
+      &lt;div className="wrapper"&gt;
+        &lt;div className="cards"&gt;
+          {cards.map((card) =&gt; (
+            &lt;GameCard key={card.uid} def={card.def} onPlay={() =&gt; onCardPlay(card)} /&gt;
+          ))}
+        &lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<p>
+  注意 <code>onPlay={() =&gt; onCardPlay(card)}</code>：手牌组件本来就知道是哪张牌（<code>map</code> 的循环变量），所以卡牌组件不需要把自己传上来。
+  key 用 <code>uid</code> 而不是卡牌 <code>id</code>：同一种牌可能有两张，<code>id</code> 不唯一。
+</p>
+
+<h3>React 没有内置过渡组件</h3>
+
+<p>
+  元素被移除时做离开动画，难点在于：React 一旦不再渲染某个元素，就会立刻把它从 DOM 删掉，根本没有机会播放动画。
+  React 本身没有内置的过渡组件，社区最主流的动画库是 <strong><a href="https://motion.dev/">Motion</a></strong>（原名 Framer Motion）。
+</p>
+
+<p>
+  Motion 提供 <code>motion.div</code>、<code>motion.img</code> 等“会动的”元素，用 <code>initial</code>（起始）、<code>animate</code>（目标）、<code>exit</code>（离开）三个属性描述动画；
+  再用 <code>&lt;AnimatePresence&gt;</code> 包裹，它会在子元素被移除时<strong>把它暂时留在 DOM 里</strong>，播放完 <code>exit</code> 动画再删除：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="AnimatePresence 的进入和离开过程">
+  <text class="ttl on-a" x="20" y="26">进入</text>
+  <path class="ln" d="M120 50 H730" marker-end="url(#ar)"/>
+  <rect class="bx-b" x="120" y="62" width="180" height="40" rx="8"/>
+  <text class="mono sm on-b" x="210" y="80" text-anchor="middle">initial</text>
+  <text class="sm" x="210" y="96" text-anchor="middle">{ opacity: 0, x: 100 }</text>
+  <rect class="bx-g" x="300" y="62" width="300" height="40" rx="8" style="opacity:.6"/>
+  <text class="sm on-g" x="450" y="87" text-anchor="middle">动画过渡中……</text>
+  <rect class="bx-a" x="600" y="62" width="130" height="40" rx="8"/>
+  <text class="mono sm on-a" x="665" y="80" text-anchor="middle">animate</text>
+  <text class="sm" x="665" y="96" text-anchor="middle">{ opacity: 1, x: 0 }</text>
+  <text class="sm" x="20" y="88">元素出现</text>
+
+  <text class="ttl on-r" x="20" y="156">离开</text>
+  <path class="ln" d="M120 180 H730" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="120" y="192" width="180" height="40" rx="8"/>
+  <text class="sm on-a" x="210" y="216" text-anchor="middle">当前状态</text>
+  <rect class="bx-r" x="300" y="192" width="300" height="40" rx="8" style="opacity:.6"/>
+  <text class="sm on-r" x="450" y="210" text-anchor="middle">React 已经不再渲染它，</text>
+  <text class="sm on-r" x="450" y="226" text-anchor="middle">AnimatePresence 让它多留一会儿</text>
+  <rect class="bx-r" x="600" y="192" width="130" height="40" rx="8"/>
+  <text class="mono sm on-r" x="665" y="210" text-anchor="middle">exit</text>
+  <text class="sm" x="665" y="226" text-anchor="middle">然后才删除</text>
+  <text class="sm" x="20" y="218">元素被移除</text>
+  <text class="lbl" x="380" y="270" text-anchor="middle">全部离开动画结束时，AnimatePresence 会调用 onExitComplete —— 我们用它来“等出牌动画结束再结算”</text>
+</svg>
+<figcaption>图 3-8　AnimatePresence：给“消失”一个播放动画的机会</figcaption>
+</figure>
+
+<h3>列表动画：key 与 layout</h3>
+
+<p>给手牌加上三种动画：抽牌时从右侧滑入、出牌时向上放大飞走、其余的牌平滑地移动补位。</p>
+
+<div class="code" data-lang="jsx" data-file="src/components/CardHand.jsx"><pre>
+import { motion, AnimatePresence } from 'motion/react'
+import GameCard from './GameCard.jsx'
+
+export default function CardHand({ cards, onCardPlay, onCardLeaveEnd }) {
+  return (
+    &lt;div className="hand"&gt;
+      &lt;div className="wrapper"&gt;
+        &lt;div className="cards"&gt;
+          {/* popLayout：离开的元素立刻脱离布局，其余的牌马上开始补位 */}
+          &lt;AnimatePresence mode="popLayout" onExitComplete={onCardLeaveEnd}&gt;
+            {cards.map((card) =&gt; (
+              &lt;motion.div
+                key={card.uid}
+                layout                                            // 位置变化时自动平滑移动
+                initial={{ opacity: 0, x: 100, scale: 0.8 }}      // 进入：从右边滑进来
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -300, scale: 1.5,          // 离开：向上放大飞走
+                        transition: { duration: 1 } }}
+                transition={{ duration: 0.3 }}
+              &gt;
+                &lt;GameCard def={card.def} onPlay={() =&gt; onCardPlay(card)} /&gt;
+              &lt;/motion.div&gt;
+            ))}
+          &lt;/AnimatePresence&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="没有稳定 key 时元素被错误复用，有 key 时 React 和 Motion 能正确识别删除和移动">
+  <text class="ttl on-r" x="190" y="22" text-anchor="middle">用下标当 key：识别错误</text>
+  <text class="sm" x="190" y="40" text-anchor="middle">[a, b, c, d] 删掉 c → [a, b, d]</text>
+  <rect class="bx" x="60" y="56" width="70" height="32" rx="6"/><text class="mono" x="95" y="77" text-anchor="middle">0:a</text>
+  <rect class="bx" x="60" y="96" width="70" height="32" rx="6"/><text class="mono" x="95" y="117" text-anchor="middle">1:b</text>
+  <rect class="bx" x="60" y="136" width="70" height="32" rx="6"/><text class="mono" x="95" y="157" text-anchor="middle">2:c</text>
+  <rect class="bx" x="60" y="176" width="70" height="32" rx="6"/><text class="mono" x="95" y="197" text-anchor="middle">3:d</text>
+  <rect class="bx" x="250" y="56" width="70" height="32" rx="6"/><text class="mono" x="285" y="77" text-anchor="middle">0:a</text>
+  <rect class="bx" x="250" y="96" width="70" height="32" rx="6"/><text class="mono" x="285" y="117" text-anchor="middle">1:b</text>
+  <rect class="bx-a" x="250" y="136" width="70" height="32" rx="6"/><text class="mono on-a" x="285" y="157" text-anchor="middle">2:d</text>
+  <path class="ln" d="M132 72 H246" marker-end="url(#ar)"/>
+  <path class="ln" d="M132 112 H246" marker-end="url(#ar)"/>
+  <path class="ln-a" d="M132 152 H246" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="190" y="146" text-anchor="middle">key 2 的内容被改成 d</text>
+  <path class="ln-r" d="M132 192 H200"/>
+  <text class="halo sm on-r" x="220" y="196">key 3 被删 ✗</text>
+  <text class="sm" x="190" y="244" text-anchor="middle">React 以为删的是最后一个，</text>
+  <text class="sm on-r" x="190" y="262" text-anchor="middle">离开动画播在了 d 身上</text>
+
+  <path class="ln-d" d="M380 14 V280"/>
+
+  <text class="ttl on-g" x="570" y="22" text-anchor="middle">key={card.uid}：识别正确</text>
+  <text class="sm" x="570" y="40" text-anchor="middle">身份跟着数据走</text>
+  <rect class="bx" x="440" y="56" width="70" height="32" rx="6"/><text class="mono" x="475" y="77" text-anchor="middle">a</text>
+  <rect class="bx" x="440" y="96" width="70" height="32" rx="6"/><text class="mono" x="475" y="117" text-anchor="middle">b</text>
+  <rect class="bx" x="440" y="136" width="70" height="32" rx="6"/><text class="mono" x="475" y="157" text-anchor="middle">c</text>
+  <rect class="bx" x="440" y="176" width="70" height="32" rx="6"/><text class="mono" x="475" y="197" text-anchor="middle">d</text>
+  <rect class="bx" x="630" y="56" width="70" height="32" rx="6"/><text class="mono" x="665" y="77" text-anchor="middle">a</text>
+  <rect class="bx" x="630" y="96" width="70" height="32" rx="6"/><text class="mono" x="665" y="117" text-anchor="middle">b</text>
+  <rect class="bx-g" x="630" y="136" width="70" height="32" rx="6"/><text class="mono on-g" x="665" y="157" text-anchor="middle">d</text>
+  <path class="ln" d="M512 72 H626" marker-end="url(#ar)"/>
+  <path class="ln" d="M512 112 H626" marker-end="url(#ar)"/>
+  <path class="ln-r" d="M512 152 H560"/>
+  <text class="halo sm on-r" x="516" y="140">c 播放 exit</text>
+  <path class="ln-g" d="M512 192 C570 192 580 152 626 152" marker-end="url(#ar)"/>
+  <text class="halo sm on-g" x="570" y="214" text-anchor="middle">d 平滑上移（layout）</text>
+  <text class="sm on-g" x="570" y="252" text-anchor="middle">动画符合直觉</text>
+</svg>
+<figcaption>图 3-9　key 决定了“哪个元素是谁”</figcaption>
+</figure>
+
+<div class="box deep">
+  <div class="t">&#128269; layout 动画是怎么实现的</div>
+  <p>
+    <code>layout</code> 属性用的是 FLIP 技术：React 更新 DOM 后，Motion 测量元素的新位置（Last），和之前的位置（First）比较，
+    立刻用 <code>transform</code> 把它“推回”旧位置（Invert），再动画到 <code>transform: none</code>（Play）。
+    因为只动画 <code>transform</code>，性能很好。
+  </p>
+</div>
+
+<p>下面这个演示用的就是同样的写法，点牌出牌、点按钮抽牌，注意观察其余的牌如何补位：</p>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · AnimatePresence + layout + key</div>
+  <div class="body"><div id="demo-hand"><span class="muted">加载中……</span></div></div>
+</div>
+
+<h3>整手牌的 3D 翻转</h3>
+
+<p>浮层出现时整手牌要隐藏，用同样的方式给 <code>CardHand</code> 外面再包一层：</p>
+
+<div class="code" data-lang="jsx" data-file="src/components/Game.jsx（节选）"><pre>
+&lt;AnimatePresence&gt;
+  {!state.activeOverlay &amp;&amp; (
+    &lt;motion.div
+      key="hand"
+      style={{ transformOrigin: 'bottom center' }}
+      initial={{ opacity: 0, rotateX: 90 }}        // 像从桌上拿起一样，绕水平轴翻转
+      animate={{ opacity: 1, rotateX: 0 }}
+      exit={{ opacity: 0, rotateX: 90 }}
+      transition={{ duration: 0.8, ease: [0.08, 0.74, 0.34, 1] }}
+    &gt;
+      &lt;CardHand cards={player.hand} onCardPlay={handlePlayCard} onCardLeaveEnd={handleCardLeaveEnd} /&gt;
+    &lt;/motion.div&gt;
+  )}
+&lt;/AnimatePresence&gt;
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 纯 CSS 也能做简单动画</div>
+  <p>
+    只是进入动画的话，用 CSS 的 <code>@keyframes</code> 或 <code>transition</code> 就够了；难的是离开动画和列表补位，这才是 Motion 的价值所在。
+    另外，浏览器原生的 View Transitions API 也越来越成熟，React 也在为它提供官方支持，值得关注。
+  </p>
+</div>
+
+<h2 id="overlays">浮层：children 与动态组件</h2>
+
+<h3>children：让组件接收任意内容</h3>
+
+<p>三种浮层的布局和点击行为相同，只是内容不同。我们希望这样使用：</p>
+
+<div class="code" data-lang="jsx"><pre>
+&lt;GameOverlay onClose={...}&gt;
+  &lt;PlayerTurn player={...} /&gt;
+&lt;/GameOverlay&gt;
+</pre></div>
+
+<p>写在组件标签中间的内容，会作为一个特殊的 prop —— <code>children</code> —— 传给组件：</p>
+
+<div class="code" data-lang="jsx" data-file="src/components/GameOverlay.jsx"><pre>
+import { motion } from 'motion/react'
+
+export default function GameOverlay({ children, onClose }) {
+  return (
+    &lt;motion.div
+      className="overlay"
+      onClick={onClose}
+      initial={{ opacity: 0, scale: 0.7 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.7 }}
+      transition={{ duration: 0.3 }}
+    &gt;
+      &lt;div className="content"&gt;{children}&lt;/div&gt;
+    &lt;/motion.div&gt;
+  )
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="children：父组件写在标签中间的内容被放到子组件的指定位置">
+  <rect class="bx-a" x="20" y="40" width="220" height="140" rx="12"/>
+  <text class="ttl on-a" x="130" y="64" text-anchor="middle">父组件这样写</text>
+  <text class="mono sm" x="40" y="96">&lt;GameOverlay&gt;</text>
+  <rect class="bx-b" x="52" y="106" width="170" height="30" rx="6"/>
+  <text class="mono sm on-b" x="137" y="126" text-anchor="middle">&lt;PlayerTurn … /&gt;</text>
+  <text class="mono sm" x="40" y="160">&lt;/GameOverlay&gt;</text>
+  <rect class="bx-g" x="290" y="40" width="200" height="140" rx="12"/>
+  <text class="ttl on-g" x="390" y="64" text-anchor="middle">子组件</text>
+  <text class="mono sm" x="306" y="92">&lt;div className="overlay"&gt;</text>
+  <text class="mono sm" x="318" y="114">&lt;div className="content"&gt;</text>
+  <rect class="bx-d" x="330" y="122" width="130" height="26" rx="6"/>
+  <text class="mono sm" x="395" y="140" text-anchor="middle">{children}</text>
+  <rect class="bx" x="540" y="40" width="200" height="140" rx="12"/>
+  <text class="ttl" x="640" y="64" text-anchor="middle">最终结果</text>
+  <text class="mono sm" x="556" y="92">&lt;div class="overlay"&gt;</text>
+  <text class="mono sm" x="568" y="114">&lt;div class="content"&gt;</text>
+  <rect class="bx-b" x="580" y="122" width="140" height="26" rx="6"/>
+  <text class="sm on-b" x="650" y="140" text-anchor="middle">PlayerTurn 的内容</text>
+  <path class="ln-b" d="M224 121 C270 121 290 135 326 135" marker-end="url(#ar)"/>
+  <path class="ln" d="M492 110 H536" marker-end="url(#ar)"/>
+  <text class="lbl" x="380" y="214" text-anchor="middle">children 可以是文字、元素、组件，甚至一个函数（render props，第 6 章会用到）</text>
+</svg>
+<figcaption>图 3-10　children：父组件决定“放什么”，子组件决定“放在哪”</figcaption>
+</figure>
+
+<h3>三种浮层内容</h3>
+
+<div class="code" data-lang="jsx" data-file="src/components/overlays.jsx"><pre>
+import GameCard from './GameCard.jsx'
+import { cardsById } from '../cards.js'
+
+export function PlayerTurn({ player }) {
+  return (
+    &lt;div&gt;
+      &lt;div className="big"&gt;
+        {player.name}，&lt;br /&gt;{player.skipTurn ? '你的回合被跳过了！' : '轮到你了！'}
+      &lt;/div&gt;
+      &lt;div&gt;点击继续&lt;/div&gt;
+    &lt;/div&gt;
+  )
+}
+
+export function LastPlay({ opponent }) {
+  if (opponent.skippedTurn) return &lt;div&gt;{opponent.name} 的回合被跳过了！&lt;/div&gt;
+  return (
+    &lt;div&gt;
+      &lt;div&gt;{opponent.name} 刚刚打出了：&lt;/div&gt;
+      &lt;GameCard def={cardsById[opponent.lastPlayedCardId]} /&gt;
+    &lt;/div&gt;
+  )
+}
+
+function PlayerResult({ player }) {
+  const result = player.dead ? 'defeated' : 'victorious'
+  return (
+    &lt;div className={`player-result ${result}`}&gt;
+      &lt;span className="name"&gt;{player.name}&lt;/span&gt;
+      &lt;span className="result"&gt;{player.dead ? '战败' : '胜利'}&lt;/span&gt;
+    &lt;/div&gt;
+  )
+}
+
+export function GameOver({ players }) {
+  return (
+    &lt;div&gt;
+      &lt;div className="big"&gt;游戏结束&lt;/div&gt;
+      {players.map((p) =&gt; &lt;PlayerResult key={p.name} player={p} /&gt;)}
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<p><code>LastPlay</code> 直接复用了 <code>GameCard</code> 组件；它在这里不需要 <code>onPlay</code>，不传就是 <code>undefined</code>，点击时什么也不发生。</p>
+
+<h3>动态组件：用一个映射表</h3>
+
+<p>根据 <code>activeOverlay</code> 显示不同的内容。与其写三个条件判断，不如用一个“名字 → 组件”的对象，把组件赋给一个<strong>首字母大写</strong>的变量：</p>
+
+<div class="code" data-lang="jsx"><pre>
+import { PlayerTurn, LastPlay, GameOver } from './overlays.jsx'
+
+const overlays = {
+  'player-turn': PlayerTurn,
+  'last-play': LastPlay,
+  'game-over': GameOver,
+}
+
+// 在 Game 组件里：
+const OverlayContent = overlays[state.activeOverlay]   // 大写开头，JSX 才会把它当组件
+</pre></div>
+
+<div class="code" data-lang="jsx"><pre>
+&lt;AnimatePresence&gt;
+  {state.activeOverlay &amp;&amp; (
+    &lt;GameOverlay key={state.activeOverlay} onClose={handleOverlayClose}&gt;
+      &lt;OverlayContent player={player} opponent={opponent} players={state.players} /&gt;
+    &lt;/GameOverlay&gt;
+  )}
+&lt;/AnimatePresence&gt;
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="根据 activeOverlay 从映射表取出组件并渲染">
+  <rect class="bx-b" x="20" y="76" width="170" height="60" rx="10"/>
+  <text class="mono sm on-b" x="105" y="100" text-anchor="middle">state.activeOverlay</text>
+  <text class="mono" x="105" y="122" text-anchor="middle">'last-play'</text>
+  <rect class="bx-a" x="250" y="70" width="210" height="72" rx="12"/>
+  <text class="mono sm on-a" x="355" y="98" text-anchor="middle">overlays[…]</text>
+  <text class="mono sm on-a" x="355" y="120" text-anchor="middle">→ &lt;OverlayContent /&gt;</text>
+  <path class="ln-b" d="M192 106 H246" marker-end="url(#ar)"/>
+  <rect class="bx" x="530" y="20" width="210" height="44" rx="8"/>
+  <text class="mono sm" x="635" y="47" text-anchor="middle">PlayerTurn</text>
+  <rect class="bx-g" x="530" y="84" width="210" height="44" rx="8" style="stroke-width:2.2"/>
+  <text class="mono sm on-g" x="635" y="111" text-anchor="middle">LastPlay ✓</text>
+  <rect class="bx" x="530" y="148" width="210" height="44" rx="8"/>
+  <text class="mono sm" x="635" y="175" text-anchor="middle">GameOver</text>
+  <path class="ln-d" d="M462 96 L526 44"/>
+  <path class="ln-g" d="M462 106 H526" marker-end="url(#ar)"/>
+  <path class="ln-d" d="M462 116 L526 168"/>
+</svg>
+<figcaption>图 3-11　组件也是普通的值，可以放进对象里</figcaption>
+</figure>
+
+<div class="box key">
+  <div class="t">&#9733; 又见 key：强制“换一个新的”</div>
+  <p>
+    <code>&lt;GameOverlay key={state.activeOverlay}&gt;</code> 的 key 很关键：从 “player-turn” 切到 “last-play” 时 key 变了，
+    React 会把它当成<strong>两个不同的元素</strong> —— 旧浮层播放离开动画，新浮层播放进入动画。没有 key，React 只会就地更新内容，不会有切换动画。
+    “改变 key 来重置一个组件”是 React 里很常用的技巧。
+  </p>
+</div>
+
+<p>半透明背景单独放在外面淡入淡出，否则会跟着浮层一起缩放：</p>
+
+<div class="code" data-lang="jsx"><pre>
+&lt;AnimatePresence&gt;
+  {state.activeOverlay &amp;&amp; (
+    &lt;motion.div key="bg" className="overlay-background"
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} /&gt;
+  )}
+&lt;/AnimatePresence&gt;
+</pre></div>
+
+<h2 id="world">游戏世界</h2>
+
+<h3>自定义 Hook：窗口缩放比例</h3>
+
+<p>
+  场景中所有尺寸都要乘以一个随窗口宽度变化的比例。这需要监听 <code>resize</code> 事件 —— 一个典型的副作用。
+  把“状态 + effect”打包成一个以 <code>use</code> 开头的函数，就是<strong>自定义 Hook</strong>：
+</p>
+
+<div class="code" data-lang="js" data-file="src/hooks.js"><pre>
+import { useState, useEffect } from 'react'
+
+const getWorldRatio = () =&gt; window.innerWidth / 1920
+
+export function useWorldRatio() {
+  const [ratio, setRatio] = useState(getWorldRatio)
+
+  useEffect(() =&gt; {
+    const onResize = () =&gt; setRatio(getWorldRatio())
+    window.addEventListener('resize', onResize)
+    return () =&gt; window.removeEventListener('resize', onResize)   // 清理！
+  }, [])
+
+  return ratio
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; 自定义 Hook 共享的是逻辑，不是状态</div>
+  <p>
+    每个调用 <code>useWorldRatio()</code> 的组件都会得到<strong>自己的一份</strong>状态和监听器。自定义 Hook 只是复用了“怎么做”。
+    要让多个组件共享<em>同一份</em>数据，要么由父组件传 props，要么用 Context（下面马上用到）或状态管理库（第 6 章）。
+  </p>
+</div>
+
+<h3>Context：跨层级传递数据</h3>
+
+<p>
+  比例要用在很深的 <code>StatBubble</code> 组件里。一层层通过 props 传（Game → World → Castle → CastleBanners → StatBubble），中间的组件根本不关心它，这叫“prop drilling”。
+  <strong>Context</strong> 可以让祖先组件直接“广播”一个值，任意深度的后代都能读取：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="Context：Provider 提供值，任意深度的后代用 useContext 读取">
+  <rect class="bx-a" x="270" y="14" width="220" height="50" rx="10"/>
+  <text class="ttl on-a" x="380" y="36" text-anchor="middle">Game</text>
+  <text class="mono sm" x="380" y="54" text-anchor="middle">&lt;WorldRatio value={ratio}&gt;</text>
+  <path class="ln" d="M380 66 V84"/>
+  <rect class="bx" x="320" y="86" width="120" height="30" rx="8"/><text class="sm" x="380" y="106" text-anchor="middle">World</text>
+  <path class="ln" d="M380 118 V136"/>
+  <rect class="bx" x="320" y="138" width="120" height="30" rx="8"/><text class="sm" x="380" y="158" text-anchor="middle">Castle</text>
+  <path class="ln" d="M380 170 V188"/>
+  <rect class="bx" x="300" y="190" width="160" height="30" rx="8"/><text class="sm" x="380" y="210" text-anchor="middle">CastleBanners</text>
+  <rect class="bx-g" x="540" y="182" width="200" height="44" rx="8"/>
+  <text class="sm on-g" x="640" y="200" text-anchor="middle">StatBubble</text>
+  <text class="mono sm" x="640" y="218" text-anchor="middle">useContext(WorldRatio)</text>
+  <path class="ln" d="M462 205 H536"/>
+  <path class="ln-a" d="M492 40 C660 40 680 120 650 178" marker-end="url(#ar-a)" style="stroke-dasharray:5 4"/>
+  <text class="halo sm on-a" x="600" y="100">直达，中间层不用管</text>
+  <text class="sm" x="20" y="120">中间的组件</text>
+  <text class="sm" x="20" y="138">不需要再转发 props</text>
+</svg>
+<figcaption>图 3-12　Context 跨越组件层级传值</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="src/hooks.js"><pre>
+import { createContext, useContext } from 'react'
+
+export const WorldRatio = createContext(1)       // 参数是默认值
+
+export const useRatio = () =&gt; useContext(WorldRatio)
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="Game.jsx 中"><pre>
+const ratio = useWorldRatio()
+
+return (
+  &lt;WorldRatio value={ratio}&gt;      {/* React 19：直接用 Context 本身作为 Provider */}
+    ...
+  &lt;/WorldRatio&gt;
+)
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 别滥用 Context</div>
+  <p>Context 的值一变，所有读取它的组件都会重新渲染。适合“很多地方都要用、但不常变”的数据：主题、语言、当前用户、这里的缩放比例。频繁变化的复杂状态更适合状态管理库。</p>
+</div>
+
+<h3>城堡、气泡与旗帜</h3>
+
+<div class="code" data-lang="jsx" data-file="src/components/World.jsx"><pre>
+import { useRatio } from '../hooks.js'
+import { maxFood, maxHealth } from '../game.js'
+import BannerBar from './BannerBar.jsx'
+import Cloud from './Cloud.jsx'
+
+function StatBubble({ type, value, ratio }) {
+  const worldRatio = useRatio()
+  return (
+    &lt;div className={`stat-bubble ${type}-bubble`}
+         style={{ top: (ratio * 220 + 40) * worldRatio }}&gt;   {/* 数字会被当成 px */}
+      &lt;img src={`/svg/${type}-bubble.svg`} /&gt;
+      &lt;div className="counter"&gt;{value}&lt;/div&gt;
+    &lt;/div&gt;
+  )
+}
+
+function CastleBanners({ player }) {
+  const foodRatio = player.food / maxFood
+  const healthRatio = player.health / maxHealth
+  return (
+    &lt;div className="banners"&gt;
+      &lt;img className="food-icon" src="/svg/food-icon.svg" /&gt;
+      &lt;StatBubble type="food" value={player.food} ratio={foodRatio} /&gt;
+      &lt;BannerBar className="food-bar" color="#288339" ratio={foodRatio} /&gt;
+
+      &lt;img className="health-icon" src="/svg/health-icon.svg" /&gt;
+      &lt;StatBubble type="health" value={player.health} ratio={healthRatio} /&gt;
+      &lt;BannerBar className="health-bar" color="#9b2e2e" ratio={healthRatio} /&gt;
+    &lt;/div&gt;
+  )
+}
+
+function Castle({ player, index }) {
+  return (
+    &lt;div className={`castle player-${index}`}&gt;
+      &lt;img className="building" src={`/svg/castle${index}.svg`} /&gt;
+      &lt;img className="ground" src={`/svg/ground${index}.svg`} /&gt;
+      &lt;CastleBanners player={player} /&gt;
+    &lt;/div&gt;
+  )
+}
+
+export default function World({ players }) {
+  return (
+    &lt;div className="world"&gt;
+      {players.map((player, index) =&gt; &lt;Castle key={index} player={player} index={index} /&gt;)}
+      &lt;div className="land" /&gt;
+      &lt;div className="clouds"&gt;
+        {Array.from({ length: 10 }, (_, i) =&gt; &lt;Cloud key={i} type={(i % 5) + 1} /&gt;)}
+      &lt;/div&gt;
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; style 是一个对象</div>
+  <p>JSX 的 <code>style</code> 接收对象，属性名用驼峰（<code>zIndex</code>、<code>fontSize</code>），数值会被自动加上 <code>px</code>（<code>opacity</code>、<code>zIndex</code> 等无单位属性除外）。</p>
+</div>
+
+<h3>会伸缩的旗帜：动态 SVG + 自定义动画 Hook</h3>
+
+<p>旗帜的长度随数值变化，所以直接在 JSX 里写 SVG，路径由数据生成：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="旗帜 SVG 路径的各段">
+  <path d="M120 30 H180 V160 L150 130 L120 160 Z" style="fill:var(--green-bg);stroke:var(--green);stroke-width:2"/>
+  <circle cx="120" cy="30" r="4" style="fill:var(--accent)"/><text class="mono sm on-a" x="110" y="24" text-anchor="end">① m 0,0</text>
+  <circle cx="180" cy="30" r="4" style="fill:var(--accent)"/><text class="mono sm on-a" x="190" y="24">② 向右 20</text>
+  <circle cx="180" cy="160" r="4" style="fill:var(--accent)"/><text class="mono sm on-a" x="190" y="164">③ 向下 height</text>
+  <circle cx="150" cy="130" r="4" style="fill:var(--accent)"/><text class="mono sm on-a" x="150" y="186" text-anchor="middle">④ 左上 10,10　⑤ 左下 10,10</text>
+  <circle cx="120" cy="160" r="4" style="fill:var(--accent)"/>
+  <text class="mono sm on-a" x="110" y="164" text-anchor="end">z 闭合</text>
+  <text class="ttl" x="380" y="60">d={`m 0,0 20,0 0,${height} -10,-10 -10,10 z`}</text>
+  <text class="sm" x="380" y="90">粮食减少 → ratio 变小 → height 变小</text>
+  <text class="sm" x="380" y="112">→ 组件重新渲染 → path 的 d 属性更新 → 旗帜变短</text>
+  <text class="sm" x="380" y="144">SVG 元素在 JSX 里和 HTML 元素写法一样，</text>
+  <text class="sm" x="380" y="166">只是属性名同样要驼峰：strokeWidth、viewBox</text>
+</svg>
+<figcaption>图 3-13　一笔画出带缺口的旗帜</figcaption>
+</figure>
+
+<p>为了让旗帜平滑伸缩，我们写一个自定义 Hook：输入目标值，输出一个“逐帧逼近目标”的当前值：</p>
+
+<div class="code" data-lang="js" data-file="src/hooks.js"><pre>
+import { useState, useEffect, useRef } from 'react'
+
+const easeInOutCubic = (t) =&gt; t &lt; .5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2
+
+// 当 target 变化时，在 duration 毫秒内把返回值平滑地过渡到新目标
+export function useTween(target, duration = 500) {
+  const [value, setValue] = useState(target)
+  const valueRef = useRef(target)          // 记住“当前显示到哪了”，不触发渲染
+
+  useEffect(() =&gt; {
+    const from = valueRef.current
+    const start = performance.now()
+    let frame
+    function tick(now) {
+      const t = Math.min((now - start) / duration, 1)
+      const v = from + (target - from) * easeInOutCubic(t)
+      valueRef.current = v
+      setValue(v)
+      if (t &lt; 1) frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+    return () =&gt; cancelAnimationFrame(frame)   // target 又变了或组件卸载：停掉旧动画
+  }, [target, duration])
+
+  return value
+}
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="src/components/BannerBar.jsx"><pre>
+import { useTween } from '../hooks.js'
+
+export default function BannerBar({ color, ratio, className }) {
+  const height = Math.round(useTween(220 * ratio + 40))
+  return (
+    &lt;svg className={className} viewBox="0 0 20 260"&gt;
+      &lt;path d={`m 0,0 20,0 0,${height} -10,-10 -10,10 z`} style={{ fill: color, stroke: 'none' }} /&gt;
+    &lt;/svg&gt;
+  )
+}
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 用 Motion 一行搞定</div>
+  <p>
+    Motion 可以直接对 SVG 路径做补间：<code>&lt;motion.path animate={{ d: path }} transition={{ duration: 0.5 }} /&gt;</code>，
+    只要前后路径的结构（命令和数字个数）相同即可。自己写一遍 <code>useTween</code>，是为了理解“动画 = 每帧算一个中间值”。
+  </p>
+</div>
+
+<h3>飘动的云：useRef 与高频动画</h3>
+
+<p>
+  云要从左到右匀速飘动，每秒更新 60 次位置。如果每一帧都 <code>setState</code>，组件每秒要重新渲染 60 次 —— 十朵云就是 600 次，完全没有必要。
+  更好的办法是用 <code>useRef</code> 拿到 DOM 元素，<strong>直接修改它的 style</strong>，完全绕过 React 的渲染：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="useRef 拿到 DOM 元素，动画循环直接修改 style 而不触发重新渲染">
+  <rect class="bx-r" x="20" y="30" width="330" height="170" rx="12"/>
+  <text class="ttl on-r" x="185" y="56" text-anchor="middle">✗ 每帧 setState</text>
+  <text class="mono sm" x="40" y="86">setX(x + 1)  // 每秒 60 次</text>
+  <text class="sm" x="40" y="114">→ 调用组件函数 → 生成 JSX</text>
+  <text class="sm" x="40" y="136">→ 比较差异 → 更新 DOM</text>
+  <text class="sm on-r" x="40" y="172">大量没必要的工作</text>
+
+  <rect class="bx-g" x="410" y="30" width="330" height="170" rx="12"/>
+  <text class="ttl on-g" x="575" y="56" text-anchor="middle">✓ useRef + 直接改 DOM</text>
+  <text class="mono sm" x="430" y="86">const el = useRef(null)</text>
+  <text class="mono sm" x="430" y="108">&lt;div ref={el}&gt;</text>
+  <text class="mono sm" x="430" y="130">el.current.style.transform = …</text>
+  <text class="sm on-g" x="430" y="172">组件只渲染一次，动画不经过 React</text>
+</svg>
+<figcaption>图 3-14　高频动画不要走 React 的渲染流程</figcaption>
+</figure>
+
+<div class="code" data-lang="jsx" data-file="src/components/Cloud.jsx"><pre>
+import { useRef, useEffect } from 'react'
+
+const durations = { min: 10000, max: 50000 }   // 10 ~ 50 秒飘过屏幕
+
+export default function Cloud({ type }) {
+  const el = useRef(null)    // 渲染后 el.current 就是那个 div
+
+  useEffect(() =&gt; {
+    const node = el.current
+    let frame, start, duration, top
+
+    function startAnimation(delay) {
+      duration = Math.random() * (durations.max - durations.min) + durations.min
+      top = Math.random() * window.innerHeight * 0.3
+      node.style.zIndex = Math.round(durations.max - duration)   // 越快越靠前
+      start = performance.now() + delay
+      frame = requestAnimationFrame(tick)
+    }
+
+    function tick(now) {
+      const width = node.clientWidth
+      const t = Math.max((now - start) / duration, 0)
+      const x = -width + (window.innerWidth + width) * t
+      node.style.transform = `translate(${x}px, ${top}px)`
+      if (t &lt; 1) frame = requestAnimationFrame(tick)
+      else startAnimation(Math.random() * 10000)                 // 飘出屏幕后，随机等一会儿再来
+    }
+
+    // 负的延迟 = 动画已经进行了一段时间，开局时云就分散在天空中
+    startAnimation(-Math.random() * durations.min)
+    return () =&gt; cancelAnimationFrame(frame)
+  }, [])
+
+  return (
+    &lt;div ref={el} className={`cloud cloud-${type}`}&gt;
+      &lt;img src={`/svg/cloud${type}.svg`} /&gt;
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<div class="box key">
+  <div class="t">&#9733; ref 和 state 的区别</div>
+  <p>
+    <code>useRef</code> 返回一个 <code>{ current }</code> 盒子，在多次渲染之间保持不变。修改 <code>ref.current</code> <strong>不会</strong>触发重新渲染。
+    用途有二：① 通过 <code>ref={el}</code> 拿到 DOM 元素；② 存一些“需要记住、但不影响界面”的值（定时器 id、上一次的值，比如上面 <code>useTween</code> 里的 <code>valueRef</code>）。
+    规则：不要在渲染过程中读写 <code>ref.current</code>，只在 effect 和事件处理函数里用。
+  </p>
+</div>
+
+<h2 id="gameplay">组装：Game 组件</h2>
+
+<p>最后把所有东西拼起来。先看一遍回合流程中各个 action 的先后顺序：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 330" role="img" aria-label="一个回合中 action 的触发顺序">
+  <rect class="bx-r" x="20" y="20" width="200" height="50" rx="10"/>
+  <text class="on-r" x="120" y="42" text-anchor="middle">浮层“轮到你了”</text>
+  <text class="sm" x="120" y="60" text-anchor="middle">点击 → overlayClosed</text>
+  <path class="ln" d="M222 45 H266" marker-end="url(#ar)"/>
+  <rect class="bx-r" x="270" y="20" width="200" height="50" rx="10"/>
+  <text class="on-r" x="370" y="42" text-anchor="middle">浮层“对手出了什么”</text>
+  <text class="sm" x="370" y="60" text-anchor="middle">点击 → overlayClosed</text>
+  <path class="ln" d="M472 45 H516" marker-end="url(#ar)"/>
+  <rect class="bx-b" x="520" y="20" width="220" height="50" rx="10"/>
+  <text class="on-b" x="630" y="42" text-anchor="middle">newTurn：pendingDraw = true</text>
+  <text class="sm" x="630" y="60" text-anchor="middle">（第 1、2 回合直接 canPlay）</text>
+
+  <path class="ln" d="M630 72 V106" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="500" y="110" width="240" height="56" rx="10"/>
+  <text class="on-a" x="620" y="132" text-anchor="middle">useEffect 看到 pendingDraw</text>
+  <text class="sm" x="620" y="152" text-anchor="middle">800ms 后 dispatch(cardDrawn)</text>
+
+  <path class="ln" d="M498 138 H454" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="250" y="110" width="200" height="56" rx="10"/>
+  <text class="on-g" x="350" y="132" text-anchor="middle">玩家点击一张牌</text>
+  <text class="mono sm" x="350" y="152" text-anchor="middle">dispatch(cardPlayed)</text>
+
+  <path class="ln" d="M350 168 V202" marker-end="url(#ar)"/>
+  <rect class="bx" x="230" y="206" width="240" height="56" rx="10"/>
+  <text x="350" y="228" text-anchor="middle">出牌动画结束</text>
+  <text class="mono sm" x="350" y="248" text-anchor="middle">onExitComplete → cardApplied</text>
+
+  <path class="ln" d="M228 234 H184" marker-end="url(#ar)"/>
+  <rect class="bx-p" x="20" y="206" width="160" height="56" rx="10"/>
+  <text class="on-p" x="100" y="228" text-anchor="middle">700ms 后</text>
+  <text class="mono sm" x="100" y="248" text-anchor="middle">turnEnded</text>
+
+  <path class="ln-r" d="M60 264 V300 H306" marker-end="url(#ar)"/>
+  <text class="halo sm on-r" x="72" y="294">有人阵亡 → game-over</text>
+  <path class="ln-a" d="M120 204 V72" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="130" y="150">否则 nextTurn：换人</text>
+  <rect class="bx-r" x="310" y="282" width="220" height="36" rx="8"/>
+  <text class="sm on-r" x="420" y="305" text-anchor="middle">游戏结束浮层 · 点击 → restarted</text>
+</svg>
+<figcaption>图 3-15　一个回合中 action 的顺序</figcaption>
+</figure>
+
+<div class="code" data-lang="jsx" data-file="src/components/Game.jsx"><pre>
+import { useReducer, useEffect } from 'react'
+import { motion, AnimatePresence } from 'motion/react'
+import { gameReducer, createInitialState, currentPlayer, currentOpponent } from '../game.js'
+import { useWorldRatio, WorldRatio } from '../hooks.js'
+import TopBar from './TopBar.jsx'
+import World from './World.jsx'
+import CardHand from './CardHand.jsx'
+import GameOverlay from './GameOverlay.jsx'
+import { PlayerTurn, LastPlay, GameOver } from './overlays.jsx'
+
+const overlays = { 'player-turn': PlayerTurn, 'last-play': LastPlay, 'game-over': GameOver }
+
+export default function Game() {
+  // 第三个参数是初始化函数：只在第一次渲染时调用
+  const [state, dispatch] = useReducer(gameReducer, null, createInitialState)
+  const ratio = useWorldRatio()
+
+  const player = currentPlayer(state)
+  const opponent = currentOpponent(state)
+  const OverlayContent = overlays[state.activeOverlay]
+
+  // 回合开始后延迟抽牌
+  useEffect(() =&gt; {
+    if (!state.pendingDraw) return
+    const timer = setTimeout(() =&gt; dispatch({ type: 'cardDrawn', random: Math.random() }), 800)
+    return () =&gt; clearTimeout(timer)
+  }, [state.pendingDraw])
+
+  function handlePlayCard(card) {
+    dispatch({ type: 'cardPlayed', card })
+  }
+
+  function handleCardLeaveEnd() {
+    if (!state.playingCard) return
+    dispatch({ type: 'cardApplied' })
+    setTimeout(() =&gt; dispatch({ type: 'turnEnded' }), 700)   // 让玩家看清发生了什么
+  }
+
+  function handleOverlayClose() {
+    if (state.activeOverlay === 'game-over') dispatch({ type: 'restarted' })
+    else dispatch({ type: 'overlayClosed' })
+  }
+
+  return (
+    &lt;WorldRatio value={ratio}&gt;
+      &lt;div className={`game ${state.canPlay ? 'can-play' : ''}`}&gt;
+        &lt;TopBar players={state.players} currentPlayerIndex={state.currentPlayerIndex} turn={state.turn} /&gt;
+        &lt;World players={state.players} /&gt;
+
+        &lt;AnimatePresence&gt;
+          {!state.activeOverlay &amp;&amp; (
+            &lt;motion.div key="hand" style={{ transformOrigin: 'bottom center' }}
+                        initial={{ opacity: 0, rotateX: 90 }} animate={{ opacity: 1, rotateX: 0 }}
+                        exit={{ opacity: 0, rotateX: 90 }} transition={{ duration: 0.8 }}&gt;
+              &lt;CardHand cards={player.hand} onCardPlay={handlePlayCard} onCardLeaveEnd={handleCardLeaveEnd} /&gt;
+            &lt;/motion.div&gt;
+          )}
+        &lt;/AnimatePresence&gt;
+
+        &lt;AnimatePresence&gt;
+          {state.activeOverlay &amp;&amp; (
+            &lt;motion.div key="bg" className="overlay-background"
+                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} /&gt;
+          )}
+        &lt;/AnimatePresence&gt;
+
+        &lt;AnimatePresence&gt;
+          {state.activeOverlay &amp;&amp; (
+            &lt;GameOverlay key={state.activeOverlay} onClose={handleOverlayClose}&gt;
+              &lt;OverlayContent player={player} opponent={opponent} players={state.players} /&gt;
+            &lt;/GameOverlay&gt;
+          )}
+        &lt;/AnimatePresence&gt;
+      &lt;/div&gt;
+    &lt;/WorldRatio&gt;
+  )
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">&#9432; can-play 类名</div>
+  <p>样式表里，只有根元素带有 <code>can-play</code> 类时，手牌才响应鼠标。动画和等待期间 <code>canPlay</code> 为 false，玩家无法连点作弊 —— reducer 里也有一道同样的检查，双保险。</p>
+</div>
+
+<div class="box tip">
+  <div class="t">&#10003; 重新开始不用刷新页面</div>
+  <p>原书在游戏结束后用 <code>location.reload()</code> 重新开始。有了 reducer，只需 dispatch 一个 <code>restarted</code> action 返回全新的初始状态即可。</p>
+</div>
+
+<p>游戏完成了！找个朋友来一局吧。</p>
+
+<h2 id="summary">小结</h2>
+
+<div class="tw"><table>
+<thead><tr><th>主题</th><th>React 写法</th></tr></thead>
+<tbody>
+<tr><td>组件</td><td>大写开头的函数，返回 JSX</td></tr>
+<tr><td>父传子</td><td>props（只读）</td></tr>
+<tr><td>子传父</td><td>回调 prop：<code>onPlay={() =&gt; …}</code></td></tr>
+<tr><td>内容分发</td><td><code>children</code></td></tr>
+<tr><td>动态组件</td><td>映射表 + 大写变量：<code>const C = map[name]; &lt;C /&gt;</code></td></tr>
+<tr><td>复杂状态</td><td><code>useReducer</code>（纯函数）+ Immer 的 <code>produce</code></td></tr>
+<tr><td>跨层级数据</td><td><code>createContext</code> + <code>useContext</code></td></tr>
+<tr><td>复用逻辑</td><td>自定义 Hook：<code>useWorldRatio</code>、<code>useTween</code></td></tr>
+<tr><td>进出场 / 列表动画</td><td>Motion：<code>AnimatePresence</code>、<code>initial/animate/exit</code>、<code>layout</code></td></tr>
+<tr><td>重置组件 / 触发切换动画</td><td>改变 <code>key</code></td></tr>
+<tr><td>访问 DOM、不触发渲染的值</td><td><code>useRef</code></td></tr>
+</tbody>
+</table></div>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>给 <code>GameCard</code> 加上键盘支持：<code>tabIndex={0}</code>，按回车时也调用 <code>onPlay</code>。</li>
+    <li>在顶栏显示抽牌堆剩余的张数（派生数据：对 <code>state.drawPile</code> 求和）。</li>
+    <li>给气泡里的数字也用 <code>useTween</code> 做补间，让 10 → 7 时数字逐渐减少。</li>
+    <li>给 <code>gameReducer</code> 写一个测试：传入固定的 <code>random</code>，断言抽到的是哪张牌（第 7 章会学 Vitest）。</li>
+    <li>添加一张新卡牌“丰收”：获得 4 点粮食，对手获得 1 点粮食。只需要改 <code>cards.js</code>。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+<script type="module">
+  import { createElement, useState } from 'react'
+  import { createRoot } from 'react-dom/client'
+  import { motion, AnimatePresence } from 'motion/react'
+  import htm from 'htm'
+  const html = htm.bind(createElement)
+  const defs = [
+    { title: '投石机', type: 'attack' }, { title: '长枪兵', type: 'attack' },
+    { title: '修缮', type: 'support' }, { title: '粮仓', type: 'support' },
+    { title: '火球', type: 'special' }, { title: '诅咒', type: 'special' },
+  ]
+  let uid = 0
+  const pick = () => ({ ...defs[Math.floor(Math.random() * defs.length)], uid: uid++ })
+  const init = Array.from({ length: 5 }, pick)
+
+  function Demo() {
+    const [hand, setHand] = useState(init)
+    const [show, setShow] = useState(true)
+    const [log, setLog] = useState('点击一张牌把它打出去')
+    const play = (c) => { setHand(hand.filter((x) => x.uid !== c.uid)); setLog(`打出了 uid ${c.uid}（${c.title}）……`) }
+    const draw = () => { setHand([...hand, pick()]); setLog('抽了一张：从右侧滑入（initial → animate）') }
+    return html`<div>
+      <div style=${{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+        <button onClick=${draw} disabled=${!show || hand.length >= 7}>抽一张</button>
+        <button className="ghost" onClick=${() => setShow(!show)}>${show ? '显示浮层（隐藏手牌）' : '关闭浮层（显示手牌）'}</button>
+      </div>
+      <div style=${{ minHeight: '140px', perspective: '800px' }}>
+        <${AnimatePresence}>
+          ${show && html`<${motion.div} key="hand" style=${{ transformOrigin: 'bottom center' }}
+              initial=${{ opacity: 0, rotateX: 90 }} animate=${{ opacity: 1, rotateX: 0 }} exit=${{ opacity: 0, rotateX: 90 }}
+              transition=${{ duration: 0.6 }}>
+            <div className="mini-hand">
+              <${AnimatePresence} mode="popLayout" onExitComplete=${() => setLog('↑ onExitComplete：出牌动画结束，可以结算效果了')}>
+                ${hand.map((c) => html`<${motion.div} key=${c.uid} layout
+                    className=${'mini-card type-' + c.type} onClick=${() => play(c)}
+                    initial=${{ opacity: 0, x: 100, scale: 0.8 }} animate=${{ opacity: 1, x: 0, scale: 1 }}
+                    exit=${{ opacity: 0, y: -120, scale: 1.4, transition: { duration: 0.8 } }}
+                    whileHover=${{ y: -8 }} transition=${{ duration: 0.3 }}>
+                  ${c.title}<small>uid ${c.uid}</small>
+                </${motion.div}>`)}
+              </${AnimatePresence}>
+            </div>
+          </${motion.div}>`}
+        </${AnimatePresence}>
+      </div>
+      <div className="demo-log">${log}</div>
+    </div>`
+  }
+  createRoot(document.getElementById('demo-hand')).render(html`<${Demo} />`)
+</script>
+</body>
+</html>

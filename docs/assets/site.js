@@ -33,7 +33,8 @@
       (part ? `<div class="part">${part}</div>` : '') +
       `<a class="ch${n === cur ? ' active' : ''}" href="${href(n)}"><span class="n">${n}</span><span>${t}</span></a>`
     );
-    side.innerHTML = brand + links.join('');
+    const sw = '<a class="switch" href="react/index.html">&#8644; 切换到 React 版教程</a>';
+    side.innerHTML = brand + sw + links.join('');
     const active = side.querySelector('a.ch.active');
     if (active) setTimeout(() => active.scrollIntoView({ block: 'center' }), 0);
   }

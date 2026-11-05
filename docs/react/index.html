@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>React 项目实战教程 · 用 6 个应用学会现代 React</title>
+<meta name="description" content="用 React 19 和最新生态（Vite、React Router 7、TanStack Query、Zustand、Motion、Vitest、Next.js）重做《Vue.js 2 Web Development Projects》中的六个项目。">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="assets/react.css">
+</head>
+<body data-chapter="0">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<div class="hero">
+  <span class="chapter-eyebrow">面向初学者的 8 章 + 附录</span>
+  <h1>React 项目实战：用 6 个应用学会现代 React</h1>
+  <p class="sub">
+    这套教程以 Packt 出版的《Vue.js 2 Web Development Projects》（Guillaume Chau 著）的六个项目为蓝本 ——
+    Markdown 笔记本、卡牌游戏、客服中心、地图博客、在线商店、实时仪表盘 ——
+    <strong>用 React 19 和它最新的生态重新实现了一遍</strong>。每个概念都从“为什么需要它”讲起，并配有大量示意图和在线演示。
+  </p>
+  <p style="margin-top:14px">
+    <span class="pill">React 19</span><span class="pill">Hooks</span><span class="pill">React Compiler</span>
+    <span class="pill">Vite</span><span class="pill">React Router 7</span><span class="pill">TanStack Query</span>
+    <span class="pill">Zustand</span><span class="pill">Motion</span><span class="pill">Vitest</span><span class="pill">Next.js</span><span class="pill">Meteor 3</span>
+  </p>
+  <p style="margin-top:10px"><a href="../index.html">&#8644; 同样的六个项目也有 Vue 3 版本</a></p>
+</div>
+
+<h2 id="why">为什么用这六个项目学 React</h2>
+
+<p>
+  原书的项目设计得很好：每个项目都是一个完整、有趣的应用，难度逐级上升，新概念总是在“恰好需要它”的时候出现。
+  这些项目要解决的问题 —— 组件化、表单、路由、登录、全局状态、地图、测试、国际化、服务端渲染、实时数据 —— 和框架无关，
+  所以非常适合拿来学习 React 和它的生态。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 346" role="img" aria-label="六个项目由浅入深的阶梯式学习路线">
+  <rect class="bx-g" x="20" y="220" width="112" height="74" rx="10"/>
+  <text class="sm on-g" x="76" y="240" text-anchor="middle">第 2 章 · 项目一</text>
+  <text class="ttl" x="76" y="262" text-anchor="middle" style="font-size:12px">Markdown 笔记本</text>
+  <text class="sm" x="76" y="282" text-anchor="middle">状态 · 副作用</text>
+  <path class="ln-d" d="M20 300 H132"/>
+  <rect class="bx-g" x="142" y="182" width="112" height="74" rx="10"/>
+  <text class="sm on-g" x="198" y="202" text-anchor="middle">第 3 章 · 项目二</text>
+  <text class="ttl" x="198" y="224" text-anchor="middle">城堡决斗卡牌</text>
+  <text class="sm" x="198" y="244" text-anchor="middle">组件 · 动画</text>
+  <path class="ln-d" d="M142 262 H254"/>
+  <rect class="bx-b" x="264" y="144" width="112" height="74" rx="10"/>
+  <text class="sm on-b" x="320" y="164" text-anchor="middle">第 4–5 章 · 项目三</text>
+  <text class="ttl" x="320" y="186" text-anchor="middle">客服支持中心</text>
+  <text class="sm" x="320" y="206" text-anchor="middle">Vite · 路由</text>
+  <path class="ln-d" d="M264 224 H376"/>
+  <rect class="bx-p" x="386" y="106" width="112" height="74" rx="10"/>
+  <text class="sm on-p" x="442" y="126" text-anchor="middle">第 6 章 · 项目四</text>
+  <text class="ttl" x="442" y="148" text-anchor="middle">地理定位博客</text>
+  <text class="sm" x="442" y="168" text-anchor="middle">Zustand · 地图</text>
+  <path class="ln-d" d="M386 186 H498"/>
+  <rect class="bx-a" x="508" y="68" width="112" height="74" rx="10"/>
+  <text class="sm on-a" x="564" y="88" text-anchor="middle">第 7 章 · 项目五</text>
+  <text class="ttl" x="564" y="110" text-anchor="middle">在线商店</text>
+  <text class="sm" x="564" y="130" text-anchor="middle">测试 · Next.js</text>
+  <path class="ln-d" d="M508 148 H620"/>
+  <rect class="bx-r" x="630" y="30" width="112" height="74" rx="10"/>
+  <text class="sm on-r" x="686" y="50" text-anchor="middle">第 8 章 · 项目六</text>
+  <text class="ttl" x="686" y="72" text-anchor="middle">实时仪表盘</text>
+  <text class="sm" x="686" y="92" text-anchor="middle">Meteor 全栈</text>
+  <path class="ln-d" d="M630 110 H742"/>
+  <path class="ln-a" d="M20 336 H736" marker-end="url(#ar-a)"/>
+  <text class="sm" x="20" y="326">一个 HTML 文件</text>
+  <text class="sm" x="736" y="326" text-anchor="end">构建工具 → 路由 → 全局状态 → 测试 / 服务端组件 → 全栈实时</text>
+  <text class="lbl" x="20" y="30">第 1 章：先用 5 分钟认识 React</text>
+  <text class="lbl" x="20" y="50">附录：Vue ↔ React 对照表</text>
+</svg>
+<figcaption>图 0-1　六个项目，从简单到复杂</figcaption>
+</figure>
+
+<h2 id="stack">本教程使用的技术栈</h2>
+
+<div class="tw"><table>
+<thead><tr><th>用途</th><th>选择</th><th>章节</th></tr></thead>
+<tbody>
+<tr><td>UI 库</td><td>React 19（函数组件 + Hooks）</td><td>全部</td></tr>
+<tr><td>构建工具</td><td>Vite（第 1–2 章先用浏览器内编译）</td><td>3–4</td></tr>
+<tr><td>性能优化</td><td>React Compiler</td><td>4</td></tr>
+<tr><td>路由</td><td>React Router 7（数据模式）</td><td>5</td></tr>
+<tr><td>服务器数据</td><td>TanStack Query</td><td>5</td></tr>
+<tr><td>表单</td><td>React 19 Actions：<code>useActionState</code></td><td>5</td></tr>
+<tr><td>复杂局部状态</td><td><code>useReducer</code> + Immer</td><td>3</td></tr>
+<tr><td>全局状态</td><td>Zustand</td><td>6</td></tr>
+<tr><td>动画</td><td>Motion</td><td>3</td></tr>
+<tr><td>地图</td><td>react-leaflet + OpenStreetMap</td><td>6</td></tr>
+<tr><td>代码检查</td><td>ESLint 9 + eslint-plugin-react-hooks</td><td>7</td></tr>
+<tr><td>测试</td><td>Vitest + React Testing Library</td><td>7</td></tr>
+<tr><td>国际化</td><td>react-i18next</td><td>7</td></tr>
+<tr><td>SSR / 服务端组件</td><td>Next.js（App Router）</td><td>7</td></tr>
+<tr><td>实时全栈</td><td>Meteor 3 + react-meteor-data</td><td>8</td></tr>
+</tbody>
+</table></div>
+
+<h2 id="who">这套教程写给谁</h2>
+
+<ul>
+  <li><strong>会一点 HTML / CSS / JavaScript，想学 React</strong> 的人。第 1–2 章不需要安装任何东西，打开浏览器就能跟着做。</li>
+  <li><strong>学过 Vue、想上手 React</strong> 的人。同样的项目、同样的结构，可以和本站 Vue 版逐章对照；附录有一份完整的对照表。</li>
+  <li><strong>只看过老教程</strong>（class 组件、Create React App、Redux 样板代码）的人。这里全部是 2026 年的写法。</li>
+</ul>
+
+<div class="box note">
+  <div class="t">&#9432; 需要什么前置知识</div>
+  <p>
+    会用变量、函数、数组、对象就够了。箭头函数、解构、展开运算符、模板字符串、<code>async/await</code>、ES 模块会在用到时说明。
+    从第 3 章起需要安装 Node.js 并使用命令行。
+  </p>
+</div>
+
+<h2 id="how">怎么使用这套教程</h2>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#128214;</span><h4>按顺序读</h4><p>章节是递进的。特别是第 1–4 章打下的“纯函数、不可变更新、渲染原理”基础，后面每一章都会用到。</p></div>
+  <div class="card"><span class="ic">&#9000;&#65039;</span><h4>动手敲代码</h4><p>代码块右上角有“复制”按钮，但亲手敲一遍记得更牢。每章末尾有练习题。</p></div>
+  <div class="card"><span class="ic">&#128193;</span><h4>复用仓库素材</h4><p>仓库里的 <code>ChapterXX</code> 目录有原书的样式、图片、数据和服务端代码，可以直接拿来用。</p></div>
+  <div class="card"><span class="ic">&#9654;&#65039;</span><h4>在线演示</h4><p>第 1、2、3、4、8 章内嵌了可交互的小演示，直接在页面上就能玩。</p></div>
+</div>
+
+<div class="box note"><div class="t">&#9432; 说明</div><p>补充背景知识或细节。</p></div>
+<div class="box tip"><div class="t">&#10003; 技巧</div><p>更好的写法、实用的工具。</p></div>
+<div class="box warn"><div class="t">&#9888; 注意</div><p>常见的坑、过时的写法。</p></div>
+<div class="box key"><div class="t">&#9733; 重点</div><p>本章最核心的概念。</p></div>
+<div class="box deep"><div class="t">&#128269; 深入</div><p>原理性的内容，初次阅读可以跳过。</p></div>
+
+<h2 id="toc">目录</h2>
+
+<div id="toc-grid"></div>
+
+<h2 id="notes">版本说明</h2>
+
+<p>
+  本教程基于 <strong>React 19.2</strong>、Vite、React Router 7、TanStack Query 5、Zustand 5、Motion、Vitest、Next.js（App Router）和 Meteor 3 编写。
+  生态更新很快，命令行提示和配置文件的细节可能和你看到的略有不同，遇到差异时以各工具的官方文档为准；
+  本教程讲解的核心概念（组件、状态、副作用、渲染、路由、数据获取、测试、SSR）是稳定的。
+</p>
+
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

@@ -474,3 +474,11 @@ figcaption {
 
 /* 压在连线上的文字：描一圈背景色，让线从文字“后面”穿过 */
 .dgm .halo { paint-order: stroke; stroke: var(--bg); stroke-width: 5px; stroke-linejoin: round; }
+
+/* 侧边栏里切换 Vue / React 版的链接 */
+#sidebar .switch {
+  display: block; margin: 0 8px 6px; padding: 6px 10px; border-radius: 7px;
+  font-size: 12.5px; text-decoration: none; color: var(--fg-soft);
+  border: 1px dashed var(--line-2);
+  &:hover { color: var(--accent-2); border-color: var(--accent); }
+}

@@ -1,0 +1,15 @@
+/* React 版：在共享样式之上只覆盖强调色（React 蓝），并把“技巧”框换回绿色以示区分 */
+:root {
+  --accent:    light-dark(#087ea4, #58c4dc);
+  --accent-bg: light-dark(#e6f6fb, #132a31);
+  --accent-2:  light-dark(#0a6688, #8fdcef);
+  --green:     light-dark(#2f7d51, #6ac48d);
+  --green-bg:  light-dark(#eaf5ee, #1b2b21);
+}
+.code > .bar .tag { color: #8fdcef; }
+.tk-tg { color: #7fd3ef; }
+
+/* 深色模式下强调色较亮，按钮文字改用深色以保证对比度 */
+.demo button:not(.ghost) { color: light-dark(#fff, #0b1d22); }
+#sidebar .brand .flame svg circle { fill: light-dark(#fff, #0b1d22); }
+#sidebar .brand .flame svg g { stroke: light-dark(#fff, #0b1d22); }

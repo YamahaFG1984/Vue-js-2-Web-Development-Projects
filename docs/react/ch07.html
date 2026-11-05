@@ -1,0 +1,873 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 7 章 · 项目五：在线商店与规模化 — React 项目实战教程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="assets/react.css">
+</head>
+<body data-chapter="7">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 7 章 · 项目五</span>
+<h1>在线商店与规模化</h1>
+<p class="lede">
+  这一章快速搭起一个“时装店”应用，然后把精力放在让项目<strong>能长大</strong>的工程实践上：代码检查、单元测试、国际化与代码分割，
+  最后用 <strong>Next.js</strong> 实现服务端渲染，并认识 React 19 最重要的新概念 —— <strong>服务端组件</strong>。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>配置 ESLint，理解 <code>eslint-plugin-react-hooks</code> 能帮你发现哪些问题</li>
+    <li>用 Vitest + React Testing Library “像用户一样”测试组件</li>
+    <li>用 react-i18next 做多语言，用动态 <code>import()</code>、<code>React.lazy</code> 和 <code>Suspense</code> 做代码分割</li>
+    <li>理解 SSR 与水合，理解服务端组件和客户端组件的分工</li>
+    <li>用 Next.js App Router 渲染商品页面</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="setup">项目搭建</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="时装店应用界面：商品列表、购物车侧栏和页脚">
+  <rect class="bx" x="20" y="14" width="720" height="222" rx="12"/>
+  <rect class="bx-a" x="34" y="26" width="692" height="36" rx="8"/>
+  <text class="ttl on-a" x="54" y="49">Fashion Store</text>
+  <text class="sm" x="560" y="49">🛒 购物车 (3)</text>
+  <rect class="bx" x="34" y="72" width="100" height="112" rx="8"/>
+  <rect class="bx-d" x="44" y="82" width="80" height="56" rx="4"/>
+  <text class="sm" x="84" y="156" text-anchor="middle">蓝色袜子</text>
+  <text class="sm on-a" x="84" y="174" text-anchor="middle">¥2.99</text>
+  <rect class="bx" x="144" y="72" width="100" height="112" rx="8"/>
+  <rect class="bx-d" x="154" y="82" width="80" height="56" rx="4"/>
+  <text class="sm" x="194" y="156" text-anchor="middle">绿色袜子</text>
+  <text class="sm on-a" x="194" y="174" text-anchor="middle">¥3.99</text>
+  <rect class="bx" x="254" y="72" width="100" height="112" rx="8"/>
+  <rect class="bx-d" x="264" y="82" width="80" height="56" rx="4"/>
+  <text class="sm" x="304" y="156" text-anchor="middle">蓝色衬衫</text>
+  <text class="sm on-a" x="304" y="174" text-anchor="middle">¥16.99</text>
+  <rect class="bx" x="364" y="72" width="100" height="112" rx="8"/>
+  <text class="sm" x="414" y="132" text-anchor="middle">……</text>
+  <rect class="bx-b" x="526" y="72" width="200" height="112" rx="8"/>
+  <text class="ttl on-b" x="626" y="94" text-anchor="middle">购物车侧栏</text>
+  <text class="sm" x="540" y="118">蓝色袜子 × 2</text>
+  <text class="sm" x="540" y="138">蓝色衬衫 × 1</text>
+  <text class="sm on-b" x="540" y="166">去结算 →</text>
+  <rect class="bx" x="34" y="196" width="692" height="28" rx="6"/>
+  <text class="sm" x="380" y="214" text-anchor="middle">页脚：切换语言（本章新增）</text>
+</svg>
+<figcaption>图 7-1　时装店应用（业务功能已写好，本章聚焦工程化）</figcaption>
+</figure>
+
+<div class="code" data-lang="bash" data-file="终端"><pre>
+npm create vite@latest e-shop -- --template react
+cd e-shop
+npm install
+npm install react-router zustand @tanstack/react-query
+npm install -D json-server
+</pre></div>
+
+<p>
+  商品数据用 <code>json-server</code> 根据一个 JSON 文件自动生成 REST API。把仓库 <code>Chapter07/chapter7-full/db.json</code> 放到项目根目录，加一个脚本：
+</p>
+
+<div class="code" data-lang="json" data-file="package.json（scripts）"><pre>
+"db": "json-server db.json --port 3000"
+</pre></div>
+
+<p>运行 <code>npm run db</code>，访问 <code>http://localhost:3000/items</code> 就能看到商品列表。商品列表用 TanStack Query 获取，购物车用一个 Zustand store 管理（参照前两章）。</p>
+
+<div class="box warn">
+  <div class="t">&#9888; 商品图片地址已失效</div>
+  <p><code>db.json</code> 里的图片来自已关闭的 lorempixel.com，把 <code>img</code> 字段改成 <code>https://picsum.photos/seed/socks1/400/400</code> 这样的占位图即可。</p>
+</div>
+
+<h2 id="workflow">工程化工作流</h2>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 230" role="img" aria-label="开发工作流：编辑器检查、开发服务器、测试监听，提交时检查，最后构建">
+  <rect class="bx-b" x="20" y="80" width="130" height="70" rx="10"/>
+  <text class="ttl on-b" x="85" y="108" text-anchor="middle">写代码</text>
+  <text class="sm" x="85" y="130" text-anchor="middle">VS Code</text>
+  <path class="ln" d="M152 100 L196 50" marker-end="url(#ar)"/>
+  <path class="ln" d="M152 115 H196" marker-end="url(#ar)"/>
+  <path class="ln" d="M152 130 L196 180" marker-end="url(#ar)"/>
+  <rect class="bx-p" x="200" y="20" width="200" height="56" rx="10"/>
+  <text class="on-p ttl" x="300" y="42" text-anchor="middle">ESLint（+ Prettier）</text>
+  <text class="sm" x="300" y="62" text-anchor="middle">编辑器里实时标出问题</text>
+  <rect class="bx-g" x="200" y="88" width="200" height="56" rx="10"/>
+  <text class="on-g ttl" x="300" y="110" text-anchor="middle">Vite + Fast Refresh</text>
+  <text class="sm" x="300" y="130" text-anchor="middle">浏览器里立即看到</text>
+  <rect class="bx-a" x="200" y="156" width="200" height="56" rx="10"/>
+  <text class="on-a ttl" x="300" y="178" text-anchor="middle">Vitest（watch 模式）</text>
+  <text class="sm" x="300" y="198" text-anchor="middle">相关测试自动重跑</text>
+  <path class="ln" d="M402 115 H446" marker-end="url(#ar)"/>
+  <rect class="bx" x="450" y="80" width="130" height="70" rx="10"/>
+  <text class="ttl" x="515" y="108" text-anchor="middle">提交 / CI</text>
+  <text class="mono sm" x="515" y="130" text-anchor="middle">lint + test</text>
+  <path class="ln" d="M582 115 H616" marker-end="url(#ar)"/>
+  <rect class="bx-r" x="620" y="80" width="120" height="70" rx="10"/>
+  <text class="ttl on-r" x="680" y="108" text-anchor="middle">构建上线</text>
+  <text class="mono sm" x="680" y="130" text-anchor="middle">build</text>
+</svg>
+<figcaption>图 7-2　工具在开发流程中的位置</figcaption>
+</figure>
+
+<div class="box note">
+  <div class="t">&#9432; CSS 兼容性</div>
+  <p>
+    Vite 内置 PostCSS：项目根目录放一个 <code>postcss.config.js</code>（例如启用 <code>autoprefixer</code>），在 <code>package.json</code> 里写 <code>"browserslist": ["defaults"]</code> 指定目标浏览器即可。
+    现代浏览器需要前缀的属性已经很少，Vite 也支持更快的 Lightning CSS。用 Tailwind 的话，它会自己处理这些。
+  </p>
+</div>
+
+<h2 id="eslint">代码检查：ESLint</h2>
+
+<p>
+  自动检查代码问题的过程叫 <strong>lint</strong>。用 Vite 模板创建的项目已经带好了 ESLint 9 的<strong>扁平配置</strong> <code>eslint.config.js</code>，结构大致如下（具体写法以生成的文件为准）：
+</p>
+
+<div class="code" data-lang="js" data-file="eslint.config.js"><pre>
+import js from '@eslint/js'
+import globals from 'globals'
+import reactHooks from 'eslint-plugin-react-hooks'
+import reactRefresh from 'eslint-plugin-react-refresh'
+import { defineConfig, globalIgnores } from 'eslint/config'
+
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{js,jsx}'],
+    extends: [
+      js.configs.recommended,                // JS 通用规则：未定义的变量、未使用的变量……
+      reactHooks.configs.flat.recommended,   // Hooks 规则（含 React Compiler 相关检查）
+      reactRefresh.configs.vite,             // 保证 Fast Refresh 正常工作
+    ],
+    languageOptions: {
+      globals: globals.browser,
+      parserOptions: { ecmaFeatures: { jsx: true } },
+    },
+  },
+])
+</pre></div>
+
+<div class="code" data-lang="bash"><pre>
+npm run lint          # 即 eslint .
+npx eslint . --fix    # 自动修复能修复的问题
+</pre></div>
+
+<h3>Hooks 插件能发现什么</h3>
+
+<p>对 React 项目来说，最有价值的是 <code>eslint-plugin-react-hooks</code>。它检查的都是“代码能跑，但行为不对”的隐蔽 bug：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="eslint-plugin-react-hooks 检查的几类问题">
+  <rect class="bx-r" x="20" y="20" width="350" height="80" rx="10"/>
+  <text class="ttl on-r" x="195" y="44" text-anchor="middle">rules-of-hooks</text>
+  <text class="mono sm" x="36" y="68">if (open) { const [x] = useState() }</text>
+  <text class="sm" x="36" y="88">Hook 写在条件里 → 调用顺序错乱</text>
+  <rect class="bx-r" x="390" y="20" width="350" height="80" rx="10"/>
+  <text class="ttl on-r" x="565" y="44" text-anchor="middle">exhaustive-deps</text>
+  <text class="mono sm" x="406" y="68">useEffect(() =&gt; load(id), [])</text>
+  <text class="sm" x="406" y="88">漏了依赖 id → effect 读到过期的值</text>
+  <rect class="bx-a" x="20" y="116" width="350" height="80" rx="10"/>
+  <text class="ttl on-a" x="195" y="140" text-anchor="middle">purity / immutability</text>
+  <text class="mono sm" x="36" y="164">items.push(x); setItems(items)</text>
+  <text class="sm" x="36" y="184">修改了状态或 props → 不会更新、编译器失效</text>
+  <rect class="bx-a" x="390" y="116" width="350" height="80" rx="10"/>
+  <text class="ttl on-a" x="565" y="140" text-anchor="middle">refs / set-state-in-render</text>
+  <text class="mono sm" x="406" y="164">return &lt;p&gt;{ref.current}&lt;/p&gt;</text>
+  <text class="sm" x="406" y="184">渲染时读写 ref、渲染时 setState → 死循环</text>
+  <rect class="bx" x="20" y="214" width="720" height="70" rx="10"/>
+  <text class="sm" x="380" y="238" text-anchor="middle">红色两条是 Hooks 的经典规则；黄色是新版插件加入的、与 React Compiler 配套的规则</text>
+  <text class="sm" x="380" y="258" text-anchor="middle">它们检查的正是前几章反复强调的原则：纯渲染、不可变更新、Hooks 只在顶层调用</text>
+</svg>
+<figcaption>图 7-3　Hooks 插件发现的典型问题</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; 不要随手关掉 exhaustive-deps</div>
+  <p>
+    看到“缺少依赖”的警告，正确的做法通常是把依赖补上，或者重新思考代码（是不是根本不需要 effect？函数是不是应该挪到 effect 内部？），
+    而不是写 <code>// eslint-disable-next-line</code> 让它闭嘴。这条规则的警告几乎总是在提示一个真实的 bug。
+  </p>
+</div>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#9998;&#65039;</span><h4>编辑器里</h4><p>VS Code 的 ESLint 扩展会在你敲代码时标出问题，还可以保存时自动修复。</p></div>
+  <div class="card"><span class="ic">&#128274;</span><h4>提交前</h4><p><code>husky</code> + <code>lint-staged</code>：<code>git commit</code> 时只检查改动过的文件。</p></div>
+  <div class="card"><span class="ic">&#9881;&#65039;</span><h4>CI 中</h4><p>持续集成里运行 <code>npm run lint</code>，不合格的代码无法合并。</p></div>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; Prettier、Biome 与 Oxlint</div>
+  <p>
+    ESLint 管<strong>代码质量</strong>，Prettier 管<strong>代码格式</strong>（缩进、引号、换行）。另外有两个用 Rust 编写、速度快得多的新工具也很流行：
+    <a href="https://biomejs.dev/">Biome</a>（检查 + 格式化二合一）和 <a href="https://oxc.rs/">Oxlint</a>。
+  </p>
+</div>
+
+<h2 id="test">单元测试：Vitest + Testing Library</h2>
+
+<p>
+  测试工具分两层：<strong>Vitest</strong> 是测试运行器（找到测试文件、执行、报告结果，复用 Vite 配置）；
+  <strong>React Testing Library</strong> 负责渲染组件、查找元素、模拟用户操作。
+</p>
+
+<div class="code" data-lang="bash"><pre>
+npm install -D vitest jsdom @testing-library/react @testing-library/user-event @testing-library/jest-dom
+</pre></div>
+
+<div class="code" data-lang="js" data-file="vite.config.js"><pre>
+/// &lt;reference types="vitest/config" /&gt;
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: 'jsdom',              // 在 Node 里模拟浏览器 DOM
+    setupFiles: './src/test/setup.js',
+  },
+})
+</pre></div>
+
+<div class="code" data-lang="js" data-file="src/test/setup.js"><pre>
+import '@testing-library/jest-dom/vitest'   // 增加 toBeInTheDocument()、toBeDisabled() 等断言
+</pre></div>
+
+<div class="code" data-lang="json" data-file="package.json"><pre>
+"test": "vitest"
+</pre></div>
+
+<h3>像用户一样测试</h3>
+
+<p>
+  Testing Library 的核心理念是：<strong>测试越像用户使用软件的方式，就越能给你信心</strong>。所以它不鼓励你检查组件内部的状态或实现细节，
+  而是按用户能感知的方式找元素（“一个叫‘添加’的按钮”），模拟用户的操作（点击、输入），再断言用户能看到的结果：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 260" role="img" aria-label="测试实现细节与测试用户行为的对比，以及推荐的查询优先级">
+  <rect class="bx-r" x="20" y="20" width="340" height="120" rx="12"/>
+  <text class="ttl on-r" x="190" y="44" text-anchor="middle">✗ 测试实现细节</text>
+  <text class="sm" x="36" y="72">检查组件内部的 state 值</text>
+  <text class="sm" x="36" y="94">按 CSS 类名 .btn-primary 查找</text>
+  <text class="sm" x="36" y="116">重构一下内部写法，测试就挂了</text>
+  <rect class="bx-g" x="400" y="20" width="340" height="120" rx="12"/>
+  <text class="ttl on-g" x="570" y="44" text-anchor="middle">✓ 测试用户行为</text>
+  <text class="sm" x="416" y="72">找到“添加”按钮 → 点击</text>
+  <text class="sm" x="416" y="94">断言页面上出现了“购物车 (1)”</text>
+  <text class="sm" x="416" y="116">只要功能不变，测试就不会坏</text>
+  <text class="ttl" x="20" y="170">查找元素的推荐顺序</text>
+  <rect class="bx-a" x="20" y="182" width="170" height="60" rx="8"/>
+  <text class="mono sm on-a" x="105" y="206" text-anchor="middle">getByRole</text>
+  <text class="sm" x="105" y="226" text-anchor="middle">按角色 + 名字（首选）</text>
+  <rect class="bx" x="200" y="182" width="170" height="60" rx="8"/>
+  <text class="mono sm" x="285" y="206" text-anchor="middle">getByLabelText</text>
+  <text class="sm" x="285" y="226" text-anchor="middle">表单字段</text>
+  <rect class="bx" x="380" y="182" width="170" height="60" rx="8"/>
+  <text class="mono sm" x="465" y="206" text-anchor="middle">getByText</text>
+  <text class="sm" x="465" y="226" text-anchor="middle">按可见文字</text>
+  <rect class="bx-d" x="560" y="182" width="180" height="60" rx="8"/>
+  <text class="mono sm" x="650" y="206" text-anchor="middle">getByTestId</text>
+  <text class="sm" x="650" y="226" text-anchor="middle">最后的手段</text>
+</svg>
+<figcaption>图 7-4　Testing Library 的思路</figcaption>
+</figure>
+
+<h3>第一个组件测试</h3>
+
+<div class="code" data-lang="jsx" data-file="src/components/BaseButton.jsx"><pre>
+export default function BaseButton({ icon, badge = null, disabled = false, onClick, children }) {
+  return (
+    &lt;button className="base-button" disabled={disabled} onClick={onClick}&gt;
+      {icon &amp;&amp; &lt;i className="material-icons icon"&gt;{icon}&lt;/i&gt;}
+      &lt;span className="content"&gt;{children}&lt;/span&gt;
+      {badge !== null &amp;&amp; &lt;div className="button-badge"&gt;&lt;span&gt;{badge}&lt;/span&gt;&lt;/div&gt;}
+    &lt;/button&gt;
+  )
+}
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="src/components/BaseButton.test.jsx"><pre>
+import { describe, test, expect, vi } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import BaseButton from './BaseButton.jsx'
+
+describe('BaseButton', () =&gt; {
+  test('点击时调用 onClick', async () =&gt; {
+    const user = userEvent.setup()
+    const onClick = vi.fn()                           // 一个“间谍”函数，记录自己被调用的情况
+
+    render(&lt;BaseButton onClick={onClick}&gt;添加商品&lt;/BaseButton&gt;)
+    await user.click(screen.getByRole('button', { name: /添加商品/ }))
+
+    expect(onClick).toHaveBeenCalledTimes(1)
+  })
+
+  test('disabled 时不可点击', async () =&gt; {
+    const user = userEvent.setup()
+    const onClick = vi.fn()
+
+    render(&lt;BaseButton disabled onClick={onClick}&gt;添加商品&lt;/BaseButton&gt;)
+    const button = screen.getByRole('button')
+    await user.click(button)
+
+    expect(button).toBeDisabled()
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  test('显示角标', () =&gt; {
+    render(&lt;BaseButton badge={3}&gt;购物车&lt;/BaseButton&gt;)
+    expect(screen.getByText('3')).toBeInTheDocument()
+  })
+})
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 180" role="img" aria-label="测试三步：渲染、操作、断言">
+  <rect class="bx-b" x="20" y="40" width="220" height="100" rx="12"/>
+  <text class="ttl on-b" x="130" y="66" text-anchor="middle">① 渲染 Arrange</text>
+  <text class="mono sm" x="130" y="92" text-anchor="middle">render(&lt;BaseButton</text>
+  <text class="mono sm" x="130" y="110" text-anchor="middle">onClick={spy} /&gt;)</text>
+  <path class="ln" d="M242 90 H266" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="270" y="40" width="220" height="100" rx="12"/>
+  <text class="ttl on-a" x="380" y="66" text-anchor="middle">② 操作 Act</text>
+  <text class="mono sm" x="380" y="92" text-anchor="middle">await user.click(</text>
+  <text class="mono sm" x="380" y="110" text-anchor="middle">getByRole('button'))</text>
+  <path class="ln" d="M492 90 H516" marker-end="url(#ar)"/>
+  <rect class="bx-g" x="520" y="40" width="220" height="100" rx="12"/>
+  <text class="ttl on-g" x="630" y="66" text-anchor="middle">③ 断言 Assert</text>
+  <text class="mono sm" x="630" y="92" text-anchor="middle">expect(spy)</text>
+  <text class="mono sm" x="630" y="110" text-anchor="middle">.toHaveBeenCalled()</text>
+  <text class="lbl" x="380" y="172" text-anchor="middle">user-event 模拟的是真实的交互序列（悬停、按下、松开、点击），比直接触发 click 事件更接近真实</text>
+</svg>
+<figcaption>图 7-5　每个测试都是“准备 → 操作 → 断言”</figcaption>
+</figure>
+
+<div class="code" data-lang="text" data-file="npm test 的输出"><pre>
+ ✓ src/components/BaseButton.test.jsx (3 tests) 64ms
+   ✓ BaseButton &gt; 点击时调用 onClick
+   ✓ BaseButton &gt; disabled 时不可点击
+   ✓ BaseButton &gt; 显示角标
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+</pre></div>
+
+<h3>测试纯逻辑：最简单也最划算</h3>
+
+<p>reducer、Zustand store、工具函数都是普通的 JS，测试它们不需要渲染任何东西。比如购物车 store：</p>
+
+<div class="code" data-lang="js" data-file="src/stores/cart.test.js"><pre>
+import { beforeEach, test, expect } from 'vitest'
+import { useCartStore } from './cart.js'
+
+beforeEach(() =&gt; {
+  useCartStore.setState({ items: [] })      // 每个测试前重置状态
+})
+
+test('重复添加同一件商品时数量累加', () =&gt; {
+  const { addItem } = useCartStore.getState()
+  addItem({ id: 1, price: 2.99 })
+  addItem({ id: 1, price: 2.99 })
+  expect(useCartStore.getState().items).toEqual([{ id: 1, price: 2.99, count: 2 }])
+})
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 测试请求：模拟网络</div>
+  <p>
+    组件里有请求时，不要在测试里真的访问服务器。可以用 <code>vi.spyOn(globalThis, 'fetch')</code> 返回假数据，
+    或者用 <a href="https://mswjs.io/">MSW</a> 在网络层拦截请求 —— 后者让测试代码和真实代码完全一致，也可以复用在开发环境里做 mock 服务器。
+  </p>
+</div>
+
+<details class="box deep">
+<summary class="t" style="cursor:pointer">&#128269; 快照测试还要不要用？（点击展开）</summary>
+<p>
+  Vitest 支持 <code>expect(container).toMatchSnapshot()</code>，把渲染出的 HTML 存下来，以后比较。
+  它写起来容易，但缺点也明显：任何无关紧要的改动都会让快照失败，大家习惯性地 <code>vitest -u</code> 更新，快照就失去了意义。
+  React 社区更推荐写明确的断言（“按钮被禁用了”“显示了 3”）。快照适合偶尔用在输出稳定、内容很多的场景。
+</p>
+</details>
+
+<h2 id="i18n">国际化与代码分割</h2>
+
+<p>React 生态里最常用的国际化方案是 <a href="https://react.i18next.com/">react-i18next</a>（基于通用的 i18next 库）：</p>
+
+<div class="code" data-lang="bash"><pre>
+npm install i18next react-i18next i18next-browser-languagedetector i18next-resources-to-backend
+</pre></div>
+
+<h3>语言包</h3>
+
+<div class="tree"><b>src/locales/</b>
+├── zh.json
+├── en.json
+├── fr.json
+├── es.json
+└── de.json</div>
+
+<div class="code" data-lang="json" data-file="src/locales/zh.json"><pre>
+{
+  "change-lang": "切换语言",
+  "lang": { "zh": "中文", "en": "English", "fr": "Français", "es": "Español", "de": "Deutsch" },
+  "back": "返回",
+  "cart": "购物车 ({{count}})"
+}
+</pre></div>
+
+<h3>按需加载：动态 import</h3>
+
+<p>
+  用户一次只用一种语言，没必要把五种语言都打进首屏代码。<strong>动态 <code>import()</code></strong> 会让构建工具把被导入的模块拆成独立的文件（chunk），需要时才下载：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 270" role="img" aria-label="静态导入进入主包，动态导入被拆成独立的 chunk 按需加载">
+  <rect class="bx-a" x="20" y="40" width="250" height="190" rx="12"/>
+  <text class="ttl on-a" x="145" y="64" text-anchor="middle">首屏主包 index-[hash].js</text>
+  <rect class="bx" x="40" y="80" width="210" height="28" rx="5"/><text class="sm" x="145" y="99" text-anchor="middle">react、react-dom、router</text>
+  <rect class="bx" x="40" y="114" width="210" height="28" rx="5"/><text class="sm" x="145" y="133" text-anchor="middle">App、首页</text>
+  <rect class="bx" x="40" y="148" width="210" height="28" rx="5"/><text class="sm" x="145" y="167" text-anchor="middle">i18n.js</text>
+  <text class="mono sm" x="145" y="206" text-anchor="middle">import X from '…'（静态）</text>
+  <path class="ln-d" d="M272 160 H330"/>
+  <text class="mono sm" x="300" y="150" text-anchor="middle">import()</text>
+  <rect class="bx-g" x="340" y="40" width="160" height="40" rx="8"/><text class="sm on-g" x="420" y="65" text-anchor="middle">zh-[hash].js ✓ 已加载</text>
+  <rect class="bx-d" x="340" y="90" width="160" height="34" rx="8"/><text class="sm" x="420" y="112" text-anchor="middle">en-[hash].js</text>
+  <rect class="bx-d" x="340" y="132" width="160" height="34" rx="8"/><text class="sm" x="420" y="154" text-anchor="middle">fr-[hash].js</text>
+  <rect class="bx-d" x="340" y="174" width="160" height="34" rx="8"/><text class="sm" x="420" y="196" text-anchor="middle">es / de …</text>
+  <rect class="bx-d" x="540" y="40" width="200" height="40" rx="8"/><text class="sm" x="640" y="65" text-anchor="middle">PageCheckout-[hash].js</text>
+  <rect class="bx-d" x="540" y="90" width="200" height="40" rx="8"/><text class="sm" x="640" y="115" text-anchor="middle">PageLocale-[hash].js</text>
+  <text class="sm" x="640" y="152" text-anchor="middle">React.lazy / 路由 lazy</text>
+  <text class="sm" x="640" y="170" text-anchor="middle">用的是同一个机制</text>
+  <text class="lbl" x="380" y="262" text-anchor="middle">虚线框：构建时生成，只有真正需要时浏览器才下载</text>
+</svg>
+<figcaption>图 7-6　代码分割</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="src/i18n.js"><pre>
+import i18n from 'i18next'
+import { initReactI18next } from 'react-i18next'
+import LanguageDetector from 'i18next-browser-languagedetector'
+import resourcesToBackend from 'i18next-resources-to-backend'
+
+export const langs = ['zh', 'en', 'fr', 'es', 'de']
+
+i18n
+  .use(LanguageDetector)        // 根据浏览器语言（navigator.languages）自动选择
+  .use(resourcesToBackend(      // 需要哪种语言，就动态 import 哪个文件
+    (lng) =&gt; import(`./locales/${lng}.json`)
+  ))
+  .use(initReactI18next)
+  .init({
+    supportedLngs: langs,
+    fallbackLng: 'en',          // 缺翻译时退回英文
+    load: 'languageOnly',       // 'zh-CN' 只取 'zh'
+  })
+
+export default i18n
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="src/main.jsx"><pre>
+import { Suspense } from 'react'
+import './i18n.js'
+
+createRoot(document.getElementById('root')).render(
+  &lt;Suspense fallback={&lt;div className="loading" /&gt;}&gt;   {/* 语言包下载完之前显示 */}
+    &lt;App /&gt;
+  &lt;/Suspense&gt;
+)
+</pre></div>
+
+<h3>在组件中使用</h3>
+
+<div class="code" data-lang="jsx" data-file="src/components/PageLocale.jsx"><pre>
+import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router'
+import { langs } from '../i18n.js'
+import BaseButton from './BaseButton.jsx'
+
+export default function PageLocale() {
+  const { t, i18n } = useTranslation()
+  const navigate = useNavigate()
+
+  return (
+    &lt;main className="page-locale"&gt;
+      &lt;h1&gt;{t('change-lang')}&lt;/h1&gt;
+      &lt;div className="locales"&gt;
+        {langs.map((lang) =&gt; (
+          &lt;div key={lang} className="locale"&gt;
+            &lt;BaseButton
+              className={lang === i18n.resolvedLanguage ? 'selected' : ''}
+              onClick={() =&gt; i18n.changeLanguage(lang)}   // 首次切换时会去下载语言包
+            &gt;
+              {t(`lang.${lang}`)}
+            &lt;/BaseButton&gt;
+          &lt;/div&gt;
+        ))}
+      &lt;/div&gt;
+      &lt;BaseButton className="secondary" onClick={() =&gt; navigate(-1)}&gt;{t('back')}&lt;/BaseButton&gt;
+    &lt;/main&gt;
+  )
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="t 函数根据当前语言查找翻译，插值和回退">
+  <rect class="bx-g" x="20" y="60" width="200" height="70" rx="10"/>
+  <text class="mono on-g" x="120" y="88" text-anchor="middle">t('cart', { count: 3 })</text>
+  <text class="sm" x="120" y="110" text-anchor="middle">组件里调用</text>
+  <path class="ln" d="M222 95 H266" marker-end="url(#ar)"/>
+  <rect class="bx-a" x="270" y="56" width="150" height="78" rx="10"/>
+  <text class="ttl on-a" x="345" y="82" text-anchor="middle">当前语言</text>
+  <text class="mono" x="345" y="110" text-anchor="middle">'zh'</text>
+  <path class="ln" d="M422 95 H466" marker-end="url(#ar)"/>
+  <rect class="bx" x="470" y="20" width="270" height="70" rx="10"/>
+  <text class="mono sm" x="486" y="44">"购物车 ({{count}})"</text>
+  <text class="mono sm on-g" x="486" y="70">→ 购物车 (3) ✓</text>
+  <rect class="bx-d" x="470" y="104" width="270" height="70" rx="10"/>
+  <text class="sm" x="486" y="128">找不到？用 fallbackLng（en）</text>
+  <text class="sm" x="486" y="152">还找不到？显示键名本身</text>
+  <text class="lbl" x="380" y="194" text-anchor="middle">切换语言后，所有用到 useTranslation 的组件自动重新渲染</text>
+</svg>
+<figcaption>图 7-7　翻译的查找过程</figcaption>
+</figure>
+
+<div class="box tip">
+  <div class="t">&#10003; 价格和日期也要本地化</div>
+  <p>
+    不同地区的货币和数字格式不同。直接用浏览器的 <code>Intl</code>：
+    <code>new Intl.NumberFormat(i18n.resolvedLanguage, &#123; style: 'currency', currency: 'CNY' &#125;).format(price)</code>。
+    i18next 也内置了基于 Intl 的格式化，可以写在翻译字符串里：<code>"{{price, currency(CNY)}}"</code>。
+  </p>
+</div>
+
+<h3>组件级的代码分割：React.lazy + Suspense</h3>
+
+<p>语言页面、结算页面并不是每个用户都会访问，可以按需加载它们的代码：</p>
+
+<div class="code" data-lang="jsx"><pre>
+import { lazy, Suspense } from 'react'
+
+const PageCheckout = lazy(() =&gt; import('./components/PageCheckout.jsx'))   // 第一次渲染时才下载
+
+function App() {
+  return (
+    &lt;Suspense fallback={&lt;BaseLoading /&gt;}&gt;
+      &lt;PageCheckout /&gt;
+    &lt;/Suspense&gt;
+  )
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="Suspense：子组件还没准备好时显示 fallback，准备好后显示内容">
+  <rect class="bx-a" x="20" y="40" width="220" height="130" rx="12"/>
+  <text class="ttl on-a" x="130" y="64" text-anchor="middle">&lt;Suspense fallback&gt;</text>
+  <rect class="bx" x="40" y="80" width="180" height="70" rx="8"/>
+  <text class="mono sm" x="130" y="108" text-anchor="middle">&lt;PageCheckout /&gt;</text>
+  <text class="sm" x="130" y="130" text-anchor="middle">（lazy 组件）</text>
+  <path class="ln" d="M242 90 L316 60" marker-end="url(#ar)"/>
+  <path class="ln" d="M242 120 L316 150" marker-end="url(#ar)"/>
+  <rect class="bx-d" x="320" y="30" width="200" height="56" rx="10"/>
+  <text class="sm" x="420" y="54" text-anchor="middle">代码还在下载</text>
+  <text class="sm" x="420" y="72" text-anchor="middle">→ 显示 fallback（加载动画）</text>
+  <rect class="bx-g" x="320" y="124" width="200" height="56" rx="10"/>
+  <text class="sm on-g" x="420" y="148" text-anchor="middle">下载完成</text>
+  <text class="sm" x="420" y="166" text-anchor="middle">→ 显示真正的组件</text>
+  <text class="sm" x="560" y="80">Suspense 不只用于懒加载：</text>
+  <text class="sm" x="560" y="100">语言包、服务端组件的数据、</text>
+  <text class="sm" x="560" y="120">TanStack Query 的 suspense 模式</text>
+  <text class="sm" x="560" y="140">都用它来声明“加载中显示什么”</text>
+</svg>
+<figcaption>图 7-8　Suspense：声明式的“加载中”</figcaption>
+</figure>
+
+<h2 id="ssr">服务端渲染与 Next.js</h2>
+
+<h3>为什么需要 SSR</h3>
+
+<p>
+  到目前为止都是<strong>客户端渲染（CSR）</strong>：服务器返回一个几乎空白的 HTML，浏览器下载并执行 JS 后内容才出现。
+  <strong>服务端渲染（SSR）</strong>是在服务器上先把 React 应用渲染成 HTML 再发给浏览器：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="客户端渲染与服务端渲染的时间线对比">
+  <text class="ttl" x="20" y="24">客户端渲染（CSR）</text>
+  <rect class="bx" x="20" y="36" width="100" height="30" rx="5"/><text class="sm" x="70" y="56" text-anchor="middle">下载 HTML</text>
+  <rect class="bx-b" x="122" y="36" width="200" height="30" rx="5"/><text class="sm on-b" x="222" y="56" text-anchor="middle">下载 JS</text>
+  <rect class="bx-b" x="324" y="36" width="110" height="30" rx="5"/><text class="sm on-b" x="379" y="56" text-anchor="middle">执行 JS</text>
+  <rect class="bx-b" x="436" y="36" width="140" height="30" rx="5"/><text class="sm on-b" x="506" y="56" text-anchor="middle">请求 API 数据</text>
+  <rect class="bx-g" x="578" y="36" width="162" height="30" rx="5"/><text class="sm on-g" x="659" y="56" text-anchor="middle">看到内容 + 可交互</text>
+  <text class="sm" x="20" y="90">← 在这之前，用户和搜索引擎爬虫看到的都是空白或加载动画</text>
+  <path class="ln-r" d="M20 98 H576" style="stroke-dasharray:4 3"/>
+  <text class="ttl on-a" x="20" y="140">服务端渲染（SSR）</text>
+  <rect class="bx-a" x="20" y="152" width="210" height="30" rx="5"/><text class="sm on-a" x="125" y="172" text-anchor="middle">服务器：取数据 + 渲染 HTML</text>
+  <rect class="bx-g" x="232" y="152" width="100" height="30" rx="5"/><text class="sm on-g" x="282" y="172" text-anchor="middle">下载 HTML</text>
+  <rect class="bx-g" x="334" y="152" width="406" height="30" rx="5" style="opacity:.55"/>
+  <text class="sm on-g" x="537" y="172" text-anchor="middle">已经能看到内容（还不能交互）</text>
+  <rect class="bx-b" x="334" y="190" width="200" height="30" rx="5"/><text class="sm on-b" x="434" y="210" text-anchor="middle">下载 JS</text>
+  <rect class="bx-p" x="536" y="190" width="120" height="30" rx="5"/><text class="sm on-p" x="596" y="210" text-anchor="middle">水合 hydrate</text>
+  <rect class="bx-g" x="658" y="190" width="82" height="30" rx="5"/><text class="sm on-g" x="699" y="210" text-anchor="middle">可交互</text>
+  <rect class="bx-d" x="20" y="240" width="720" height="40" rx="8"/>
+  <text class="sm" x="380" y="258" text-anchor="middle">好处：首屏更快、搜索引擎和社交平台能直接拿到内容</text>
+  <text class="sm" x="380" y="274" text-anchor="middle">代价：需要运行 Node 服务器、代码要能在服务器上运行、部署更复杂</text>
+</svg>
+<figcaption>图 7-9　CSR 与 SSR 的时间线</figcaption>
+</figure>
+
+<p>
+  <strong>水合（hydration）</strong>：浏览器拿到的 HTML 是“死”的，客户端 React 启动后不会重新创建 DOM，而是认领服务器渲染好的 DOM，给它挂上事件处理和状态，
+  底层用的是 <code>hydrateRoot</code> 而不是 <code>createRoot</code>。
+</p>
+
+<div class="box note">
+  <div class="t">&#9432; 不是所有应用都需要 SSR</div>
+  <p>
+    后台管理系统、需要登录才能用的工具，用 Vite 做纯客户端应用就好。电商、博客、内容站这类需要被搜索引擎收录的场景才值得上 SSR。
+    内容基本不变的话，还可以<strong>静态生成（SSG）</strong>：构建时就把页面渲染成 HTML 文件。
+  </p>
+</div>
+
+<h3>服务端组件：React 19 最重要的新概念</h3>
+
+<p>
+  传统 SSR 只是“在服务器上先跑一遍”，所有组件的代码仍然要发到浏览器去水合。React 19 正式加入了<strong>服务端组件（Server Components）</strong>：
+  有些组件<strong>只在服务器上运行</strong>，它们的代码永远不会发给浏览器。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 320" role="img" aria-label="服务端组件和客户端组件组成的组件树，'use client' 是两者的边界">
+  <rect class="bx-p" x="20" y="20" width="340" height="280" rx="14"/>
+  <text class="ttl on-p" x="190" y="44" text-anchor="middle">服务器上（服务端组件，默认）</text>
+  <rect class="bx-p" x="120" y="60" width="140" height="40" rx="8"/><text class="sm on-p" x="190" y="85" text-anchor="middle">Layout</text>
+  <rect class="bx-p" x="85" y="124" width="210" height="48" rx="8"/>
+  <text class="sm on-p" x="190" y="144" text-anchor="middle">ItemPage（async）</text>
+  <text class="mono sm" x="190" y="162" text-anchor="middle">await db.items.find()</text>
+  <rect class="bx-p" x="40" y="200" width="130" height="40" rx="8"/><text class="sm on-p" x="105" y="225" text-anchor="middle">ItemInfos</text>
+  <path class="ln" d="M190 102 V120"/>
+  <path class="ln" d="M160 174 L110 196"/>
+  <path class="ln" d="M240 174 L430 210"/>
+  <text class="sm" x="40" y="268">✓ 可以直接读数据库、读文件、用密钥</text>
+  <text class="sm" x="40" y="286">✗ 不能用 useState、useEffect、onClick</text>
+
+  <rect class="bx-a" x="400" y="20" width="340" height="280" rx="14"/>
+  <text class="ttl on-a" x="570" y="44" text-anchor="middle">浏览器里（客户端组件）</text>
+  <rect class="bx-a" x="420" y="196" width="180" height="48" rx="8"/>
+  <text class="mono sm on-a" x="510" y="216" text-anchor="middle">'use client'</text>
+  <text class="sm on-a" x="510" y="234" text-anchor="middle">AddToCartButton</text>
+  <text class="sm" x="420" y="268">✓ 可以用状态、effect、事件</text>
+  <text class="sm" x="420" y="286">· 代码会发给浏览器（也会先在服务器上渲染）</text>
+  <path class="ln-d" d="M380 60 V180"/>
+  <text class="halo sm" x="380" y="110" text-anchor="middle">'use client'</text>
+  <text class="halo sm" x="380" y="128" text-anchor="middle">是边界</text>
+</svg>
+<figcaption>图 7-10　服务端组件负责取数据和静态内容，客户端组件负责交互</figcaption>
+</figure>
+
+<div class="box key">
+  <div class="t">&#9733; 一句话区分</div>
+  <p>
+    需要<strong>交互</strong>（状态、事件、浏览器 API）的组件，在文件顶部写 <code>'use client'</code>，它就是客户端组件；
+    其他组件默认是服务端组件，可以是 <code>async</code> 函数，直接 <code>await</code> 数据。服务端组件可以渲染客户端组件，并把可序列化的数据作为 props 传给它。
+    原书的 <code>asyncData</code>、手动注入 <code>__INITIAL_STATE__</code> 这一整套，在这里变成了“组件里直接 await”。
+  </p>
+</div>
+
+<h3>用 Next.js 实现</h3>
+
+<p>
+  服务端组件需要框架支持。<a href="https://nextjs.org/">Next.js</a> 的 App Router 是目前最成熟的实现，也是 React 官方文档首推的框架：
+</p>
+
+<div class="code" data-lang="bash"><pre>
+npx create-next-app@latest e-shop-next
+cd e-shop-next
+npm run dev        # http://localhost:3000
+</pre></div>
+
+<div class="tree"><b>e-shop-next/</b>
+├── next.config.js
+└── <b>app/</b>                       <i># App Router：文件夹即路由</i>
+    ├── layout.jsx             <i># 根布局（服务端组件）</i>
+    ├── page.jsx               <i># → /</i>
+    ├── checkout/
+    │   └── page.jsx           <i># → /checkout</i>
+    └── item/
+        └── <b>[id]</b>/
+            ├── page.jsx       <i># → /item/:id</i>
+            └── loading.jsx    <i># 加载中的界面（自动包一层 Suspense）</i></div>
+
+<div class="code" data-lang="jsx" data-file="app/item/[id]/page.jsx（服务端组件）"><pre>
+import AddToCartButton from './AddToCartButton.jsx'
+
+async function getItem(id) {
+  const res = await fetch(`http://localhost:3000/items/${id}`)   // 在服务器上请求，浏览器看不到
+  if (!res.ok) return null
+  return res.json()
+}
+
+// SEO：根据数据生成页面标题和描述
+export async function generateMetadata({ params }) {
+  const { id } = await params
+  const item = await getItem(id)
+  return { title: item?.title, description: `购买 ${item?.title}` }
+}
+
+export default async function ItemPage({ params }) {
+  const { id } = await params
+  const item = await getItem(id)
+  if (!item) return &lt;p&gt;商品不存在&lt;/p&gt;
+
+  return (
+    &lt;main className="store-item"&gt;
+      &lt;img src={item.img} alt={item.title} /&gt;
+      &lt;h1&gt;{item.title}&lt;/h1&gt;
+      &lt;p className="price"&gt;¥{item.price}&lt;/p&gt;
+      {/* 只有这个按钮需要交互，是客户端组件 */}
+      &lt;AddToCartButton item={{ id: item.id, title: item.title, price: item.price }} /&gt;
+    &lt;/main&gt;
+  )
+}
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="app/item/[id]/AddToCartButton.jsx（客户端组件）"><pre>
+'use client'
+
+import { useCartStore } from '../../../stores/cart.js'
+
+export default function AddToCartButton({ item }) {
+  const addItem = useCartStore((s) =&gt; s.addItem)
+  return &lt;button onClick={() =&gt; addItem(item)}&gt;加入购物车&lt;/button&gt;
+}
+</pre></div>
+
+<div class="code" data-lang="jsx" data-file="app/item/[id]/loading.jsx"><pre>
+export default function Loading() {
+  return &lt;div className="loading-animation" /&gt;    // 服务端组件 await 数据期间显示
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="Next.js 处理一次请求：服务端组件取数据渲染，流式发送 HTML，浏览器只下载客户端组件代码并水合">
+  <rect class="bx-p" x="20" y="20" width="340" height="250" rx="12"/>
+  <text class="ttl on-p" x="190" y="44" text-anchor="middle">服务器（Next.js）</text>
+  <rect class="bx" x="40" y="58" width="300" height="32" rx="6"/><text class="sm" x="190" y="79" text-anchor="middle">① 收到 GET /item/3</text>
+  <rect class="bx" x="40" y="98" width="300" height="32" rx="6"/><text class="sm" x="190" y="119" text-anchor="middle">② 先流式发送布局和 loading.jsx</text>
+  <rect class="bx" x="40" y="138" width="300" height="32" rx="6"/><text class="sm" x="190" y="159" text-anchor="middle">③ ItemPage await 数据</text>
+  <rect class="bx" x="40" y="178" width="300" height="32" rx="6"/><text class="sm" x="190" y="199" text-anchor="middle">④ 渲染完成，继续发送剩余 HTML</text>
+  <rect class="bx" x="40" y="218" width="300" height="40" rx="6"/>
+  <text class="sm" x="190" y="236" text-anchor="middle">服务端组件的代码和数据库查询</text>
+  <text class="sm" x="190" y="252" text-anchor="middle">永远不会发给浏览器</text>
+  <path class="ln-a" d="M362 145 H416" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="389" y="136" text-anchor="middle">流式 HTML</text>
+  <rect class="bx-g" x="420" y="20" width="320" height="250" rx="12"/>
+  <text class="ttl on-g" x="580" y="44" text-anchor="middle">浏览器</text>
+  <rect class="bx" x="440" y="58" width="280" height="32" rx="6"/><text class="sm" x="580" y="79" text-anchor="middle">⑤ 先看到骨架/加载动画，再看到商品</text>
+  <rect class="bx" x="440" y="98" width="280" height="32" rx="6"/><text class="sm" x="580" y="119" text-anchor="middle">⑥ 只下载客户端组件的 JS</text>
+  <rect class="bx-a" x="440" y="138" width="280" height="32" rx="6"/><text class="sm on-a" x="580" y="159" text-anchor="middle">⑦ 水合 AddToCartButton</text>
+  <text class="sm" x="580" y="200" text-anchor="middle">首屏 JS 更小、内容更早出现</text>
+  <text class="sm" x="580" y="220" text-anchor="middle">没有“先渲染再请求一次”的重复请求</text>
+</svg>
+<figcaption>图 7-11　Next.js 处理一次页面请求</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; 写在服务器和浏览器都会运行的代码时</div>
+  <ul>
+    <li>客户端组件也会先在服务器上渲染一次。<code>window</code>、<code>localStorage</code> 只能在 <code>useEffect</code> 或事件处理函数里访问。</li>
+    <li>服务器和浏览器渲染的结果必须一致，否则会出现“水合不匹配”警告（比如直接在 JSX 里显示 <code>Date.now()</code> 或随机数）。</li>
+    <li>服务器是多个用户共享的：不要把某个用户的数据放进模块级变量。Zustand 这类模块级 store 在 SSR 中要按请求创建（Zustand 文档有专门的 Next.js 指南）。</li>
+  </ul>
+</div>
+
+<div class="box tip">
+  <div class="t">&#10003; 其他选择</div>
+  <p>
+    <strong>React Router 框架模式</strong>（原 Remix）同样基于 Vite，提供 SSR、文件路由和 <code>loader</code>/<code>action</code> 数据模型，从第 5 章的数据模式迁移过去很自然。
+    Next.js 里做国际化通常用 <code>next-intl</code>。
+  </p>
+</div>
+
+<details class="box deep">
+<summary class="t" style="cursor:pointer">&#128269; 不用框架手写 SSR（点击展开）</summary>
+<p>理解原理用。服务器端用 <code>react-dom/server</code> 把组件渲染成 HTML 流，浏览器端用 <code>hydrateRoot</code> 水合：</p>
+<div class="code" data-lang="jsx"><pre>
+// server.js（Node）
+import { renderToPipeableStream } from 'react-dom/server'
+
+app.get('*', (req, res) =&gt; {
+  const { pipe } = renderToPipeableStream(&lt;App url={req.url} /&gt;, {
+    bootstrapScripts: ['/assets/client.js'],
+    onShellReady() {
+      res.setHeader('Content-Type', 'text/html')
+      pipe(res)                     // 流式发送：Suspense 边界外的内容先到
+    },
+  })
+})
+
+// client.jsx（浏览器）
+import { hydrateRoot } from 'react-dom/client'
+hydrateRoot(document, &lt;App url={location.pathname} /&gt;)
+</pre></div>
+<p>真实项目还要处理数据预取、状态序列化、路由、代码分割、开发时热更新……这正是框架存在的意义。Vite 官方文档有一份 SSR 指南，可以作为起点。</p>
+</details>
+
+<h2 id="build">生产构建</h2>
+
+<div class="tw"><table>
+<thead><tr><th>项目类型</th><th>构建</th><th>部署</th></tr></thead>
+<tbody>
+<tr><td>Vite 单页应用</td><td><code>npm run build</code> → <code>dist/</code></td><td>任何静态托管；配置路由回退到 <code>index.html</code></td></tr>
+<tr><td>Next.js</td><td><code>npm run build</code> → <code>.next/</code></td><td><code>npm start</code> 运行 Node 服务；或部署到 Vercel 等平台；全静态页面可 <code>output: 'export'</code></td></tr>
+</tbody>
+</table></div>
+
+<p>Vite 构建默认就会压缩代码、抽取 CSS、按动态 <code>import()</code> 拆分 chunk、给文件名加内容哈希，不需要额外配置。</p>
+
+<h2 id="summary">小结</h2>
+
+<div class="tw"><table>
+<thead><tr><th>主题</th><th>工具 / 写法</th></tr></thead>
+<tbody>
+<tr><td>代码检查</td><td>ESLint 9 扁平配置 + <code>eslint-plugin-react-hooks</code></td></tr>
+<tr><td>测试运行器</td><td>Vitest（复用 Vite 配置）</td></tr>
+<tr><td>组件测试</td><td>React Testing Library：<code>render</code>、<code>screen.getByRole</code>、<code>userEvent</code></td></tr>
+<tr><td>模拟函数</td><td><code>vi.fn()</code>；网络用 MSW</td></tr>
+<tr><td>国际化</td><td>react-i18next：<code>useTranslation()</code>、<code>t()</code>、<code>changeLanguage</code></td></tr>
+<tr><td>代码分割</td><td>动态 <code>import()</code>、<code>React.lazy</code>、路由 <code>lazy</code></td></tr>
+<tr><td>加载状态</td><td><code>&lt;Suspense fallback&gt;</code></td></tr>
+<tr><td>SSR / SSG</td><td>Next.js App Router（或 React Router 框架模式）</td></tr>
+<tr><td>服务端组件</td><td>默认；<code>async</code> 组件直接 await 数据</td></tr>
+<tr><td>客户端组件</td><td>文件顶部 <code>'use client'</code></td></tr>
+</tbody>
+</table></div>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>给购物车 store 写完整的单元测试：添加、重复添加、移除、计算总价。</li>
+    <li>给 <code>StoreCartItem</code> 写组件测试：点击“删除”按钮后，商品从页面上消失。</li>
+    <li>把整个应用的文字都翻译成中文，价格用 <code>Intl.NumberFormat</code> 按语言显示货币。</li>
+    <li>运行 <code>npm run build</code>，在 <code>dist/assets</code> 里找出每个语言包和懒加载页面对应的 chunk。</li>
+    <li>（进阶）用 Next.js 完成商品详情页，查看网页源代码，确认商品信息已经在 HTML 里；再在浏览器 Network 面板确认 <code>ItemPage</code> 的代码没有被下载。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第 1 章 · 初识 React 19 — React 项目实战教程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="assets/react.css">
+<script type="importmap">
+{ "imports": {
+  "react": "https://esm.sh/react@19.2.0",
+  "react-dom/client": "https://esm.sh/react-dom@19.2.0/client?external=react",
+  "htm": "https://esm.sh/htm@3.1.1"
+} }
+</script>
+</head>
+<body data-chapter="1">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">第 1 章</span>
+<h1>初识 React 19</h1>
+<p class="lede">
+  React 是一个用来构建用户界面的 JavaScript 库。这一章不装任何工具，只用一个 HTML 文件，
+  就让页面跟着数据自动变化，顺便弄清 React 最核心的一句话：<strong>界面是状态的函数</strong>。
+</p>
+
+<div class="goals">
+  <h4>本章目标</h4>
+  <ul>
+    <li>理解“声明式 UI”和 <code>UI = f(state)</code> 的含义</li>
+    <li>知道 React 是“库”，以及一个完整应用还需要哪些配套工具</li>
+    <li>认识 JSX：它长得像 HTML，其实是 JavaScript</li>
+    <li>用 <code>createRoot</code> 渲染第一个组件，用 <code>useState</code> 让它动起来</li>
+    <li>理解“受控输入框”：React 里双向绑定是怎么实现的</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="why">为什么需要 React</h2>
+
+<p>先看一个最普通的需求：输入框里打什么，下面那行字就显示什么。不用任何框架，你得这样写：</p>
+
+<div class="code" data-lang="html" data-file="不用框架：手动同步"><pre>
+&lt;input id="box"&gt;
+&lt;p id="out"&gt;&lt;/p&gt;
+
+&lt;script&gt;
+  const box = document.getElementById('box')
+  const out = document.getElementById('out')
+  box.addEventListener('input', () =&gt; {
+    out.textContent = box.value     // 每次都要自己去改 DOM
+  })
+&lt;/script&gt;
+</pre></div>
+
+<p>
+  两个元素还好。真实页面有几百个元素、几十种数据，某个数据一变，要记得同步修改好几处 DOM，漏掉一处就是 bug。
+  React 的思路是：<strong>你不要去“改”界面，你只需要描述“在某个状态下，界面应该长什么样”</strong>，剩下的交给 React。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 250" role="img" aria-label="UI 等于状态的函数：状态输入组件函数，输出界面描述，React 负责更新 DOM">
+  <rect class="bx-b" x="20" y="80" width="150" height="80" rx="12"/>
+  <text class="ttl on-b" x="95" y="112" text-anchor="middle">状态 state</text>
+  <text class="mono sm" x="95" y="136" text-anchor="middle">{ text: 'Hi' }</text>
+
+  <path class="ln-b" d="M172 120 H236" marker-end="url(#ar)"/>
+
+  <rect class="bx-a" x="240" y="60" width="200" height="120" rx="14"/>
+  <text class="ttl on-a" x="340" y="92" text-anchor="middle">组件函数 f</text>
+  <text class="mono sm" x="340" y="118" text-anchor="middle">function App() {</text>
+  <text class="mono sm" x="340" y="136" text-anchor="middle">return &lt;p&gt;{text}&lt;/p&gt;</text>
+  <text class="mono sm" x="340" y="154" text-anchor="middle">}</text>
+
+  <path class="ln-a" d="M442 120 H506" marker-end="url(#ar-a)"/>
+
+  <rect class="bx-g" x="510" y="80" width="230" height="80" rx="12"/>
+  <text class="ttl on-g" x="625" y="112" text-anchor="middle">界面 UI</text>
+  <text class="mono sm" x="625" y="136" text-anchor="middle">&lt;p&gt;Hi&lt;/p&gt;</text>
+
+  <text class="ttl" x="380" y="30" text-anchor="middle">UI = f(state)</text>
+  <path class="ln-d" d="M625 162 V210 H95 V162" marker-end="url(#ar)"/>
+  <text class="halo sm" x="380" y="214" text-anchor="middle">用户操作 → 更新状态 → React 重新调用 f → 只更新变化的 DOM</text>
+</svg>
+<figcaption>图 1-1　React 的核心公式：界面是状态的函数</figcaption>
+</figure>
+
+<p>这种写法叫<strong>声明式</strong>（描述结果），与之相对的手动改 DOM 叫<strong>命令式</strong>（描述步骤）。React 的核心特点：</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#129513;</span><h4>组件</h4><p>界面由一个个组件拼成。组件就是一个返回界面描述的 JavaScript 函数。</p></div>
+  <div class="card"><span class="ic">&#128221;</span><h4>JSX</h4><p>在 JS 里直接写类似 HTML 的标记，逻辑和结构放在一起，可以使用 JS 的全部能力。</p></div>
+  <div class="card"><span class="ic">&#10145;&#65039;</span><h4>单向数据流</h4><p>数据从父组件流向子组件，状态的变化路径清晰可追踪。</p></div>
+  <div class="card"><span class="ic">&#127760;</span><h4>庞大的生态</h4><p>路由、状态管理、动画、测试、服务端渲染……几乎每个方向都有成熟的方案，React Native 还能做原生 App。</p></div>
+</div>
+
+<h3>React 是“库”，不是“全家桶”</h3>
+
+<p>
+  React 本身只负责一件事：<strong>把状态变成界面</strong>。路由、数据请求、状态管理、构建工具都不在 React 里，需要从社区选择。
+  这既是它灵活的原因，也是初学者常感到“选择困难”的原因。本教程会为每一项给出一个当下主流、稳妥的选择：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="React 核心库与周边生态">
+  <circle class="bx-a" cx="380" cy="150" r="58"/>
+  <text class="ttl on-a" x="380" y="146" text-anchor="middle">React</text>
+  <text class="sm" x="380" y="166" text-anchor="middle">组件 · Hooks</text>
+
+  <rect class="bx-b" x="40" y="30" width="190" height="50" rx="10"/>
+  <text class="on-b" x="135" y="52" text-anchor="middle">构建工具</text>
+  <text class="sm" x="135" y="70" text-anchor="middle">Vite（第 3–4 章）</text>
+  <rect class="bx-b" x="285" y="10" width="190" height="50" rx="10"/>
+  <text class="on-b" x="380" y="32" text-anchor="middle">路由</text>
+  <text class="sm" x="380" y="50" text-anchor="middle">React Router 7（第 5 章）</text>
+  <rect class="bx-b" x="530" y="30" width="190" height="50" rx="10"/>
+  <text class="on-b" x="625" y="52" text-anchor="middle">服务端数据</text>
+  <text class="sm" x="625" y="70" text-anchor="middle">TanStack Query（第 5 章）</text>
+  <rect class="bx-p" x="20" y="125" width="200" height="50" rx="10"/>
+  <text class="on-p" x="120" y="147" text-anchor="middle">全局状态</text>
+  <text class="sm" x="120" y="165" text-anchor="middle">Zustand（第 6 章）</text>
+  <rect class="bx-p" x="540" y="125" width="200" height="50" rx="10"/>
+  <text class="on-p" x="640" y="147" text-anchor="middle">动画</text>
+  <text class="sm" x="640" y="165" text-anchor="middle">Motion（第 3 章）</text>
+  <rect class="bx-g" x="40" y="220" width="190" height="50" rx="10"/>
+  <text class="on-g" x="135" y="242" text-anchor="middle">测试</text>
+  <text class="sm" x="135" y="260" text-anchor="middle">Vitest + Testing Library</text>
+  <rect class="bx-g" x="285" y="235" width="190" height="50" rx="10"/>
+  <text class="on-g" x="380" y="257" text-anchor="middle">国际化</text>
+  <text class="sm" x="380" y="275" text-anchor="middle">react-i18next（第 7 章）</text>
+  <rect class="bx-g" x="530" y="220" width="190" height="50" rx="10"/>
+  <text class="on-g" x="625" y="242" text-anchor="middle">全栈框架 / SSR</text>
+  <text class="sm" x="625" y="260" text-anchor="middle">Next.js（第 7 章）</text>
+
+  <path class="ln" d="M232 66 L330 115"/><path class="ln" d="M380 62 V90"/><path class="ln" d="M528 66 L430 115"/>
+  <path class="ln" d="M222 150 H320"/><path class="ln" d="M538 150 H440"/>
+  <path class="ln" d="M232 236 L330 186"/><path class="ln" d="M380 233 V210"/><path class="ln" d="M528 236 L430 186"/>
+</svg>
+<figcaption>图 1-2　React 只负责中心，周边由社区生态补齐</figcaption>
+</figure>
+
+<h3>React 的成长史</h3>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="React 版本时间线">
+  <path class="ln" d="M30 96 H735" marker-end="url(#ar)"/>
+  <circle class="bx" cx="70" cy="96" r="7"/>
+  <text class="ttl" x="70" y="74" text-anchor="middle">2013.05</text>
+  <text class="sm" x="70" y="124" text-anchor="middle">Facebook 开源</text>
+  <circle class="bx" cx="185" cy="96" r="7"/>
+  <text class="ttl" x="185" y="74" text-anchor="middle">2017.09</text>
+  <text class="sm" x="185" y="124" text-anchor="middle">16 · Fiber 架构</text>
+  <circle class="bx-a" cx="300" cy="96" r="9"/>
+  <text class="ttl on-a" x="300" y="74" text-anchor="middle">2019.02</text>
+  <text class="sm" x="300" y="124" text-anchor="middle">16.8 · Hooks</text>
+  <text class="sm" x="300" y="140" text-anchor="middle">函数组件成为主流</text>
+  <circle class="bx" cx="415" cy="96" r="7"/>
+  <text class="ttl" x="415" y="74" text-anchor="middle">2022.03</text>
+  <text class="sm" x="415" y="124" text-anchor="middle">18 · 并发渲染</text>
+  <circle class="bx-a" cx="530" cy="96" r="9"/>
+  <text class="ttl on-a" x="530" y="74" text-anchor="middle">2024.12</text>
+  <text class="sm" x="530" y="124" text-anchor="middle">19 · Actions、</text>
+  <text class="sm" x="530" y="140" text-anchor="middle">服务端组件</text>
+  <circle class="bx-a" cx="660" cy="96" r="9"/>
+  <text class="ttl on-a" x="660" y="74" text-anchor="middle">2025.10</text>
+  <text class="sm" x="660" y="124" text-anchor="middle">19.2 · Compiler 1.0</text>
+  <text class="sm" x="660" y="140" text-anchor="middle">本教程使用</text>
+  <rect class="bx-d" x="200" y="160" width="360" height="30" rx="6"/>
+  <text class="sm" x="380" y="180" text-anchor="middle">老教程里的 class 组件、Create React App 都已过时，本教程只用函数组件 + Hooks</text>
+</svg>
+<figcaption>图 1-3　React 版本时间线</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; 网上的老资料要小心</div>
+  <p>
+    你会搜到大量用 <code>class App extends React.Component</code>、<code>this.setState</code> 写的教程，以及用 <code>create-react-app</code> 创建项目的教程。
+    class 组件仍然能用但已不推荐；Create React App 已在 2025 年被官方弃用。本教程全部使用<strong>函数组件 + Hooks</strong>，项目用 Vite 创建。
+  </p>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; 读过本站 Vue 版的话</div>
+  <p>
+    两个框架要解决的问题相同，但思路不同：Vue 会<em>自动追踪</em>你用了哪些数据，数据一变就精确更新；React 则是<em>状态一变就重新执行组件函数</em>，再比较前后两次结果。
+    这个差异会贯穿整本教程。附录有一份逐项对照表。
+  </p>
+</div>
+
+<h2 id="setup">一分钟上手</h2>
+
+<p>
+  React 的组件通常用 JSX 编写，而浏览器不认识 JSX，正式项目会用构建工具（第 3 章起使用 Vite）把它编译成普通 JS。
+  为了让你第一时间看到效果，本章和下一章先用一个“学习专用”的办法：在浏览器里用 <strong>Babel</strong> 即时编译 JSX。
+</p>
+
+<div class="code" data-lang="html" data-file="index.html"><pre>
+&lt;!doctype html&gt;
+&lt;html&gt;
+&lt;head&gt;
+  &lt;meta charset="utf-8"&gt;
+  &lt;title&gt;React 上手&lt;/title&gt;
+
+  &lt;!-- ① import map：告诉浏览器 'react' 这些名字去哪里下载 --&gt;
+  &lt;script type="importmap"&gt;
+  {
+    "imports": {
+      "react": "https://esm.sh/react@19.2.0",
+      "react-dom/client": "https://esm.sh/react-dom@19.2.0/client?external=react"
+    }
+  }
+  &lt;/script&gt;
+
+  &lt;!-- ② Babel：在浏览器里把 JSX 编译成 JS（仅用于学习） --&gt;
+  &lt;script src="https://unpkg.com/@babel/standalone/babel.min.js"&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;div id="root"&gt;&lt;/div&gt;
+
+  &lt;!-- ③ type="text/babel"：交给 Babel 编译；data-type="module"：支持 import --&gt;
+  &lt;script type="text/babel" data-type="module" data-presets="react"&gt;
+    import React from 'react'
+    import { createRoot } from 'react-dom/client'
+
+    console.log('React 版本：', React.version)
+  &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 220" role="img" aria-label="浏览器加载 import map、esm.sh 上的 React 模块和 Babel 编译器">
+  <rect class="bx" x="20" y="60" width="180" height="100" rx="12"/>
+  <text class="ttl" x="110" y="86" text-anchor="middle">index.html</text>
+  <text class="sm" x="110" y="110" text-anchor="middle">import map</text>
+  <text class="sm" x="110" y="128" text-anchor="middle">text/babel 脚本</text>
+
+  <rect class="bx-p" x="290" y="20" width="200" height="56" rx="10"/>
+  <text class="on-p" x="390" y="44" text-anchor="middle">Babel（unpkg）</text>
+  <text class="sm" x="390" y="64" text-anchor="middle">把 JSX 编译成 JS</text>
+  <rect class="bx-b" x="290" y="144" width="200" height="56" rx="10"/>
+  <text class="on-b" x="390" y="168" text-anchor="middle">esm.sh</text>
+  <text class="sm" x="390" y="188" text-anchor="middle">以 ES 模块提供 react 等包</text>
+
+  <path class="ln-p" d="M202 90 L286 52" marker-end="url(#ar)"/>
+  <path class="ln-b" d="M202 130 L286 168" marker-end="url(#ar)"/>
+
+  <rect class="bx-g" x="580" y="70" width="160" height="80" rx="12"/>
+  <text class="ttl on-g" x="660" y="102" text-anchor="middle">页面运行</text>
+  <text class="sm" x="660" y="124" text-anchor="middle">import 'react' → esm.sh</text>
+  <path class="ln" d="M492 48 C540 48 545 90 576 100" marker-end="url(#ar)"/>
+  <path class="ln" d="M492 172 C540 172 545 130 576 120" marker-end="url(#ar)"/>
+</svg>
+<figcaption>图 1-4　学习用的“零安装”方案</figcaption>
+</figure>
+
+<div class="box warn">
+  <div class="t">&#9888; 浏览器内编译只适合学习</div>
+  <p>
+    Babel 有好几 MB，而且每次打开页面都要现场编译，非常慢。它也只能编译页面里内联的脚本，没法编译被 import 的其他 <code>.jsx</code> 文件。
+    所以第 3 章做多文件的游戏时，我们会换成 Vite。正式项目永远在构建阶段编译 JSX。
+  </p>
+</div>
+
+<div class="box note">
+  <div class="t">&#9432; React 19 不再提供 UMD 文件</div>
+  <p>
+    老教程里常见的 <code>&lt;script src=".../react.development.js"&gt;</code> 会提供一个全局变量 <code>React</code>。React 19 移除了这种 UMD 构建，
+    在浏览器里直接使用需要通过 ES 模块（比如 esm.sh 这类 CDN）。这也是上面用 import map 的原因。
+  </p>
+</div>
+
+<h2 id="first">第一个组件</h2>
+
+<p>在 <code>text/babel</code> 脚本里写一个组件，并把它渲染到 <code>#root</code>：</p>
+
+<div class="code" data-lang="jsx" data-file="&lt;script type=&quot;text/babel&quot; ...&gt;"><pre>
+import React from 'react'
+import { createRoot } from 'react-dom/client'
+
+// 组件：一个首字母大写、返回 JSX 的函数
+function App() {
+  const message = 'Hello React!'
+  return &lt;p&gt;{message}&lt;/p&gt;
+}
+
+// 在 #root 上创建一个 React 根节点，并渲染 App
+const root = createRoot(document.getElementById('root'))
+root.render(&lt;App /&gt;)
+</pre></div>
+
+<p>页面上会显示 <em>Hello React!</em>。这几行代码里有三个关键点：</p>
+
+<ol>
+  <li><strong>组件就是函数</strong>：名字必须大写开头（<code>App</code>），返回要显示的内容。</li>
+  <li><strong>花括号 <code>{ }</code></strong>：在 JSX 里嵌入任意 JS 表达式，比如 <code>{message}</code>、<code>{1 + 1}</code>、<code>{user.name.toUpperCase()}</code>。</li>
+  <li><strong><code>createRoot(...).render(...)</code></strong>：React 接管 <code>#root</code> 元素，从此它里面的 DOM 都由 React 管理。</li>
+</ol>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 210" role="img" aria-label="createRoot 接管 DOM 元素，render 渲染组件树">
+  <rect class="bx-b" x="20" y="60" width="200" height="90" rx="12"/>
+  <text class="ttl on-b" x="120" y="88" text-anchor="middle">组件 App</text>
+  <text class="mono sm" x="120" y="114" text-anchor="middle">function App() {</text>
+  <text class="mono sm" x="120" y="132" text-anchor="middle">return &lt;p&gt;…&lt;/p&gt; }</text>
+  <path class="ln-b" d="M222 105 H286" marker-end="url(#ar)"/>
+  <text class="halo mono sm" x="254" y="96" text-anchor="middle">render</text>
+  <rect class="bx-a" x="290" y="60" width="180" height="90" rx="12"/>
+  <text class="ttl on-a" x="380" y="88" text-anchor="middle">React 根 root</text>
+  <text class="sm" x="380" y="112" text-anchor="middle">调用组件、计算界面</text>
+  <text class="sm" x="380" y="130" text-anchor="middle">之后负责所有更新</text>
+  <path class="ln-a" d="M472 105 H536" marker-end="url(#ar-a)"/>
+  <rect class="bx-g" x="540" y="40" width="200" height="130" rx="12"/>
+  <text class="ttl on-g" x="640" y="66" text-anchor="middle">页面 DOM</text>
+  <rect class="bx" x="565" y="80" width="150" height="70" rx="8"/>
+  <text class="mono sm" x="640" y="106" text-anchor="middle">&lt;div id="root"&gt;</text>
+  <text class="mono sm" x="640" y="128" text-anchor="middle">&lt;p&gt;Hello…&lt;/p&gt;</text>
+  <text class="mono sm" x="380" y="40" text-anchor="middle">createRoot(document.getElementById('root'))</text>
+</svg>
+<figcaption>图 1-5　从组件到页面</figcaption>
+</figure>
+
+<h2 id="jsx">JSX：看起来像 HTML 的 JavaScript</h2>
+
+<p>JSX 不是模板语言，它会被编译成普通的函数调用。下面两段代码完全等价：</p>
+
+<div class="vs">
+  <div class="old"><div class="h">你写的 JSX</div>
+<div class="code" data-lang="jsx"><pre>
+&lt;button className="primary" onClick={save}&gt;
+  保存 {count} 项
+&lt;/button&gt;
+</pre></div></div>
+  <div class="new"><div class="h">编译后的 JS</div>
+<div class="code" data-lang="js"><pre>
+jsx('button', {
+  className: 'primary',
+  onClick: save,
+  children: ['保存 ', count, ' 项'],
+})
+</pre></div></div>
+</div>
+
+<p>因为它本质是 JS，所以有几条和 HTML 不同的规则，初学者最容易踩：</p>
+
+<div class="tw"><table>
+<thead><tr><th>规则</th><th>HTML</th><th>JSX</th></tr></thead>
+<tbody>
+<tr><td>CSS 类名</td><td><code>class="a"</code></td><td><code>className="a"</code>（<code>class</code> 是 JS 关键字）</td></tr>
+<tr><td>label 的 for</td><td><code>for="x"</code></td><td><code>htmlFor="x"</code></td></tr>
+<tr><td>属性命名</td><td><code>onclick</code>、<code>tabindex</code></td><td>驼峰：<code>onClick</code>、<code>tabIndex</code></td></tr>
+<tr><td>内联样式</td><td><code>style="font-size:14px"</code></td><td>对象：<code>style={{ fontSize: 14 }}</code></td></tr>
+<tr><td>标签闭合</td><td><code>&lt;img&gt;</code>、<code>&lt;br&gt;</code></td><td>必须闭合：<code>&lt;img /&gt;</code>、<code>&lt;br /&gt;</code></td></tr>
+<tr><td>根元素</td><td>随意</td><td>必须只返回一个根；多个元素用 <code>&lt;&gt;…&lt;/&gt;</code>（Fragment）包起来</td></tr>
+<tr><td>注释</td><td><code>&lt;!-- --&gt;</code></td><td><code>{/* 注释 */}</code></td></tr>
+</tbody>
+</table></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 花括号里只能放表达式</div>
+  <p>
+    <code>{ok ? '是' : '否'}</code>、<code>{list.length}</code>、<code>{format(date)}</code> 都可以；<code>{if (ok) {...}}</code>、<code>{for (...)}</code> 这种语句不行。
+    需要条件就用三元运算或 <code>&amp;&amp;</code>，需要循环就用 <code>map</code> —— 下一章会大量用到。
+  </p>
+</div>
+
+<div class="box deep">
+  <div class="t">&#128269; 为什么要用 JSX？</div>
+  <p>
+    React 认为，“渲染逻辑”和“界面结构”本来就是紧密耦合的（按钮显不显示、列表怎么排，都依赖数据），与其把它们拆进模板和脚本两个文件，
+    不如都放在 JS 里，用 JS 本身的 <code>if</code>、<code>map</code>、变量和函数来组织。代价是要习惯这些和 HTML 不同的写法。
+  </p>
+</div>
+
+<h2 id="state">状态：useState</h2>
+
+<p>
+  上面的 <code>message</code> 是个普通变量，改了它界面也不会变。要让界面能“变”，需要<strong>状态</strong>。
+  <code>useState</code> 是 React 最基础的 <strong>Hook</strong>（以 <code>use</code> 开头的特殊函数）：
+</p>
+
+<div class="code" data-lang="jsx"><pre>
+import React, { useState } from 'react'
+
+function Counter() {
+  // useState(初始值) 返回一对：[当前值, 修改它的函数]
+  const [count, setCount] = useState(0)
+
+  return (
+    &lt;button onClick={() =&gt; setCount(count + 1)}&gt;
+      点了 {count} 次
+    &lt;/button&gt;
+  )
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="setState 触发重新渲染的循环">
+  <rect class="bx-g" x="20" y="40" width="180" height="60" rx="10"/>
+  <text class="on-g ttl" x="110" y="66" text-anchor="middle">① 用户点击</text>
+  <text class="mono sm" x="110" y="86" text-anchor="middle">setCount(count + 1)</text>
+
+  <rect class="bx-p" x="290" y="40" width="180" height="60" rx="10"/>
+  <text class="on-p ttl" x="380" y="66" text-anchor="middle">② React 记下新状态</text>
+  <text class="sm" x="380" y="86" text-anchor="middle">并安排一次重新渲染</text>
+
+  <rect class="bx-a" x="560" y="40" width="180" height="60" rx="10"/>
+  <text class="on-a ttl" x="650" y="66" text-anchor="middle">③ 重新调用 Counter()</text>
+  <text class="sm" x="650" y="86" text-anchor="middle">这次 useState 返回 1</text>
+
+  <rect class="bx-b" x="560" y="190" width="180" height="60" rx="10"/>
+  <text class="on-b ttl" x="650" y="216" text-anchor="middle">④ 比较新旧结果</text>
+  <text class="sm" x="650" y="236" text-anchor="middle">按钮文字变了</text>
+
+  <rect class="bx-g" x="290" y="190" width="180" height="60" rx="10"/>
+  <text class="on-g ttl" x="380" y="216" text-anchor="middle">⑤ 更新真实 DOM</text>
+  <text class="sm" x="380" y="236" text-anchor="middle">只改那一段文字</text>
+
+  <path class="ln" d="M202 70 H286" marker-end="url(#ar)"/>
+  <path class="ln" d="M472 70 H556" marker-end="url(#ar)"/>
+  <path class="ln" d="M650 102 V186" marker-end="url(#ar)"/>
+  <path class="ln" d="M558 220 H474" marker-end="url(#ar)"/>
+  <path class="ln-d" d="M288 220 H110 V104" marker-end="url(#ar)"/>
+  <text class="halo sm" x="190" y="214" text-anchor="middle">等待下一次操作</text>
+  <text class="lbl" x="380" y="280" text-anchor="middle">组件函数在每次渲染时都会完整执行一遍；状态保存在 React 内部，不会因此丢失</text>
+</svg>
+<figcaption>图 1-6　setState → 重新渲染 → 更新 DOM</figcaption>
+</figure>
+
+<div class="box key">
+  <div class="t">&#9733; 理解“重新渲染”</div>
+  <p>
+    每次状态改变，React 都会<strong>重新调用整个组件函数</strong>，得到一份新的界面描述，再和上一次比较，只把差异应用到真实 DOM 上。
+    组件函数里的普通变量每次都会重新创建，只有用 <code>useState</code> 存的值会被 React 记住。这是理解 React 的钥匙。
+  </p>
+</div>
+
+<div class="box warn">
+  <div class="t">&#9888; 不要直接改状态变量</div>
+  <p>
+    <code>count = count + 1</code> 不会有任何效果：React 不知道它变了，也不会重新渲染。永远通过 <code>setCount</code> 修改。
+    另外，调用 <code>setCount</code> 之后，<em>当前这次渲染</em>里的 <code>count</code> 依然是旧值，新值要到下一次渲染才看得到。
+  </p>
+</div>
+
+<h3>Hooks 的两条规则</h3>
+
+<ul>
+  <li><strong>只在组件（或自定义 Hook）的顶层调用</strong>：不要放在 <code>if</code>、循环或普通嵌套函数里。React 靠调用顺序来区分每个 <code>useState</code>。</li>
+  <li><strong>只在 React 函数组件或自定义 Hook 中调用</strong>：普通函数里不能用。</li>
+</ul>
+
+<h2 id="input">受控输入框</h2>
+
+<p>
+  现在实现开头那个“输入框 → 文字”的例子。React 里没有自动的双向绑定，而是把输入框的值<strong>交给状态控制</strong>：
+  <code>value</code> 来自状态，用户输入时在 <code>onChange</code> 里更新状态。这叫<strong>受控组件</strong>：
+</p>
+
+<div class="code" data-lang="jsx"><pre>
+function App() {
+  const [message, setMessage] = useState('Hello React!')
+
+  return (
+    &lt;div&gt;
+      &lt;p&gt;{message}&lt;/p&gt;
+      &lt;input
+        value={message}                                 // 状态 → 输入框
+        onChange={(e) =&gt; setMessage(e.target.value)}   // 输入框 → 状态
+      /&gt;
+    &lt;/div&gt;
+  )
+}
+</pre></div>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 200" role="img" aria-label="受控输入框：value 来自状态，onChange 更新状态">
+  <rect class="bx-g" x="40" y="60" width="200" height="80" rx="12"/>
+  <text class="on-g ttl" x="140" y="88" text-anchor="middle">&lt;input&gt;</text>
+  <rect class="bx" x="70" y="100" width="140" height="26" rx="5"/>
+  <text class="mono sm" x="80" y="118">Hello Re|</text>
+  <rect class="bx-a" x="300" y="60" width="160" height="80" rx="12"/>
+  <text class="ttl on-a" x="380" y="94" text-anchor="middle">message</text>
+  <text class="mono sm" x="380" y="118" text-anchor="middle">useState</text>
+  <rect class="bx-g" x="520" y="60" width="200" height="80" rx="12"/>
+  <text class="on-g ttl" x="620" y="88" text-anchor="middle">&lt;p&gt;</text>
+  <text class="mono" x="620" y="118" text-anchor="middle">Hello Re</text>
+  <path class="ln-g" d="M242 86 H296" marker-end="url(#ar)"/>
+  <text class="halo sm" x="270" y="78" text-anchor="middle">onChange</text>
+  <path class="ln-a" d="M298 114 H244" marker-end="url(#ar-a)"/>
+  <text class="halo sm" x="270" y="134" text-anchor="middle">value</text>
+  <path class="ln-a" d="M462 100 H516" marker-end="url(#ar-a)"/>
+  <text class="lbl" x="380" y="180" text-anchor="middle">状态是唯一的真相来源：输入框只是“显示”状态，并在用户输入时“请求”修改状态</text>
+</svg>
+<figcaption>图 1-7　受控输入框的两个方向</figcaption>
+</figure>
+
+<div class="box note">
+  <div class="t">&#9432; 为什么不做自动双向绑定</div>
+  <p>
+    受控写法多写了一行，但好处是所有修改都经过你的代码：可以顺手做校验、格式化（比如自动转大写），也能清楚地知道数据是在哪里改的。
+    只写 <code>value</code> 不写 <code>onChange</code>，输入框会变成“只读”，React 还会在控制台给出警告。
+  </p>
+</div>
+
+<p>亲手试一试：</p>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · 就是上面那段代码</div>
+  <div class="body"><div id="demo-1"><span class="muted">加载中……</span></div></div>
+</div>
+
+<h3>完整代码</h3>
+
+<div class="code" data-lang="html" data-file="index.html（本章最终版）"><pre>
+&lt;!doctype html&gt;
+&lt;html&gt;
+&lt;head&gt;
+  &lt;meta charset="utf-8"&gt;
+  &lt;title&gt;React 上手&lt;/title&gt;
+  &lt;script type="importmap"&gt;
+  {
+    "imports": {
+      "react": "https://esm.sh/react@19.2.0",
+      "react-dom/client": "https://esm.sh/react-dom@19.2.0/client?external=react"
+    }
+  }
+  &lt;/script&gt;
+  &lt;script src="https://unpkg.com/@babel/standalone/babel.min.js"&gt;&lt;/script&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;div id="root"&gt;&lt;/div&gt;
+
+  &lt;script type="text/babel" data-type="module" data-presets="react"&gt;
+    import React, { useState } from 'react'
+    import { createRoot } from 'react-dom/client'
+
+    function App() {
+      const [message, setMessage] = useState('Hello React!')
+      return (
+        &lt;div&gt;
+          &lt;p&gt;{message}&lt;/p&gt;
+          &lt;input value={message} onChange={(e) =&gt; setMessage(e.target.value)} /&gt;
+        &lt;/div&gt;
+      )
+    }
+
+    createRoot(document.getElementById('root')).render(&lt;App /&gt;)
+  &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</pre></div>
+
+<div class="box tip">
+  <div class="t">&#10003; 为什么要 import React</div>
+  <p>
+    浏览器里的 Babel 默认把 JSX 编译成 <code>React.createElement(...)</code>，所以作用域里需要有 <code>React</code> 这个变量。
+    用 Vite 等构建工具时会使用新的“自动 JSX 运行时”，就不再需要这一行了。
+  </p>
+</div>
+
+<h2 id="devtools">React DevTools</h2>
+
+<p>
+  官方调试工具 <strong>React Developer Tools</strong> 是一个浏览器扩展（Chrome / Edge / Firefox 商店里搜索即可）。安装后开发者工具里会多出两个标签：
+</p>
+
+<div class="cards">
+  <div class="card"><span class="ic">&#129513;</span><h4>Components</h4><p>查看组件树，选中组件可以看到它的 props、state 和 Hooks，还能直接修改值观察界面变化。</p></div>
+  <div class="card"><span class="ic">&#9201;&#65039;</span><h4>Profiler</h4><p>录制一段操作，查看哪些组件重新渲染了、各花了多少时间。第 4 章讲性能时会用到。</p></div>
+</div>
+
+<p>如果页面是双击打开的（<code>file://</code>），记得在扩展设置里打开“允许访问文件网址”。</p>
+
+<h2 id="summary">小结</h2>
+
+<ul>
+  <li>React 是一个负责“把状态变成界面”的<strong>库</strong>，核心思想是 <code>UI = f(state)</code>。</li>
+  <li>组件是返回 JSX 的函数；JSX 会被编译成普通的 JS 函数调用。</li>
+  <li><code>createRoot(el).render(&lt;App /&gt;)</code> 启动应用。</li>
+  <li><code>useState</code> 保存状态；调用 setter 会让组件<strong>重新执行一遍</strong>并更新 DOM。</li>
+  <li>表单用“受控组件”：<code>value</code> + <code>onChange</code>。</li>
+  <li>浏览器内用 Babel 编译 JSX 只适合学习；从第 3 章开始使用 Vite。</li>
+</ul>
+
+<div class="exercise">
+  <h3>动手练习</h3>
+  <ol>
+    <li>在输入框下面显示消息的字符数和倒序文字。</li>
+    <li>写一个 <code>Counter</code> 组件，在 <code>App</code> 里放三个 <code>&lt;Counter /&gt;</code>，确认它们的计数互不影响。</li>
+    <li>把输入框改成“自动转大写”：在 <code>onChange</code> 里做 <code>toUpperCase()</code>。</li>
+    <li>故意把 <code>useState</code> 写进一个 <code>if</code> 里，看看控制台的报错是什么，理解“Hooks 只能在顶层调用”。</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+<script type="module">
+  import { createElement, useState } from 'react'
+  import { createRoot } from 'react-dom/client'
+  import htm from 'htm'
+  const html = htm.bind(createElement)
+  function App() {
+    const [message, setMessage] = useState('Hello React!')
+    return html`<div>
+      <p style=${{ marginTop: 0 }}>${message}</p>
+      <input value=${message} onChange=${(e) => setMessage(e.target.value)} style=${{ width: '100%', maxWidth: '340px' }} />
+      <p className="muted">字符数：${[...message].length}　·　倒过来：${[...message].reverse().join('')}</p>
+    </div>`
+  }
+  createRoot(document.getElementById('demo-1')).render(html`<${App} />`)
+</script>
+</body>
+</html>

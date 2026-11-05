@@ -614,9 +614,13 @@ export const useUserStore = defineStore('user', () =&gt; {
     }
   }
 
-  // 应用启动时调用：检查是否已有会话
+  // 应用启动时调用：只检查是否已有会话，不做跳转
   async function init() {
-    await login()
+    try {
+      user.value = await $fetch('user')
+    } catch (e) {
+      console.warn(e)
+    }
   }
 
   return { user, userPicture, login, logout, init }
