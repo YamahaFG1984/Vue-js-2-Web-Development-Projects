@@ -44,7 +44,8 @@
       (part ? `<div class="part">${part}</div>` : '') +
       `<a class="ch${id === cur ? ' active' : ''}" href="${file}"><span class="n">${num}</span><span>${t}</span></a>`
     );
-    const sw = '<a class="switch" href="react/index.html">&#8644; 切换到 React 版教程</a>';
+    const sw = '<a class="switch" href="react/index.html">&#8644; 切换到 React 版教程</a>' +
+      '<a class="switch" href="design/index.html">&#9998; 姊妹系列：从设计到实现</a>';
     side.innerHTML = brand + sw + links.join('');
     const active = side.querySelector('a.ch.active');
     if (active) setTimeout(() => active.scrollIntoView({ block: 'center' }), 0);

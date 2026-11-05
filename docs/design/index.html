@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>从设计到实现 · 7 个业务项目练出前端思维</title>
+<meta name="description" content="写给后端开发者的前端设计课：每个项目都从需求、设计卡、组件拆分讲起，再一步步用 Vue 3 实现。">
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="assets/design.css">
+</head>
+<body data-chapter="0">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<div class="hero">
+  <span class="chapter-eyebrow">Vue 3 项目实战 · 姊妹系列</span>
+  <h1>从设计到实现：7 个业务项目练出前端思维</h1>
+  <p class="sub">
+    这个系列写给“会写 Vue 语法，但面对一个新需求不知道从哪里下手”的人，尤其是后端或 Django 全栈出身的开发者。
+    每个项目都先摊开写<strong>设计</strong>：用户要做什么、界面要记住什么、哪些能算出来、什么操作会改变它们。
+    设计清楚以后，再一步步翻译成 Vue 3 代码。
+    后面几个项目都是业务系统里天天见的功能：购物车、搜索自动补全、注册向导、后台数据表格、客服聊天室。学完就能用上。
+  </p>
+  <p style="margin-top:14px">
+    <span class="pill">设计卡</span><span class="pill">状态机</span><span class="pill">组件拆分</span>
+    <span class="pill">Vue 3.5</span><span class="pill">Pinia</span><span class="pill">TanStack Query</span>
+    <span class="pill">VeeValidate + Zod</span><span class="pill">Django + DRF</span><span class="pill">Channels</span>
+  </p>
+</div>
+
+<h2 id="why">为什么会“无处下手”</h2>
+
+<p>
+  用 Django 写页面时，思路是一条直线：<strong>这个页面需要什么数据 → 从数据库取 → 交给模板渲染</strong>。
+  一次请求结束，内存清空，下一次点击再从头来一遍。“状态”只有一个归宿：数据库。而数据库表结构，你早就在 Model 里设计好了。
+</p>
+<p>
+  前端应用不是这样。它是一个<strong>一直活在浏览器里的进程</strong>：用户每点一下，它就改一点自己记住的东西，界面跟着变。
+  像 Markdown 笔记本这种根本没有后端的应用，“从哪里取数据”这个问题直接落空，于是就不知道从哪里开始了。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="左：Django 每次请求从数据库重新渲染整页；右：前端应用中状态、界面、用户操作、事件处理构成一个循环">
+  <!-- 左：Django -->
+  <rect class="bx-d" x="20" y="20" width="340" height="262" rx="14"/>
+  <text class="ttl" x="190" y="44" text-anchor="middle">Django：一次请求 = 一次完整渲染</text>
+  <rect class="bx" x="100" y="58" width="200" height="28" rx="6"/>
+  <text class="sm" x="200" y="76" text-anchor="middle" style="fill:var(--fg)">① 浏览器请求 GET /notes/3</text>
+  <rect class="bx" x="100" y="100" width="200" height="28" rx="6"/>
+  <text class="sm" x="200" y="118" text-anchor="middle" style="fill:var(--fg)">② urls.py 找到视图函数</text>
+  <rect class="bx-g" x="100" y="142" width="200" height="28" rx="6"/>
+  <text class="sm on-g" x="200" y="160" text-anchor="middle">③ 视图查询数据库</text>
+  <rect class="bx" x="100" y="184" width="200" height="28" rx="6"/>
+  <text class="sm" x="200" y="202" text-anchor="middle" style="fill:var(--fg)">④ render(模板, 数据)</text>
+  <rect class="bx" x="100" y="226" width="200" height="28" rx="6"/>
+  <text class="sm" x="200" y="244" text-anchor="middle" style="fill:var(--fg)">⑤ 返回整页 HTML</text>
+  <path class="ln" d="M200 86 V98" marker-end="url(#ar)"/>
+  <path class="ln" d="M200 128 V140" marker-end="url(#ar)"/>
+  <path class="ln" d="M200 170 V182" marker-end="url(#ar)"/>
+  <path class="ln" d="M200 212 V224" marker-end="url(#ar)"/>
+  <path class="ln-d" d="M100 240 H62 V72 H96" marker-end="url(#ar)"/>
+  <text class="sm" x="56" y="160" text-anchor="middle" transform="rotate(-90 56 160)">下一次点击：从头再来</text>
+  <text class="sm" x="324" y="160" text-anchor="middle" transform="rotate(90 324 160)">请求结束，内存清空</text>
+
+  <!-- 右：前端 -->
+  <rect class="bx-a" x="400" y="20" width="340" height="262" rx="14" style="fill:none"/>
+  <text class="ttl on-a" x="570" y="44" text-anchor="middle">前端：应用一直活着，状态驱动界面</text>
+  <rect class="bx-a" x="520" y="64" width="100" height="36" rx="8"/>
+  <text class="ttl on-a" x="570" y="87" text-anchor="middle">状态</text>
+  <rect class="bx-d" x="640" y="64" width="88" height="36" rx="8"/>
+  <text class="sm" x="684" y="86" text-anchor="middle">副作用</text>
+  <path class="ln-d" d="M620 82 H636" marker-end="url(#ar)"/>
+  <rect class="bx-b" x="626" y="150" width="104" height="36" rx="8"/>
+  <text class="ttl on-b" x="678" y="173" text-anchor="middle">界面</text>
+  <rect class="bx" x="520" y="226" width="100" height="36" rx="8"/>
+  <text class="ttl" x="570" y="249" text-anchor="middle">用户操作</text>
+  <rect class="bx-p" x="410" y="150" width="104" height="36" rx="8"/>
+  <text class="ttl on-p" x="462" y="173" text-anchor="middle">事件处理</text>
+  <path class="ln-a" d="M612 100 Q660 112 670 146" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="664" y="124">自动渲染</text>
+  <path class="ln" d="M670 186 Q660 226 624 240" marker-end="url(#ar)"/>
+  <text class="halo sm" x="664" y="222">看到、点击</text>
+  <path class="ln" d="M520 240 Q476 228 466 190" marker-end="url(#ar)"/>
+  <text class="halo sm" x="440" y="222">触发</text>
+  <path class="ln-p" d="M466 150 Q476 108 516 88" marker-end="url(#ar)"/>
+  <text class="halo sm on-p" x="438" y="118">修改</text>
+  <text class="sm" x="570" y="278" text-anchor="middle">状态存在内存里，一直保留到页面关闭</text>
+</svg>
+<figcaption>图 0-1　两种心智模型：一条直线 vs 一个循环</figcaption>
+</figure>
+
+<p>
+  好消息是：你在 Django 里练出来的能力，大部分可以直接搬过来。前端的“状态”就相当于一个住在浏览器里的小数据库；
+  设计状态，和设计 Model 是同一种功夫。缺的只是一个固定的“设计步骤”，把这种功夫用到前端上。下面这张对照表是整个系列的出发点：
+</p>
+
+<div class="tw"><table>
+  <tr><th>Django</th><th>前端（Vue 3）</th><th>说明</th></tr>
+  <tr><td>Model：数据长什么样</td><td><strong>状态</strong>：<code>ref</code> / <code>reactive</code></td><td>同样要规范化、不要冗余字段</td></tr>
+  <tr><td>Model 上的 <code>@property</code>、聚合查询</td><td><strong>派生数据</strong>：<code>computed</code></td><td>由状态算出来，不单独存</td></tr>
+  <tr><td>视图函数：处理一个请求、改数据库</td><td><strong>事件处理函数</strong>：处理一次点击、改状态</td><td>每次用户操作就像一次“请求”</td></tr>
+  <tr><td>模板 + <code>render()</code></td><td>组件模板</td><td>你从不手动调用 render，状态一变框架自动重渲染</td></tr>
+  <tr><td><code>post_save</code> 等信号</td><td><strong>副作用</strong>：<code>watch</code> / 生命周期</td><td>状态变了以后，同步到外部：存储、服务器、标题栏……</td></tr>
+  <tr><td><code>{% include %}</code>、模板块</td><td>组件</td><td>但组件还有自己的状态和事件</td></tr>
+</table></div>
+
+<h2 id="method">每个项目都走同一套流程</h2>
+
+<p>方法论不是靠讲出来的，是靠重复。这个系列里的每个项目，都严格按下面 7 步来写：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 150" role="img" aria-label="七个步骤：需求与草图、设计卡、组件拆分、静态原型、逐步实现、需求变更、复盘">
+  <g>
+    <rect class="bx" x="14" y="30" width="96" height="62" rx="9"/>
+    <text class="sm" x="62" y="50" text-anchor="middle">第 1 步</text>
+    <text class="ttl" x="62" y="70" text-anchor="middle">需求与草图</text>
+    <text class="sm" x="62" y="86" text-anchor="middle">用户能做什么</text>
+  </g>
+  <g>
+    <rect class="bx-a" x="120" y="30" width="96" height="62" rx="9"/>
+    <text class="sm on-a" x="168" y="50" text-anchor="middle">第 2 步</text>
+    <text class="ttl on-a" x="168" y="70" text-anchor="middle">设计卡</text>
+    <text class="sm on-a" x="168" y="86" text-anchor="middle">四个格子</text>
+  </g>
+  <g>
+    <rect class="bx-a" x="226" y="30" width="96" height="62" rx="9"/>
+    <text class="sm on-a" x="274" y="50" text-anchor="middle">第 3 步</text>
+    <text class="ttl on-a" x="274" y="70" text-anchor="middle">组件拆分</text>
+    <text class="sm on-a" x="274" y="86" text-anchor="middle">谁持有状态</text>
+  </g>
+  <g>
+    <rect class="bx" x="332" y="30" width="96" height="62" rx="9"/>
+    <text class="sm" x="380" y="50" text-anchor="middle">第 4 步</text>
+    <text class="ttl" x="380" y="70" text-anchor="middle">静态原型</text>
+    <text class="sm" x="380" y="86" text-anchor="middle">先不加交互</text>
+  </g>
+  <g>
+    <rect class="bx" x="438" y="30" width="96" height="62" rx="9"/>
+    <text class="sm" x="486" y="50" text-anchor="middle">第 5 步</text>
+    <text class="ttl" x="486" y="70" text-anchor="middle">逐步实现</text>
+    <text class="sm" x="486" y="86" text-anchor="middle">一步一个需求</text>
+  </g>
+  <g>
+    <rect class="bx-p" x="544" y="30" width="96" height="62" rx="9"/>
+    <text class="sm on-p" x="592" y="50" text-anchor="middle">第 6 步</text>
+    <text class="ttl on-p" x="592" y="70" text-anchor="middle">需求变更</text>
+    <text class="sm on-p" x="592" y="86" text-anchor="middle">检验设计</text>
+  </g>
+  <g>
+    <rect class="bx" x="650" y="30" width="96" height="62" rx="9"/>
+    <text class="sm" x="698" y="50" text-anchor="middle">第 7 步</text>
+    <text class="ttl" x="698" y="70" text-anchor="middle">复盘</text>
+    <text class="sm" x="698" y="86" text-anchor="middle">判断题与坑</text>
+  </g>
+  <path class="ln" d="M110 61 H118" marker-end="url(#ar)"/>
+  <path class="ln" d="M216 61 H224" marker-end="url(#ar)"/>
+  <path class="ln" d="M322 61 H330" marker-end="url(#ar)"/>
+  <path class="ln" d="M428 61 H436" marker-end="url(#ar)"/>
+  <path class="ln" d="M534 61 H542" marker-end="url(#ar)"/>
+  <path class="ln" d="M640 61 H648" marker-end="url(#ar)"/>
+  <path class="ln-a" d="M120 104 V112 H322 V104"/>
+  <text class="ttl on-a" x="221" y="132" text-anchor="middle">写代码之前：本系列的重点</text>
+  <path class="ln-p" d="M592 92 V112 H486 V96" marker-end="url(#ar)"/>
+  <text class="sm on-p" x="539" y="132" text-anchor="middle">新需求先改设计卡，再改代码</text>
+</svg>
+<figcaption>图 0-2　从需求到代码的 7 步</figcaption>
+</figure>
+
+<p>
+  其中最关键的是第 2 步的<strong>设计卡</strong>。它只有四个格子，每个格子回答一个问题。
+  写完这四格，伪代码其实就有了；翻译成 Vue 只是体力活：
+</p>
+
+<div class="dcard">
+  <div class="title">设计卡（模板）<small>先填这四格，再打开编辑器</small></div>
+  <div class="st"><h5>状态 → <code>ref</code></h5>
+    <p class="q">界面必须记住哪些东西？去掉它就无法还原当前画面的那些。</p>
+    <pre>只列最小集合，能算出来的不要放这里
+像设计 Model 一样：规范化、无冗余</pre></div>
+  <div class="dv"><h5>派生数据 → <code>computed</code></h5>
+    <p class="q">界面上显示的、但可以由状态算出来的东西？</p>
+    <pre>统计数字、过滤 / 排序后的列表、
+格式化后的文本、“当前选中的那一项”……</pre></div>
+  <div class="ev"><h5>事件 → 函数</h5>
+    <p class="q">用户（或时间、服务器）做了什么？每件事怎么改状态？</p>
+    <pre>事件名 → 状态怎么变
+一行写一个，像写 urls.py 的路由表</pre></div>
+  <div class="fx"><h5>副作用 → <code>watch</code> / 生命周期</h5>
+    <p class="q">状态变了以后，要同步到哪些“外面的世界”？</p>
+    <pre>localStorage、服务器、标题栏、
+定时器、通知……以及何时清理它们</pre></div>
+</div>
+
+<div class="box key">
+  <div class="t">一句话记住</div>
+  <p><strong>界面 = f(状态)</strong>。你只负责设计状态、写清楚每个事件怎么改它；“把状态画到屏幕上”这件事交给 Vue。
+  需要手动去改某个 DOM 元素的时候，通常说明设计卡里漏了一项状态。</p>
+</div>
+
+<h2 id="roadmap">七个项目，每个只突破一个新思维</h2>
+
+<p>
+  项目按“新思维”排序，而不是按“新 API”排序。前三个故意<strong>不碰后端</strong>，堵住“先取数据再渲染”这条老路，逼自己按状态思考；
+  第三阶段再把你熟悉的 Django 接回来。到那时你会看到，服务器上的数据只是前端整个状态里的一层。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 316" role="img" aria-label="七个项目阶梯式上升，分为状态思维、组件设计、对接 Django 后端三个阶段">
+  <rect class="bx-g" x="14" y="200" width="98" height="64" rx="10"/>
+  <text class="sm on-g" x="63" y="220" text-anchor="middle">项目 1</text>
+  <text class="ttl" x="63" y="240" text-anchor="middle">番茄钟</text>
+  <text class="sm" x="63" y="256" text-anchor="middle">状态机</text>
+
+  <rect class="bx-g" x="120" y="176" width="98" height="64" rx="10"/>
+  <text class="sm on-g" x="169" y="196" text-anchor="middle">项目 2</text>
+  <text class="ttl" x="169" y="216" text-anchor="middle">记账本</text>
+  <text class="sm" x="169" y="232" text-anchor="middle">最小状态</text>
+
+  <rect class="bx-g" x="226" y="152" width="98" height="64" rx="10"/>
+  <text class="sm on-g" x="275" y="172" text-anchor="middle">项目 3</text>
+  <text class="ttl" x="275" y="192" text-anchor="middle">购物车</text>
+  <text class="sm" x="275" y="208" text-anchor="middle">共享状态</text>
+
+  <rect class="bx-b" x="332" y="128" width="98" height="64" rx="10"/>
+  <text class="sm on-b" x="381" y="148" text-anchor="middle">项目 4</text>
+  <text class="ttl" x="381" y="168" text-anchor="middle">搜索补全框</text>
+  <text class="sm" x="381" y="184" text-anchor="middle">组件接口</text>
+
+  <rect class="bx-b" x="438" y="104" width="98" height="64" rx="10"/>
+  <text class="sm on-b" x="487" y="124" text-anchor="middle">项目 5</text>
+  <text class="ttl" x="487" y="144" text-anchor="middle">注册向导</text>
+  <text class="sm" x="487" y="160" text-anchor="middle">表单状态</text>
+
+  <rect class="bx-p" x="544" y="80" width="98" height="64" rx="10"/>
+  <text class="sm on-p" x="593" y="100" text-anchor="middle">项目 6</text>
+  <text class="ttl" x="593" y="120" text-anchor="middle">后台数据表格</text>
+  <text class="sm" x="593" y="136" text-anchor="middle">URL 即状态</text>
+
+  <rect class="bx-p" x="650" y="56" width="98" height="64" rx="10"/>
+  <text class="sm on-p" x="699" y="76" text-anchor="middle">项目 7</text>
+  <text class="ttl" x="699" y="96" text-anchor="middle">客服聊天室</text>
+  <text class="sm" x="699" y="112" text-anchor="middle">实时数据</text>
+
+  <path class="ln-d" d="M275 148 V40 H699 V52"/>
+  <text class="halo sm" x="487" y="36" text-anchor="middle">项目 3 ~ 7 同属一个业务场景“小商城”，最后能拼成前台 + 后台 + 注册 + 客服</text>
+
+  <path class="ln-g" d="M14 282 H324"/>
+  <text class="ttl on-g" x="169" y="302" text-anchor="middle">一、状态思维（无后端）</text>
+  <path class="ln-b" d="M332 282 H536"/>
+  <text class="ttl on-b" x="434" y="302" text-anchor="middle">二、组件设计</text>
+  <path class="ln-p" d="M544 282 H748"/>
+  <text class="ttl on-p" x="646" y="302" text-anchor="middle">三、对接 Django 后端</text>
+</svg>
+<figcaption>图 0-3　学习路线：每上一级台阶，多一种前端思维</figcaption>
+</figure>
+
+<div class="tw"><table>
+  <tr><th>项目</th><th>新思维</th><th>新的 Vue / 生态知识</th></tr>
+  <tr><td>1 番茄钟</td><td>界面是状态的函数；状态机；存事实而不是存结果</td><td><code>ref</code>、<code>computed</code>、<code>watch</code>、生命周期、组合式函数</td></tr>
+  <tr><td>2 记账本</td><td>最小状态与派生；数据规范化；组件拆分</td><td><code>v-for</code>、<code>v-model</code>、props / emit、表单</td></tr>
+  <tr><td>3 购物车</td><td>多个页面共享同一份状态；金额计算；以服务器为准</td><td>Pinia、Vue Router、持久化</td></tr>
+  <tr><td>4 搜索补全框</td><td>组件的接口设计（props / emit / slots 就是函数签名）；键盘与焦点；竞态</td><td>组件 <code>v-model</code>、插槽、组合式函数、ARIA</td></tr>
+  <tr><td>5 注册向导</td><td>表单草稿 ≠ 已提交数据；步骤状态机；同步 / 异步校验</td><td>VeeValidate + Zod、<code>provide</code> / <code>inject</code></td></tr>
+  <tr><td>6 后台数据表格</td><td>URL 也是状态；服务器状态的缓存；乐观更新</td><td>TanStack Query、路由 query、DRF 分页与过滤</td></tr>
+  <tr><td>7 客服聊天室</td><td>把实时推送合并进本地状态；发送中 / 失败 / 重试；断线重连</td><td>WebSocket、Django Channels、虚拟列表</td></tr>
+</table></div>
+
+<p>业务组件那几篇（3 ~ 7），每篇的最后还有两节固定内容，保证“学完就能上线”：</p>
+<div class="cards">
+  <div class="card"><span class="ic">&#9745;</span><h4>上线清单</h4><p>空状态、加载、出错；键盘与无障碍；大数据量下的性能；测试要点。把一个演示变成正式功能，差的就是这些。</p></div>
+  <div class="card"><span class="ic">&#9881;</span><h4>自己写，还是用现成库</h4><p>先手写一遍理解原理，再看同样的功能在 Element Plus / Naive UI 里怎么做，以及什么时候该直接用库、什么时候要自己封装。</p></div>
+</div>
+
+<h2 id="how">怎样使用这个系列</h2>
+
+<ul class="steps">
+  <li><strong>前置知识</strong>：读过主教程的<a href="../ch01.html">第 1 章</a>和<a href="../ch02.html">第 2 章</a>，知道 <code>ref</code>、<code>computed</code>、<code>v-for</code> 是什么就够了。不熟的 API 用到时会再讲。</li>
+  <li><strong>先自己填设计卡</strong>：每篇在给出设计卡之前都会停下来。请真的拿出纸笔，花 10 分钟自己填一遍，再往下看对照。对答案的过程，才是思维真正发生变化的地方。</li>
+  <li><strong>每篇开头的 Django 对照框</strong>：把这一篇的新概念挂到你熟悉的东西上。</li>
+  <li><strong>页内演示</strong>：每篇都有可以直接操作的成品演示，旁边实时显示当前的状态和派生数据，就像 Vue DevTools。点一下按钮，看状态怎么变、界面怎么跟着变。</li>
+  <li><strong>完整代码</strong>：每个项目在仓库的 <code>examples/design/</code> 下都有一个可运行的 Vite 工程。</li>
+</ul>
+
+<div id="toc-grid"></div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+</body>
+</html>

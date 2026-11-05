@@ -1,0 +1,23 @@
+:root { --accent: #d9534f; --break: #2b8a8a; --fg: #2a2522; --soft: #8a817a; --line: #e7e1dc; color-scheme: light; }
+body { margin: 0; font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; color: var(--fg); background: #faf7f5; }
+.pomodoro { max-width: 420px; margin: 40px auto; padding: 0 16px; display: flex; flex-direction: column; align-items: center; gap: 20px; }
+.tabs { display: flex; gap: 6px; }
+.tabs span { padding: 4px 14px; border-radius: 20px; color: var(--soft); font-size: 14px; }
+.tabs span.on { background: var(--accent); color: #fff; }
+.ring { position: relative; width: 240px; height: 240px; }
+.ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.ring circle { fill: none; stroke-width: 10; }
+.ring .track { stroke: var(--line); }
+.ring .bar { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset .3s linear; }
+.ring.break .bar { stroke: var(--break); }
+.time { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; font-size: 48px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.time small { font-size: 13px; font-weight: 400; color: var(--soft); }
+.controls { display: flex; gap: 10px; }
+button { font: inherit; padding: 8px 22px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; }
+button.ghost { background: transparent; color: var(--accent); }
+button:disabled { opacity: .4; cursor: not-allowed; }
+.dots { display: flex; align-items: center; gap: 6px; color: var(--soft); font-size: 14px; }
+.dots b { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--accent); }
+.dots b.done { background: var(--accent); }
+.settings { border: 1px solid var(--line); border-radius: 10px; display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; font-size: 14px; color: var(--soft); }
+.settings input { width: 56px; margin-left: 4px; font: inherit; padding: 2px 6px; }

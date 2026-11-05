@@ -1,0 +1,1330 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>项目 1 · 番茄钟 — 从设计到实现</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="assets/design.css">
+</head>
+<body data-chapter="1">
+<div id="app">
+<aside id="sidebar"></aside>
+<main>
+
+<span class="chapter-eyebrow">项目 1 · 第一阶段 · 状态思维</span>
+<h1>番茄钟</h1>
+<p class="lede">
+  第一个项目故意选得很小：一个专注 25 分钟、休息 5 分钟的计时器。代码不到两百行，
+  但从需求到代码的每一步都会摊开写：怎么从草图找出状态，怎么区分状态和派生数据，
+  为什么“剩余时间”不该是状态，按钮为什么不该用两个布尔值控制。
+  这些问题想清楚了，后面六个项目都是同一套路。
+</p>
+
+<div class="goals">
+  <h4>本篇目标</h4>
+  <ul>
+    <li>学会第一件设计工具：<strong>设计卡</strong>（状态、派生、事件、副作用）</li>
+    <li>学会从静态原型<strong>反推</strong>状态：原型里每一个写死的值都要问“它从哪里来”</li>
+    <li>理解<strong>存事实，不存结果</strong>：存结束时刻，而不是存剩余秒数</li>
+    <li>用<strong>状态机</strong>代替一堆布尔值，让不可能出现的状态根本写不出来</li>
+    <li>Vue 3：<code>ref</code>、<code>computed</code>、<code>watch</code> 的清理函数、<code>watchEffect</code>、props / emit、<code>defineModel</code>、组合式函数</li>
+  </ul>
+</div>
+
+<div id="chapter-toc"></div>
+
+<h2 id="demo">先看成品</h2>
+
+<p>
+  下面就是这一篇要做出来的番茄钟。右边的面板实时显示它内部的<strong>状态</strong>和<strong>派生数据</strong>，作用和 Vue DevTools 一样。
+  勾选“演示加速”，把一分钟缩短成一秒，就能很快看到专注和休息的切换。
+  点几下按钮，盯着右边看：<strong>你点的每一下，改的都只是左上那几个状态；下面的派生数据和整个界面，都是跟着变的</strong>。
+</p>
+
+<div class="demo">
+  <div class="h">&#9654; 在线演示 · 番茄钟（右侧为实时状态）</div>
+  <div class="body">
+    <div id="demo-pomo" v-cloak class="pomo">
+      <div class="pomo-main">
+        <div class="pomo-tabs">
+          <span v-for="(text, key) in LABEL" :key="key" :class="{ on: key === phase }">{{ text }}</span>
+        </div>
+        <div class="pomo-ring" :class="{ break: phase !== 'focus' }">
+          <svg viewBox="0 0 200 200" aria-hidden="true">
+            <circle class="track" cx="100" cy="100" r="90"/>
+            <circle class="bar" cx="100" cy="100" r="90" :stroke-dasharray="C" :stroke-dashoffset="C * (1 - progress)"/>
+          </svg>
+          <div class="time" role="timer">{{ display }}<small>下一段：{{ LABEL[nextPhase] }}</small></div>
+        </div>
+        <div class="pomo-btns">
+          <button v-if="status === 'running'" @click="pause">暂停</button>
+          <button v-else @click="start">{{ status === 'paused' ? '继续' : '开始' }}</button>
+          <button class="ghost" :disabled="status === 'idle'" @click="reset">重置</button>
+          <button class="ghost" @click="skip">跳过</button>
+        </div>
+        <div class="pomo-dots">
+          <b v-for="i in settings.longEvery" :key="i" :class="{ done: i <= completed % settings.longEvery }"></b>
+          <span>已完成 {{ completed }} 个番茄</span>
+        </div>
+        <fieldset class="pomo-set" :disabled="status !== 'idle'" style="border:1px solid var(--line);border-radius:8px">
+          <legend class="muted">设置{{ status !== 'idle' ? '（计时中不可改）' : '' }}</legend>
+          <label>专注 <input type="number" min="1" max="90" :value="settings.focus" @change="set('focus', $event.target.value, 1, 90)"></label>
+          <label>短休息 <input type="number" min="1" max="30" :value="settings.shortBreak" @change="set('shortBreak', $event.target.value, 1, 30)"></label>
+          <label>长休息 <input type="number" min="1" max="60" :value="settings.longBreak" @change="set('longBreak', $event.target.value, 1, 60)"></label>
+          <label><input type="checkbox" v-model="fast" style="vertical-align:-2px"> 演示加速（1 分钟 = 1 秒）</label>
+        </fieldset>
+      </div>
+      <div class="pomo-state">
+        <div class="h st">状态 STATE</div>
+        <div><span class="k">phase:</span> "{{ phase }}"</div>
+        <div><span class="k">timer:</span> {{ timerText }}</div>
+        <div><span class="k">completed:</span> {{ completed }}</div>
+        <div><span class="k">now:</span> {{ now }}</div>
+        <div><span class="k">settings:</span> {{ settings.focus }}/{{ settings.shortBreak }}/{{ settings.longBreak }}</div>
+        <div class="h dv">派生 COMPUTED</div>
+        <div><span class="k">status:</span> "{{ status }}"</div>
+        <div><span class="k">duration:</span> {{ duration }}</div>
+        <div><span class="k">remaining:</span> {{ remaining }}</div>
+        <div><span class="k">progress:</span> {{ progress.toFixed(3) }}</div>
+        <div><span class="k">display:</span> "{{ display }}"</div>
+        <div><span class="k">nextPhase:</span> "{{ nextPhase }}"</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p>
+  注意计时中的 <code>timer</code>：它只记了一个 <code>endAt</code>（结束时刻），并不记“还剩多少秒”。
+  剩余时间是每次用 <code>endAt − now</code> 算出来的。为什么这样设计，第 5 步会专门讲，这是本篇最重要的一个设计决定。
+</p>
+
+<div class="box dj">
+  <div class="t">Django 对照</div>
+  <p>
+    在 Django 里，你不会在 User 表上存“年龄”这一列，而是存“出生日期”，年龄用的时候再算，否则每过一天数据就错一天。
+    番茄钟的 <code>endAt</code> 就是“出生日期”，剩余时间就是“年龄”。<strong>存不会过时的事实，算会变的结果</strong>，
+    这条你在数据库设计里早就会的规则，在前端一样适用。
+  </p>
+</div>
+
+<h2 id="req">第 1 步：需求与草图</h2>
+
+<p>先用大白话写下用户能做的事，不要想代码：</p>
+<ul>
+  <li>点“开始”，专注 25 分钟倒计时；中途可以暂停、继续、重置</li>
+  <li>专注结束后自动进入休息：一般休息 5 分钟，每完成 4 个番茄休息 15 分钟</li>
+  <li>不想休息可以“跳过”，跳过的番茄不计数</li>
+  <li>能看到今天完成了几个番茄，以及这一轮进行到第几个</li>
+  <li>切到别的标签页时，标题栏也显示剩余时间；时间到了弹系统通知</li>
+</ul>
+
+<p>然后画一张草图，并把界面上<strong>会变的地方</strong>全部圈出来：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 300" role="img" aria-label="番茄钟草图：阶段标签、倒计时圆环、按钮、完成进度点，每个会变的部分都标了问号">
+  <rect class="bx" x="40" y="16" width="300" height="268" rx="14"/>
+  <rect class="bx-a" x="84" y="34" width="66" height="24" rx="12"/>
+  <text class="sm on-a" x="117" y="50" text-anchor="middle">专注</text>
+  <text class="sm" x="190" y="50" text-anchor="middle">短休息</text>
+  <text class="sm" x="262" y="50" text-anchor="middle">长休息</text>
+  <circle cx="190" cy="140" r="62" style="fill:none;stroke:var(--panel-2);stroke-width:9"/>
+  <path d="M190 78 A62 62 0 1 1 128 140" style="fill:none;stroke:var(--accent);stroke-width:9;stroke-linecap:round"/>
+  <text class="ttl" x="190" y="146" text-anchor="middle" style="font-size:26px">18:45</text>
+  <text class="sm" x="190" y="166" text-anchor="middle">下一段：短休息</text>
+  <rect class="bx-a" x="100" y="216" width="56" height="26" rx="6"/>
+  <text class="sm on-a" x="128" y="233" text-anchor="middle">暂停</text>
+  <rect class="bx" x="164" y="216" width="56" height="26" rx="6"/>
+  <text class="sm" x="192" y="233" text-anchor="middle">重置</text>
+  <rect class="bx" x="228" y="216" width="56" height="26" rx="6"/>
+  <text class="sm" x="256" y="233" text-anchor="middle">跳过</text>
+  <circle cx="110" cy="264" r="5" style="fill:var(--accent)"/>
+  <circle cx="126" cy="264" r="5" style="fill:none;stroke:var(--accent);stroke-width:2"/>
+  <circle cx="142" cy="264" r="5" style="fill:none;stroke:var(--accent);stroke-width:2"/>
+  <circle cx="158" cy="264" r="5" style="fill:none;stroke:var(--accent);stroke-width:2"/>
+  <text class="sm" x="172" y="268">今天完成 1 个番茄</text>
+
+  <path class="ln-d" d="M286 46 H420"/>
+  <text x="430" y="50">① 哪个阶段高亮</text>
+  <path class="ln-d" d="M246 108 L420 108"/>
+  <text x="430" y="112">② 圆环走了多少</text>
+  <path class="ln-d" d="M222 140 H420"/>
+  <text x="430" y="144">③ 剩余时间 18:45</text>
+  <path class="ln-d" d="M246 162 L420 182"/>
+  <text x="430" y="186">④ 下一段是什么</text>
+  <path class="ln-d" d="M284 229 H420"/>
+  <text x="430" y="233">⑤ 按钮显示“开始 / 暂停 / 继续”</text>
+  <path class="ln-d" d="M290 264 H420"/>
+  <text x="430" y="268">⑥ 实心点几个、完成几个</text>
+  <text class="ttl on-a" x="430" y="20">逐个问：要“记住”，还是能“算出来”？</text>
+</svg>
+<figcaption>图 1-1　草图：把会变的地方都圈出来</figcaption>
+</figure>
+
+<div class="box tip">
+  <div class="t">停一下：先自己试着填设计卡</div>
+  <p>
+    拿出纸，画四个格子：<strong>状态 / 派生 / 事件 / 副作用</strong>。对着上面的需求和草图，花 10 分钟填一遍。
+    状态格只写“必须记住、而且算不出来”的东西。填完再往下看，对比差在哪里。
+  </p>
+</div>
+
+<h2 id="card">第 2 步：设计卡（第一版）</h2>
+
+<p>
+  大多数人第一次填状态格，会把草图上每个会变的东西都列进去：阶段、剩余秒数、进度百分比、按钮文字、是否在计时、是否暂停、完成个数……
+  然后逐个过一遍：<strong>它能不能由别的状态算出来？</strong>能算出来的，就从状态格划掉、挪到派生格：
+</p>
+
+<div class="tw"><table>
+  <tr><th>草图上的东西</th><th>能算出来吗？</th><th>放哪一格</th></tr>
+  <tr><td>① 哪个阶段高亮</td><td>不能，它是“现在处在哪一段”这个事实本身</td><td>状态 <code>phase</code></td></tr>
+  <tr><td>② 圆环进度</td><td>能：<code>1 − 剩余 / 总时长</code></td><td>派生 <code>progress</code></td></tr>
+  <tr><td>③ 剩余时间</td><td>第一版先当作状态（第 5 步会推翻这个决定）</td><td>状态 <code>remaining</code></td></tr>
+  <tr><td>④ 下一段是什么</td><td>能：由当前阶段和已完成个数决定</td><td>派生 <code>nextPhase</code></td></tr>
+  <tr><td>⑤ 按钮文字</td><td>能：由“计时中 / 暂停 / 空闲”决定</td><td>直接写在模板里</td></tr>
+  <tr><td>“是否在计时”“是否暂停”</td><td>不能，但用两个布尔值表示有问题（5.3 节）</td><td>状态（待改进）</td></tr>
+  <tr><td>⑥ 实心点个数</td><td>能：<code>completed % 4</code></td><td>派生</td></tr>
+  <tr><td>⑥ 今天完成几个</td><td>不能</td><td>状态 <code>completed</code></td></tr>
+</table></div>
+
+<p>于是得到第一版设计卡：</p>
+
+<div class="dcard">
+  <div class="title">番茄钟 · 设计卡 v1<small>后面会被推翻两处，这正是设计卡的用途</small></div>
+  <div class="st"><h5>状态</h5><pre>phase      当前阶段：focus / shortBreak / longBreak
+remaining  剩余秒数
+running    是否在计时
+paused     是否暂停
+completed  今天完成的番茄数</pre></div>
+  <div class="dv"><h5>派生</h5><pre>duration   = 当前阶段的总时长
+progress   = 1 − remaining / duration
+display    = remaining 格式化成 mm:ss
+nextPhase  = 专注 → 第 4 个后长休息，否则短休息
+             休息 → 专注</pre></div>
+  <div class="ev"><h5>事件</h5><pre>点“开始”  → running = true
+点“暂停”  → paused = true
+点“重置”  → remaining = duration，停止
+点“跳过”  → phase = nextPhase（不计数）
+每过 1 秒 → remaining − 1；到 0 就结束这一段
+一段结束  → 专注则 completed + 1；phase = nextPhase</pre></div>
+  <div class="fx"><h5>副作用</h5><pre>计时中要有一个每秒触发的定时器
+标题栏显示剩余时间
+一段结束时弹系统通知</pre></div>
+</div>
+
+<p>
+  注意事件格的写法：<strong>左边是“发生了什么”，右边是“状态怎么变”</strong>。这和 Django 的 <code>urls.py</code> 一模一样：
+  左边是 URL，右边是处理它的视图。区别只是这里的“请求”来自按钮、键盘和时间，而不是浏览器地址栏。
+</p>
+
+<p>
+  还要注意“每过 1 秒”这一行：<strong>时间流逝也是一种事件</strong>。后端很少这样想，因为请求结束进程就不管了；
+  但前端应用一直活着，时间、网络消息、窗口尺寸变化，都会像用户点击一样触发状态变化。
+</p>
+
+<h3 id="fsm">“开始 / 暂停 / 继续”其实是一个状态机</h3>
+
+<p>
+  设计卡 v1 用 <code>running</code> 和 <code>paused</code> 两个布尔值表示计时状态。先把它们画成图，看看用户到底能处在哪几种状态，以及能怎样在它们之间转换：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 226" role="img" aria-label="计时状态机：空闲、计时中、已暂停三个状态，以及开始、暂停、继续、重置、时间到等转换">
+  <text class="ttl" x="380" y="30" text-anchor="middle">只有三种状态，只有箭头标出的转换是合法的</text>
+  <rect class="bx" x="40" y="70" width="150" height="64" rx="12"/>
+  <text class="ttl" x="115" y="96" text-anchor="middle">空闲 idle</text>
+  <text class="mono sm" x="115" y="118" text-anchor="middle">{ status }</text>
+  <rect class="bx-a" x="305" y="70" width="150" height="64" rx="12"/>
+  <text class="ttl on-a" x="380" y="96" text-anchor="middle">计时中 running</text>
+  <text class="mono sm" x="380" y="118" text-anchor="middle">{ status, endAt }</text>
+  <rect class="bx-b" x="570" y="70" width="150" height="64" rx="12"/>
+  <text class="ttl on-b" x="645" y="96" text-anchor="middle">已暂停 paused</text>
+  <text class="mono sm" x="645" y="118" text-anchor="middle">{ status, left }</text>
+
+  <path class="ln-a" d="M190 88 H301" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="246" y="80" text-anchor="middle">开始</text>
+  <path class="ln" d="M305 118 H194" marker-end="url(#ar)"/>
+  <text class="halo sm" x="250" y="136" text-anchor="middle">重置 / 时间到</text>
+  <path class="ln-b" d="M455 88 H566" marker-end="url(#ar)"/>
+  <text class="halo sm on-b" x="510" y="80" text-anchor="middle">暂停</text>
+  <path class="ln-a" d="M570 118 H459" marker-end="url(#ar-a)"/>
+  <text class="halo sm on-a" x="514" y="136" text-anchor="middle">继续</text>
+  <path class="ln" d="M645 134 V184 Q645 200 629 200 H131 Q115 200 115 184 V138" marker-end="url(#ar)"/>
+  <text class="halo sm" x="380" y="204" text-anchor="middle">重置</text>
+</svg>
+<figcaption>图 1-2　计时状态机。方框下面是这个状态需要携带的数据</figcaption>
+</figure>
+
+<p>
+  三种状态。可两个布尔值能组合出<strong>四种</strong>情况，多出来的那种 <code>running = false, paused = true</code>（“没在计时但处于暂停”）是什么意思？
+  没有意思，但代码允许它出现。哪天某个事件处理函数漏改了一个值，界面就会进入这个“不可能的状态”，按钮显示错乱，而且很难排查。
+  5.3 节会用一个更好的写法让它根本写不出来。
+</p>
+
+<div class="box dj">
+  <div class="t">Django 对照</div>
+  <p>
+    订单的 <code>status</code> 字段（待支付 → 已支付 → 已发货 → 已完成）就是状态机。你不会给订单加 <code>is_paid</code>、<code>is_shipped</code> 两个布尔字段，
+    因为“已发货但未支付”这种组合会让业务出错；你可能还用过 django-fsm 来限制只允许合法的转换。前端的界面状态也该这样设计。
+  </p>
+</div>
+
+<h2 id="components">第 3 步：组件拆分</h2>
+
+<p>
+  番茄钟很小，一个组件也写得下。但借这个小项目，正好练习拆组件时最重要的一个问题：<strong>状态放在谁那里？</strong>
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 290" role="img" aria-label="组件树：App 持有全部状态，通过 props 把数据传给四个子组件，子组件通过事件把用户操作报告给 App">
+  <rect class="bx-a" x="190" y="20" width="380" height="64" rx="12"/>
+  <text class="ttl on-a" x="380" y="46" text-anchor="middle">App（持有状态）</text>
+  <text class="sm on-a" x="380" y="68" text-anchor="middle">phase · timer · completed · settings</text>
+  <path class="ln" d="M380 84 V124"/>
+  <path class="ln" d="M92 124 H667"/>
+
+  <path class="ln-b" d="M92 124 V166" marker-end="url(#ar)"/>
+  <path class="ln-b" d="M277 124 V166" marker-end="url(#ar)"/>
+  <path class="ln-b" d="M462 124 V166" marker-end="url(#ar)"/>
+  <path class="ln-b" d="M647 124 V166" marker-end="url(#ar)"/>
+  <path class="ln-p" d="M297 170 V132" marker-end="url(#ar)"/>
+  <path class="ln-p" d="M667 170 V132" marker-end="url(#ar)"/>
+
+  <rect class="bx" x="20" y="170" width="165" height="74" rx="10"/>
+  <text class="ttl" x="102" y="194" text-anchor="middle">TimerRing</text>
+  <text class="sm on-b" x="102" y="214" text-anchor="middle">↓ progress, display, label</text>
+  <text class="sm" x="102" y="232" text-anchor="middle">↑ 无（纯展示）</text>
+
+  <rect class="bx" x="205" y="170" width="165" height="74" rx="10"/>
+  <text class="ttl" x="287" y="194" text-anchor="middle">TimerControls</text>
+  <text class="sm on-b" x="287" y="214" text-anchor="middle">↓ status</text>
+  <text class="sm on-p" x="287" y="232" text-anchor="middle">↑ start pause reset skip</text>
+
+  <rect class="bx" x="390" y="170" width="165" height="74" rx="10"/>
+  <text class="ttl" x="472" y="194" text-anchor="middle">SessionDots</text>
+  <text class="sm on-b" x="472" y="214" text-anchor="middle">↓ completed, longEvery</text>
+  <text class="sm" x="472" y="232" text-anchor="middle">↑ 无（纯展示）</text>
+
+  <rect class="bx" x="575" y="170" width="165" height="74" rx="10"/>
+  <text class="ttl" x="657" y="194" text-anchor="middle">SettingsPanel</text>
+  <text class="sm on-b" x="657" y="214" text-anchor="middle">↓ settings（v-model）</text>
+  <text class="sm on-p" x="657" y="232" text-anchor="middle">↑ update:modelValue</text>
+
+  <path class="ln-b" d="M200 274 H232"/>
+  <text class="sm" x="240" y="278">props：数据往下传</text>
+  <path class="ln-p" d="M420 274 H452"/>
+  <text class="sm" x="460" y="278">事件：用户操作往上报</text>
+</svg>
+<figcaption>图 1-3　组件树：数据往下流，事件往上报</figcaption>
+</figure>
+
+<p>拆组件时，按这三条来判断：</p>
+<ol class="steps">
+  <li><strong>状态放在“所有用到它的组件”的最近公共祖先上。</strong>
+    <code>timer</code> 既要被 TimerRing 用来显示时间，又要被 TimerControls 用来决定按钮文字，所以只能放在它们共同的父组件 App 里。</li>
+  <li><strong>子组件只通过 props 读数据，通过事件报告操作，不直接修改父组件的状态。</strong>
+    TimerControls 被点击时并不自己去改 <code>timer</code>，而是 <code>emit('pause')</code>，由 App 决定怎么改。
+    这样，所有改状态的代码都集中在持有状态的地方，出了问题只需要查一处。</li>
+  <li><strong>纯展示的组件越多越好。</strong>
+    TimerRing 和 SessionDots 只接收数据、不发事件，就像一个函数：给什么输入就画什么。这样的组件最容易复用和测试。</li>
+</ol>
+
+<div class="box dj">
+  <div class="t">Django 对照</div>
+  <p>
+    子组件有点像 <code>{% include "ring.html" with progress=progress %}</code>：父模板把数据传进去。
+    但 include 的模板只能“读”，而组件还能“说话”：它通过事件告诉父组件“用户点了暂停”。
+    这就像子模板里的表单提交到父级的视图，只不过不需要发 HTTP 请求。
+  </p>
+</div>
+
+<h2 id="static">第 4 步：静态原型</h2>
+
+<p>
+  先别写任何逻辑，把草图原样翻成模板，所有动态的地方都<strong>写死</strong>：
+</p>
+
+<div class="code" data-lang="vue" data-file="src/App.vue（静态原型）"><pre>
+&lt;template&gt;
+  &lt;main class="pomodoro"&gt;
+    &lt;nav class="tabs"&gt;
+      &lt;span class="on"&gt;专注&lt;/span&gt;&lt;span&gt;短休息&lt;/span&gt;&lt;span&gt;长休息&lt;/span&gt;
+    &lt;/nav&gt;
+
+    &lt;div class="ring"&gt;
+      &lt;svg viewBox="0 0 200 200"&gt;
+        &lt;circle class="track" cx="100" cy="100" r="90" /&gt;
+        &lt;circle class="bar" cx="100" cy="100" r="90" stroke-dasharray="565" stroke-dashoffset="141" /&gt;
+      &lt;/svg&gt;
+      &lt;div class="time"&gt;18:45&lt;small&gt;下一段：短休息&lt;/small&gt;&lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;div class="controls"&gt;
+      &lt;button&gt;暂停&lt;/button&gt;
+      &lt;button class="ghost"&gt;重置&lt;/button&gt;
+      &lt;button class="ghost"&gt;跳过&lt;/button&gt;
+    &lt;/div&gt;
+
+    &lt;div class="dots"&gt;
+      &lt;b class="done"&gt;&lt;/b&gt;&lt;b&gt;&lt;/b&gt;&lt;b&gt;&lt;/b&gt;&lt;b&gt;&lt;/b&gt;
+      &lt;span&gt;今天完成 1 个番茄&lt;/span&gt;
+    &lt;/div&gt;
+  &lt;/main&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>
+  这一步有两个好处。第一，“长什么样”和“怎么动”分开解决，一次只想一件事。
+  第二，也是更重要的：<strong>原型里每一个写死的值，都是一个线索</strong>。逐个问“这个值将来从哪里来”，就能检查设计卡有没有漏项：
+</p>
+
+<div class="tw"><table>
+  <tr><th>原型里写死的值</th><th>将来从哪里来</th></tr>
+  <tr><td><code>class="on"</code> 在“专注”上</td><td><code>phase</code>（状态）</td></tr>
+  <tr><td><code>18:45</code></td><td><code>display</code>（派生）</td></tr>
+  <tr><td><code>stroke-dashoffset="141"</code></td><td><code>progress</code>（派生）</td></tr>
+  <tr><td><code>下一段：短休息</code></td><td><code>nextPhase</code>（派生）</td></tr>
+  <tr><td>按钮上的“暂停”两个字</td><td>计时状态（模板里用 <code>v-if</code> 判断）</td></tr>
+  <tr><td>1 个 <code>class="done"</code></td><td><code>completed % 4</code>（派生）</td></tr>
+  <tr><td><code>今天完成 1 个</code></td><td><code>completed</code>（状态）</td></tr>
+</table></div>
+
+<p>
+  如果某个写死的值在设计卡里找不到来源，说明设计卡漏了东西；如果设计卡里某个状态在原型里找不到用处，说明它可能是多余的。
+  <strong>原型和设计卡互相校对</strong>，这是后面每个项目都会用的技巧。
+</p>
+
+<h2 id="impl">第 5 步：逐步实现</h2>
+
+<p>
+  从这里开始写代码。每一小步只加一个需求，并且严格按照这个顺序：<strong>需求 → 先看设计卡要不要改 → 再写代码</strong>。
+  工程用 <code>npm create vue@latest</code> 创建，或者直接用仓库里的 <code>examples/design/p01-pomodoro</code>。
+</p>
+
+<h3 id="s1">5.1 能倒计时（朴素版）</h3>
+<div class="flow"><span>需求：点开始后倒计时</span><i>→</i><span class="on">设计卡 v1，不用改</span><i>→</i><span>代码</span></div>
+
+<p>照着设计卡 v1 直接翻译：<code>remaining</code> 是状态，用 <code>ref</code>；<code>display</code> 是派生，用 <code>computed</code>；事件是普通函数。</p>
+
+<div class="code" data-lang="vue" data-file="src/App.vue（5.1 朴素版）"><pre>
+&lt;script setup&gt;
+import { ref, computed } from 'vue'
+
+const remaining = ref(25 * 60) // 状态：剩余秒数
+const running = ref(false)
+let id = null
+
+const pad = (n) =&gt; String(n).padStart(2, '0')
+const display = computed(() =&gt; `${pad(Math.floor(remaining.value / 60))}:${pad(remaining.value % 60)}`)
+
+function start() {
+  running.value = true
+  id = setInterval(() =&gt; {
+    remaining.value-- // 每秒减 1
+    if (remaining.value === 0) pause()
+  }, 1000)
+}
+function pause() {
+  clearInterval(id)
+  running.value = false
+}
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="time"&gt;{{ display }}&lt;/div&gt;
+  &lt;button v-if="running" @click="pause"&gt;暂停&lt;/button&gt;
+  &lt;button v-else @click="start"&gt;开始&lt;/button&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>
+  运行起来，一切正常。很多教程写到这里就结束了。但请做两个实验：
+</p>
+<ol>
+  <li>点开始，然后<strong>切到别的标签页</strong>待几分钟，再切回来。和手机上的秒表对比一下。</li>
+  <li>点开始，过一会儿<strong>刷新页面</strong>。</li>
+</ol>
+
+<h3 id="wall">撞墙：计时变慢了，刷新就丢了</h3>
+
+<p>
+  第一个实验，你会发现番茄钟<strong>慢了</strong>。浏览器为了省电，会给后台标签页里的定时器<strong>限流</strong>：
+  回调可能每秒才跑一次，Chrome 在页面隐藏 5 分钟后甚至可能一分钟才跑一次。而我们的代码是“每跑一次回调就减 1 秒”，
+  回调少跑了多少次，计时就慢了多少。
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 236" role="img" aria-label="时间线对比：朴素版在后台时少减了很多次而变慢；存结束时刻的版本每次按真实时间计算，始终准确">
+  <rect class="bx-d" x="330" y="40" width="260" height="176" rx="10"/>
+  <text class="sm" x="460" y="58" text-anchor="middle">切到后台：定时器被限流</text>
+
+  <text class="ttl" x="60" y="82">朴素版：每次 tick 都 remaining − 1</text>
+  <path class="ln" d="M60 100 H660"/>
+  <g class="ticks1"></g>
+  <text class="halo sm on-r" x="460" y="124" text-anchor="middle">tick 很少 → 少减了很多次</text>
+  <text class="ttl on-r" x="672" y="105">慢了</text>
+
+  <text class="ttl" x="60" y="160">存事实：remaining = endAt − now</text>
+  <path class="ln" d="M60 178 H660"/>
+  <g class="ticks2"></g>
+  <text class="halo sm on-g" x="460" y="202" text-anchor="middle">tick 少没关系，每次都按真实时间算</text>
+  <text class="ttl on-g" x="672" y="183">准确</text>
+</svg>
+<figcaption>图 1-4　短竖线代表定时器回调真正执行的时刻</figcaption>
+</figure>
+
+<p>
+  第二个实验更直接：刷新以后 <code>remaining</code> 回到 25:00，因为状态只存在内存里。就算把 <code>remaining</code> 存进 localStorage 也不行，
+  刷新前后那段时间里定时器没在跑，存下来的数字已经<strong>过时</strong>了。
+</p>
+
+<p>
+  两个问题是同一个根源：<strong><code>remaining</code> 是一个会随时间自己变化的值，我们却把它当成状态存了起来</strong>，
+  然后靠定时器手动“维护”它。只要定时器有一次没跑，它就和事实对不上了。
+</p>
+
+<h3 id="s2">5.2 存事实，不存结果</h3>
+<div class="flow"><span>问题：计时不准</span><i>→</i><span class="on">改设计卡</span><i>→</i><span>代码</span></div>
+
+<p>
+  换个思路：<strong>什么东西点了“开始”以后就再也不会变？</strong>答案是“结束的时刻”。25 分钟后的那个时间点是固定的，
+  无论定时器跑了几次、页面刷新了几次，它都不变。剩余时间则可以随时用“结束时刻 − 现在”算出来。
+</p>
+
+<div class="dcard">
+  <div class="title">设计卡 v2 · 改动部分<small>绿色为新增，灰色划线为删除</small></div>
+  <div class="st"><h5>状态</h5><pre>phase
+<del>remaining  剩余秒数</del>
+<ins>endAt      结束的时刻（时间戳），不会变</ins>
+<ins>now        当前时刻，由时钟刷新</ins>
+running / paused
+completed</pre></div>
+  <div class="dv"><h5>派生</h5><pre><ins>remaining  = endAt − now</ins>
+progress / display / nextPhase 不变</pre></div>
+  <div class="ev"><h5>事件</h5><pre>点“开始”  → <ins>endAt = 现在 + duration</ins>
+<del>每过 1 秒 → remaining − 1</del>
+<ins>时钟滴答  → now = 现在的时间</ins></pre></div>
+  <div class="fx"><h5>副作用</h5><pre>计时中要有一个时钟，<ins>只负责刷新 now</ins></pre></div>
+</div>
+
+<p>
+  注意 <code>now</code> 也成了状态。这初看很怪：当前时间还要“记住”？但想一想，界面要随时间变化，而 Vue 只会对<strong>响应式数据</strong>的变化做出反应，
+  <code>Date.now()</code> 不是响应式的。所以要把“现在”放进一个 <code>ref</code>，由时钟定期刷新它；所有依赖它的派生数据和界面就会自动更新。
+  时钟的职责从“维护剩余时间”降级成了“告诉大家现在几点”，它少跑几次也不会出错，最多是界面晚一点刷新。
+</p>
+
+<div class="code" data-lang="js" data-file="src/App.vue（5.2 只列出改动）"><pre>
+const MINUTE = 60_000
+const endAt = ref(null)      // 状态：结束时刻
+const now = ref(Date.now())  // 状态：当前时刻
+
+// 派生：随时都能算出来，永远不会“过时”
+const remaining = computed(() =&gt; Math.max(0, endAt.value - now.value))
+const display = computed(() =&gt; {
+  const s = Math.ceil(remaining.value / 1000)
+  return `${pad(Math.floor(s / 60))}:${pad(s % 60)}`
+})
+
+function start() {
+  endAt.value = Date.now() + 25 * MINUTE
+  id = setInterval(() =&gt; {
+    now.value = Date.now() // 时钟只负责报时
+  }, 250)
+}
+</pre></div>
+
+<div class="box note">
+  <div class="t">为什么每 250 毫秒报一次时，而不是 1 秒？</div>
+  <p>定时器的触发时刻和“整秒”不对齐。如果每秒刷新一次，显示的秒数最多会比真实时间晚将近 1 秒，偶尔还会看到某一秒被跳过。
+  刷新得更勤一些，显示就会平滑。反正每次都是按真实时间计算，多刷几次不会让结果出错。</p>
+</div>
+
+<h3 id="s3">5.3 暂停和继续：用状态机代替布尔值</h3>
+<div class="flow"><span>需求：可以暂停、继续、重置</span><i>→</i><span class="on">改设计卡</span><i>→</i><span>代码</span></div>
+
+<p>
+  有了 <code>endAt</code>，暂停就要多想一步：暂停的时候没有“结束时刻”了，因为时间不再流逝。暂停时需要记住的是“还剩多少”。
+  于是三种计时状态各自需要不同的数据，正好对应图 1-2 方框下面写的内容：
+</p>
+<ul>
+  <li><strong>空闲</strong>：什么都不用记，剩余时间就是这一段的总时长；</li>
+  <li><strong>计时中</strong>：记住结束时刻 <code>endAt</code>；</li>
+  <li><strong>已暂停</strong>：记住暂停时还剩多少 <code>left</code>。</li>
+</ul>
+
+<p>
+  如果继续用布尔值，就会有 <code>running</code>、<code>paused</code>、<code>endAt</code>、<code>left</code> 四个变量，可以组合出一大堆没有意义的情况。
+  更好的做法是把它们合成<strong>一个</strong>状态，每种形态只带自己需要的字段：
+</p>
+
+<div class="vs">
+  <div class="old"><div class="h">✗ 四个独立的变量</div>
+<div class="code" data-lang="js"><pre>
+const running = ref(false)
+const paused = ref(false)
+const endAt = ref(null)
+const left = ref(null)
+// running=true 却 endAt=null？
+// paused=true 却 left=null？
+// 都能写出来，都是 bug
+</pre></div></div>
+  <div class="new"><div class="h">✓ 一个状态，三种形态</div>
+<div class="code" data-lang="js"><pre>
+// { status: 'idle' }
+// { status: 'running', endAt }
+// { status: 'paused',  left }
+const timer = ref({ status: 'idle' })
+
+// “计时中却没有结束时间”
+// 根本写不出来
+</pre></div></div>
+</div>
+
+<p>
+  每个事件处理函数就是一次<strong>整体替换</strong>：从一种形态换成另一种形态，旧形态的字段自然消失。剩余时间则按形态分别计算：
+</p>
+
+<div class="code" data-lang="js" data-file="src/App.vue（5.3 计时部分）"><pre>
+const timer = ref({ status: 'idle' })
+const status = computed(() =&gt; timer.value.status)
+const duration = computed(() =&gt; 25 * MINUTE)
+
+const remaining = computed(() =&gt; {
+  const t = timer.value
+  if (t.status === 'running') return Math.max(0, t.endAt - now.value)
+  if (t.status === 'paused') return t.left
+  return duration.value // idle
+})
+
+function start() {
+  // 空闲和暂停都能开始：remaining 已经替我们区分了两种情况
+  timer.value = { status: 'running', endAt: Date.now() + remaining.value }
+}
+function pause() {
+  timer.value = { status: 'paused', left: Math.max(0, timer.value.endAt - Date.now()) }
+}
+function reset() {
+  timer.value = { status: 'idle' }
+}
+</pre></div>
+
+<p>
+  看 <code>start</code>：它不需要判断“是从空闲开始还是从暂停继续”，因为 <code>remaining</code> 这个派生数据已经把两种情况算好了。
+  <strong>派生数据设计得好，事件处理函数就会变短</strong>，这是一个很好的信号。
+</p>
+
+<p>模板里的按钮也直接由 <code>status</code> 决定，不需要额外的状态：</p>
+
+<div class="code" data-lang="vue"><pre>
+&lt;button v-if="status === 'running'" @click="pause"&gt;暂停&lt;/button&gt;
+&lt;button v-else @click="start"&gt;{{ status === 'paused' ? '继续' : '开始' }}&lt;/button&gt;
+&lt;button class="ghost" :disabled="status === 'idle'" @click="reset"&gt;重置&lt;/button&gt;
+</pre></div>
+
+<h3 id="s4">5.4 专注与休息交替</h3>
+<div class="flow"><span>需求：专注结束自动进入休息</span><i>→</i><span class="on">设计卡 v1 已有，不用改</span><i>→</i><span>代码</span></div>
+
+<p>
+  这一步需要的 <code>phase</code>、<code>completed</code>、<code>nextPhase</code> 在设计卡 v1 里就有了，直接翻译。先把 <code>nextPhase</code> 的规则画出来：
+</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 170" role="img" aria-label="阶段循环：专注与短休息交替，每完成四个专注后进入一次长休息，然后回到开头">
+  <rect class="bx-a" x="18" y="40" width="80" height="40" rx="8"/><text class="ttl on-a" x="58" y="65" text-anchor="middle">专注</text>
+  <rect class="bx-b" x="110" y="40" width="80" height="40" rx="8"/><text class="on-b" x="150" y="65" text-anchor="middle">短休息</text>
+  <rect class="bx-a" x="202" y="40" width="80" height="40" rx="8"/><text class="ttl on-a" x="242" y="65" text-anchor="middle">专注</text>
+  <rect class="bx-b" x="294" y="40" width="80" height="40" rx="8"/><text class="on-b" x="334" y="65" text-anchor="middle">短休息</text>
+  <rect class="bx-a" x="386" y="40" width="80" height="40" rx="8"/><text class="ttl on-a" x="426" y="65" text-anchor="middle">专注</text>
+  <rect class="bx-b" x="478" y="40" width="80" height="40" rx="8"/><text class="on-b" x="518" y="65" text-anchor="middle">短休息</text>
+  <rect class="bx-a" x="570" y="40" width="80" height="40" rx="8"/><text class="ttl on-a" x="610" y="65" text-anchor="middle">专注</text>
+  <rect class="bx-p" x="662" y="40" width="80" height="40" rx="8"/><text class="ttl on-p" x="702" y="65" text-anchor="middle">长休息</text>
+  <path class="ln" d="M98 60 H108"/><path class="ln" d="M190 60 H200"/><path class="ln" d="M282 60 H292"/>
+  <path class="ln" d="M374 60 H384"/><path class="ln" d="M466 60 H476"/><path class="ln" d="M558 60 H568"/><path class="ln" d="M650 60 H660"/>
+  <text class="sm" x="104" y="30" text-anchor="middle">completed=1</text>
+  <text class="sm" x="288" y="30" text-anchor="middle">2</text>
+  <text class="sm" x="472" y="30" text-anchor="middle">3</text>
+  <text class="sm on-p" x="656" y="30" text-anchor="middle">4 → 4 % 4 = 0</text>
+  <path class="ln-d" d="M702 80 V110 H58 V84" marker-end="url(#ar)"/>
+  <text class="halo sm" x="380" y="114" text-anchor="middle">长休息结束，回到下一轮</text>
+  <text class="mono sm" x="380" y="150" text-anchor="middle">nextPhase = 休息 → focus；专注 → (completed + 1) % longEvery === 0 ? longBreak : shortBreak</text>
+</svg>
+<figcaption>图 1-5　阶段循环（每 4 个番茄一轮）</figcaption>
+</figure>
+
+<div class="code" data-lang="js" data-file="src/App.vue（5.4 新增部分）"><pre>
+const DURATION = { focus: 25, shortBreak: 5, longBreak: 15 }
+const LONG_EVERY = 4
+
+const phase = ref('focus')
+const completed = ref(0)
+
+const duration = computed(() =&gt; DURATION[phase.value] * MINUTE)
+const nextPhase = computed(() =&gt; {
+  if (phase.value !== 'focus') return 'focus'
+  return (completed.value + 1) % LONG_EVERY === 0 ? 'longBreak' : 'shortBreak'
+})
+
+function switchTo(next) {
+  phase.value = next
+  timer.value = { status: 'idle' }
+}
+function skip() {
+  switchTo(nextPhase.value) // 跳过的番茄不计数
+}
+function finish() {
+  const ended = phase.value
+  const next = nextPhase.value // 必须先取！
+  if (ended === 'focus') completed.value++
+  switchTo(next)
+}
+function tick() {
+  now.value = Date.now()
+  if (status.value === 'running' &amp;&amp; remaining.value === 0) finish()
+}
+</pre></div>
+
+<div class="box warn">
+  <div class="t">小心：派生数据会“立刻”跟着变</div>
+  <p>
+    <code>finish</code> 里必须<strong>先</strong>取出 <code>nextPhase</code>，再给 <code>completed</code> 加一。
+    <code>computed</code> 是实时的：<code>completed</code> 一变，下一次读 <code>nextPhase</code> 就是按新值算的结果。
+    例如第 3 个番茄结束时，<code>completed</code> 还是 2，<code>nextPhase</code> 按 2 + 1 = 3 算出“短休息”，正确；
+    如果先把 <code>completed</code> 加到 3 再读，就会按 3 + 1 = 4 算出“长休息”，提前进入长休息。
+    <code>nextPhase</code> 的含义是“<strong>如果当前这一段完成了</strong>，下一段是什么”，所以要在“完成”发生之前读它。
+    同一个事件里先读后写，是处理派生数据时的通用习惯。
+  </p>
+</div>
+
+<h3 id="s5">5.5 副作用：时钟、标题栏、通知</h3>
+<div class="flow"><span>需求：标题栏显示时间、结束时通知</span><i>→</i><span class="on">设计卡副作用格</span><i>→</i><span>代码</span></div>
+
+<p>
+  到目前为止，时钟是在 <code>start</code> 里 <code>setInterval</code>、在 <code>pause</code> 里 <code>clearInterval</code> 的。
+  现在 <code>reset</code>、<code>skip</code>、<code>finish</code> 也会让计时停下，难道每个函数里都要记得清一次定时器？漏一个就是 bug。
+</p>
+<p>
+  换个角度想：时钟什么时候该存在？<strong>当且仅当 <code>status</code> 是 <code>running</code></strong>。这是一条关于状态的规则，跟“是哪个事件让它变成 running 的”无关。
+  所以不要在事件里管理它，而是声明一个副作用，让它<strong>跟着状态走</strong>：
+</p>
+
+<div class="code" data-lang="js" data-file="src/App.vue（5.5 副作用）"><pre>
+import { watch, watchEffect } from 'vue'
+
+// 1. 时钟：status 变成 running 就启动；status 再变，或者组件卸载，就清理
+watch(status, (s, _old, onCleanup) =&gt; {
+  if (s !== 'running') return
+  tick()
+  const id = setInterval(tick, 250)
+  onCleanup(() =&gt; clearInterval(id))
+}, { immediate: true })
+
+// 2. 标题栏：用到哪些响应式数据，哪些一变就重新执行
+watchEffect(() =&gt; {
+  document.title = `${display.value} · ${LABEL[phase.value]}`
+})
+</pre></div>
+
+<p>这段代码有三个要点：</p>
+<ul>
+  <li><strong><code>onCleanup</code></strong>：传给它的函数会在下一次回调执行前、或者侦听器停止时（组件卸载时会自动停止）被调用。
+    “启动”和“清理”写在一起，再也不会忘记清定时器。现在 <code>start</code>、<code>pause</code> 这些事件函数只改状态，一行定时器代码都没有了。</li>
+  <li><strong><code>immediate: true</code></strong>：创建时立刻执行一次。现在看起来没必要（初始是 idle），但第 6 步“刷新后恢复计时”时，它会让恢复出来的 running 状态自动启动时钟，不用写一行额外代码。</li>
+  <li><strong><code>watch</code> 和 <code>watchEffect</code> 怎么选</strong>：要明确“盯着谁”、需要新旧值或清理时用 <code>watch</code>；
+    像标题栏这样“用到什么就跟踪什么”的简单同步，用 <code>watchEffect</code> 更省事。</li>
+</ul>
+
+<p>
+  系统通知稍微特殊：它不是“状态变了就同步”，而是“某件事发生时通知一下”，所以直接在 <code>finish</code> 里触发。
+  另外，浏览器只允许在用户操作里请求通知权限，所以请求权限要放在“开始”按钮的点击处理里（见第 7 步的完整代码）。
+</p>
+
+<div class="box dj">
+  <div class="t">Django 对照</div>
+  <p>
+    <code>watch</code> 很像 <code>post_save</code> 信号：你不在每个修改订单的视图里都写一遍“发邮件”，而是声明“订单保存后发邮件”。
+    区别是信号只“触发”，而 <code>watch</code> 还管“清理”：状态离开 running 时，它负责把时钟关掉。这一点后端很少需要，在前端却非常重要，
+    因为页面不会在每次请求后清空，忘了清理的定时器、事件监听会一直跑下去。
+  </p>
+</div>
+
+<h3 id="s6">5.6 拆成组件</h3>
+<div class="flow"><span>代码变长了</span><i>→</i><span class="on">按第 3 步的组件树拆分</span><i>→</i><span>代码</span></div>
+
+<p>
+  逻辑不动，只把模板按图 1-3 拆开。先看最典型的两个：一个只接收数据，一个只发出事件。
+</p>
+
+<div class="code" data-lang="vue" data-file="src/components/TimerControls.vue"><pre>
+&lt;script setup&gt;
+defineProps({
+  status: { type: String, required: true }, // 'idle' | 'running' | 'paused'
+})
+// 子组件不改状态，只“报告发生了什么”，由持有状态的一方决定怎么改
+const emit = defineEmits(['start', 'pause', 'reset', 'skip'])
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="controls"&gt;
+    &lt;button v-if="status === 'running'" @click="emit('pause')"&gt;暂停&lt;/button&gt;
+    &lt;button v-else @click="emit('start')"&gt;{{ status === 'paused' ? '继续' : '开始' }}&lt;/button&gt;
+    &lt;button class="ghost" :disabled="status === 'idle'" @click="emit('reset')"&gt;重置&lt;/button&gt;
+    &lt;button class="ghost" @click="emit('skip')"&gt;跳过&lt;/button&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="src/components/TimerRing.vue"><pre>
+&lt;script setup&gt;
+import { computed } from 'vue'
+
+const props = defineProps({
+  progress: { type: Number, required: true }, // 0 ~ 1
+  display: { type: String, required: true },
+  label: { type: String, required: true },
+  isBreak: Boolean,
+})
+
+const R = 90
+const C = 2 * Math.PI * R // 周长
+// 进度条长度也是派生数据：父组件只给 progress，怎么画是这个组件自己的事
+const offset = computed(() =&gt; C * (1 - props.progress))
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;div class="ring" :class="{ break: isBreak }"&gt;
+    &lt;svg viewBox="0 0 200 200" aria-hidden="true"&gt;
+      &lt;circle class="track" cx="100" cy="100" :r="R" /&gt;
+      &lt;circle class="bar" cx="100" cy="100" :r="R" :stroke-dasharray="C" :stroke-dashoffset="offset" /&gt;
+    &lt;/svg&gt;
+    &lt;div class="time" role="timer"&gt;
+      {{ display }}
+      &lt;small&gt;{{ label }}&lt;/small&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+</pre></div>
+
+<p>
+  注意 TimerRing 里的 <code>offset</code>：周长、偏移量这些“怎么画圆环”的细节，是这个组件自己的派生数据，父组件只给一个 0 到 1 的 <code>progress</code>。
+  <strong>父组件传“含义”，子组件决定“怎么画”</strong>，这样以后想把圆环换成进度条，App 一行都不用改。
+</p>
+
+<p>App 的模板于是变成了一张“组装图”：</p>
+
+<div class="code" data-lang="vue"><pre>
+&lt;TimerRing :progress="progress" :display="display" :label="`下一段：${LABEL[nextPhase]}`"
+           :is-break="phase !== 'focus'" /&gt;
+&lt;TimerControls :status="status" @start="onStart" @pause="pause" @reset="reset" @skip="skip" /&gt;
+&lt;SessionDots :completed="completed" :long-every="LONG_EVERY" /&gt;
+</pre></div>
+
+<h2 id="change">第 6 步：需求变更演练</h2>
+
+<p>
+  好的设计，好在改需求的时候。下面来两个真实项目里一定会遇到的变更，每次都先改设计卡，看看改动有多大。
+</p>
+
+<h3 id="c1">变更一：时长可以自己设置</h3>
+
+<p>先问设计卡：时长现在是常量 <code>DURATION</code>，现在要让用户改，而且要记住。它算不出来，所以是<strong>状态</strong>：</p>
+
+<div class="dcard">
+  <div class="title">设计卡 · 变更一<small>只动了两格</small></div>
+  <div class="st"><h5>状态</h5><pre><ins>settings  { focus, shortBreak, longBreak, longEvery }</ins></pre></div>
+  <div class="dv"><h5>派生</h5><pre>duration = <ins>settings</ins>[phase] × 1 分钟
+<ins>设置面板是否可用 = status === 'idle'</ins></pre></div>
+  <div class="ev"><h5>事件</h5><pre><ins>修改设置 → settings = 新设置</ins></pre></div>
+  <div class="fx"><h5>副作用</h5><pre>不变</pre></div>
+</div>
+
+<p>
+  <code>remaining</code>、<code>progress</code>、<code>display</code> 一个都不用改，因为它们本来就是从 <code>duration</code> 派生的。
+  这就是“能派生就不存”的回报：<strong>源头一改，下游全部自动正确</strong>。
+</p>
+<p>
+  还有一个问题要决定：计时中改了时长怎么办？与其写一堆特殊处理，不如<strong>只允许在空闲时修改</strong>，这也是一条派生规则。
+  设置面板用 <code>defineModel</code> 实现双向绑定：
+</p>
+
+<div class="code" data-lang="vue" data-file="src/components/SettingsPanel.vue"><pre>
+&lt;script setup&gt;
+// defineModel：父组件写 v-model="settings"，这里拿到的就是那个可读写的 ref
+const settings = defineModel({ type: Object, required: true })
+defineProps({ disabled: Boolean })
+
+const FIELDS = [
+  ['focus', '专注', 1, 90],
+  ['shortBreak', '短休息', 1, 30],
+  ['longBreak', '长休息', 1, 60],
+  ['longEvery', '几个一轮', 2, 8],
+]
+
+function update(key, value, min, max) {
+  const n = Math.round(Number(value))
+  if (!Number.isFinite(n)) return
+  // 生成一个新对象交回去，而不是直接改父组件对象的字段：数据只从持有它的一方修改
+  settings.value = { ...settings.value, [key]: Math.min(max, Math.max(min, n)) }
+}
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;fieldset class="settings" :disabled="disabled"&gt;
+    &lt;legend&gt;设置{{ disabled ? '（计时中不可修改）' : '' }}&lt;/legend&gt;
+    &lt;label v-for="[key, text, min, max] in FIELDS" :key="key"&gt;
+      {{ text }}
+      &lt;input type="number" :min="min" :max="max" :value="settings[key]"
+             @change="update(key, $event.target.value, min, max)"&gt;
+    &lt;/label&gt;
+  &lt;/fieldset&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="App.vue 里的用法"><pre>
+&lt;SettingsPanel v-model="settings" :disabled="status !== 'idle'" /&gt;
+</pre></div>
+
+<div class="box note">
+  <div class="t"><code>defineModel</code> 是什么</div>
+  <p>
+    组件上的 <code>v-model="settings"</code> 是两件事的简写：传入 prop <code>modelValue</code>，监听事件 <code>update:modelValue</code>。
+    Vue 3.4 起，子组件里一行 <code>defineModel()</code> 就能拿到一个 ref：读它就是读 prop，给它赋值就是发事件。
+    数据仍然是“往下传、事件往上报”，只是写起来省事了。
+  </p>
+</div>
+
+<h3 id="c2">变更二：刷新页面不丢进度，完成数每天清零</h3>
+
+<p>
+  这是检验设计的关键一刻。回想 5.1 的朴素版：剩余秒数存下来也会过时，刷新后根本没法正确恢复。现在呢？
+</p>
+
+<div class="dcard">
+  <div class="title">设计卡 · 变更二<small>状态几乎不动，只加一个副作用</small></div>
+  <div class="st"><h5>状态</h5><pre>启动时从 localStorage 读出
+settings / phase / timer / completed
+<ins>completed 只在“是今天存的”时才恢复</ins></pre></div>
+  <div class="dv"><h5>派生</h5><pre>不变</pre></div>
+  <div class="ev"><h5>事件</h5><pre>不变</pre></div>
+  <div class="fx"><h5>副作用</h5><pre><ins>上述状态一变 → 存进 localStorage（带上日期）</ins></pre></div>
+</div>
+
+<p>
+  因为计时中存的是 <code>endAt</code>（一个绝对时刻），刷新后把它原样读回来，<code>remaining = endAt − now</code> 立刻就是对的；
+  就算关掉页面半小时再打开、这一段早已结束，第一次 <code>tick</code> 就会发现 <code>remaining === 0</code> 并调用 <code>finish</code>。
+  而时钟呢？5.5 里的 <code>watch(status, …, { immediate: true })</code> 看到恢复出来的状态是 running，自动就启动了。
+  <strong>这个需求几乎没写新逻辑</strong>，全靠前面的两个设计决定：存事实不存结果、副作用跟着状态走。
+</p>
+
+<div class="code" data-lang="js" data-file="持久化相关代码"><pre>
+const STORAGE_KEY = 'pomodoro-v1'
+const today = () =&gt; new Date().toLocaleDateString('sv') // 形如 2026-11-05
+
+function load() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY)) ?? {}
+  } catch {
+    return {}
+  }
+}
+
+const saved = load()
+const settings = ref({ ...DEFAULT_SETTINGS, ...saved.settings })
+const phase = ref(saved.phase ?? 'focus')
+const timer = ref(saved.timer ?? { status: 'idle' })
+const completed = ref(saved.day === today() ? saved.completed : 0)
+
+watch([settings, phase, timer, completed], () =&gt; {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    settings: settings.value, phase: phase.value, timer: timer.value,
+    completed: completed.value, day: today(),
+  }))
+}, { deep: true })
+</pre></div>
+
+<div class="box tip">
+  <div class="t">只存状态，不存派生数据</div>
+  <p>存进 localStorage 的只有状态格里的东西。<code>remaining</code>、<code>progress</code> 这些派生数据不存，读回状态后自然会重新算出来。
+  这和数据库只存原始字段、不存可以计算的列是同一个道理。设计卡的状态格，同时也就是“需要持久化的清单”。</p>
+</div>
+
+<h2 id="final">第 7 步：收尾，把逻辑搬进组合式函数</h2>
+
+<p>
+  现在 App.vue 里塞满了状态、派生、事件、副作用，模板反而只剩几行。最后一步，把所有逻辑搬进一个<strong>组合式函数</strong> <code>usePomodoro</code>，
+  按设计卡的四格分段组织。你会发现，这个文件的结构就是设计卡本身：
+</p>
+
+<div class="code" data-lang="js" data-file="src/composables/usePomodoro.js"><pre>
+import { ref, computed, watch, watchEffect } from 'vue'
+
+export const PHASE_LABEL = { focus: '专注', shortBreak: '短休息', longBreak: '长休息' }
+
+const STORAGE_KEY = 'pomodoro-v1'
+const DEFAULT_SETTINGS = { focus: 25, shortBreak: 5, longBreak: 15, longEvery: 4 }
+const MINUTE = 60_000
+
+const today = () =&gt; new Date().toLocaleDateString('sv') // 形如 2026-11-05
+
+function load() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY)) ?? {}
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * 番茄钟的全部逻辑。组件只负责“画”，不关心计时细节。
+ * @param {{ onFinish?: (ended: string) =&gt; void }} options
+ */
+export function usePomodoro({ onFinish } = {}) {
+  const saved = load()
+
+  // ---------------- 状态：必须记住、而且算不出来的东西 ----------------
+  const settings = ref({ ...DEFAULT_SETTINGS, ...saved.settings })
+  const phase = ref(saved.phase ?? 'focus') // 'focus' | 'shortBreak' | 'longBreak'
+  // 三种形态，各自只带自己需要的字段，“计时中却没有结束时间”这种状态根本写不出来
+  //   { status: 'idle' } | { status: 'running', endAt } | { status: 'paused', left }
+  const timer = ref(saved.timer ?? { status: 'idle' })
+  const completed = ref(saved.day === today() ? saved.completed : 0)
+  const now = ref(Date.now()) // “当前时间”也是状态：它在变，界面要跟着变
+
+  // ---------------- 派生：都由上面的状态算出来 ----------------
+  const status = computed(() =&gt; timer.value.status)
+  const duration = computed(() =&gt; settings.value[phase.value] * MINUTE)
+  const remaining = computed(() =&gt; {
+    const t = timer.value
+    if (t.status === 'running') return Math.max(0, t.endAt - now.value)
+    if (t.status === 'paused') return t.left
+    return duration.value
+  })
+  const progress = computed(() =&gt; Math.min(1, Math.max(0, 1 - remaining.value / duration.value)))
+  const display = computed(() =&gt; {
+    const s = Math.ceil(remaining.value / 1000)
+    const mm = String(Math.floor(s / 60)).padStart(2, '0')
+    const ss = String(s % 60).padStart(2, '0')
+    return `${mm}:${ss}`
+  })
+  const nextPhase = computed(() =&gt; {
+    if (phase.value !== 'focus') return 'focus'
+    return (completed.value + 1) % settings.value.longEvery === 0 ? 'longBreak' : 'shortBreak'
+  })
+
+  // ---------------- 事件：每个函数只做一件事——改状态 ----------------
+  function start() {
+    // 空闲和暂停都能开始：remaining 已经替我们区分了两种情况
+    timer.value = { status: 'running', endAt: Date.now() + remaining.value }
+  }
+  function pause() {
+    timer.value = { status: 'paused', left: Math.max(0, timer.value.endAt - Date.now()) }
+  }
+  function reset() {
+    timer.value = { status: 'idle' }
+  }
+  function switchTo(next) {
+    phase.value = next
+    timer.value = { status: 'idle' }
+  }
+  function skip() {
+    switchTo(nextPhase.value) // 跳过的番茄不计数
+  }
+  function finish() {
+    const ended = phase.value
+    const next = nextPhase.value // 必须先取：completed 一变，nextPhase 就会跟着变
+    if (ended === 'focus') completed.value++
+    switchTo(next)
+    onFinish?.(ended)
+  }
+  function tick() {
+    now.value = Date.now()
+    if (status.value === 'running' &amp;&amp; remaining.value === 0) finish()
+  }
+
+  // ---------------- 副作用：把状态同步到“外面的世界” ----------------
+  // 1. 时钟：只在计时中运行；状态一变或组件卸载，onCleanup 负责关掉旧的定时器
+  watch(status, (s, _old, onCleanup) =&gt; {
+    if (s !== 'running') return
+    tick()
+    const id = setInterval(tick, 250)
+    onCleanup(() =&gt; clearInterval(id))
+  }, { immediate: true })
+
+  // 2. 标题栏：切到别的标签页也能看到剩余时间
+  watchEffect(() =&gt; {
+    document.title = `${display.value} · ${PHASE_LABEL[phase.value]}`
+  })
+
+  // 3. 持久化：刷新页面后一切照旧（endAt 是绝对时间，所以计时也能接上）
+  watch([settings, phase, timer, completed], () =&gt; {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      settings: settings.value,
+      phase: phase.value,
+      timer: timer.value,
+      completed: completed.value,
+      day: today(),
+    }))
+  }, { deep: true })
+
+  return {
+    // 状态（设置面板要双向绑定，所以给出 ref 本身）
+    settings, phase, completed,
+    // 派生（只读）
+    status, remaining, progress, display, nextPhase,
+    // 事件
+    start, pause, reset, skip,
+  }
+}
+</pre></div>
+
+<div class="code" data-lang="vue" data-file="src/App.vue"><pre>
+&lt;script setup&gt;
+import { computed } from 'vue'
+import { usePomodoro, PHASE_LABEL } from './composables/usePomodoro'
+import TimerRing from './components/TimerRing.vue'
+import TimerControls from './components/TimerControls.vue'
+import SessionDots from './components/SessionDots.vue'
+import SettingsPanel from './components/SettingsPanel.vue'
+
+const {
+  settings, phase, completed,
+  status, progress, display, nextPhase,
+  start, pause, reset, skip,
+} = usePomodoro({ onFinish: notify })
+
+const isBreak = computed(() =&gt; phase.value !== 'focus')
+
+// 系统通知也是副作用，但它属于“这个界面怎么提醒用户”，所以放在组件里而不是组合式函数里
+function notify(ended) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return
+  const text = ended === 'focus' ? '专注结束，休息一下吧' : '休息结束，开始下一个番茄'
+  new Notification('番茄钟', { body: text })
+}
+
+function onStart() {
+  // 浏览器只允许在用户操作里请求通知权限，所以放在“开始”按钮的处理函数中
+  if ('Notification' in window &amp;&amp; Notification.permission === 'default') {
+    Notification.requestPermission()
+  }
+  start()
+}
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;main class="pomodoro"&gt;
+    &lt;nav class="tabs"&gt;
+      &lt;span v-for="(text, key) in PHASE_LABEL" :key="key" :class="{ on: key === phase }"&gt;{{ text }}&lt;/span&gt;
+    &lt;/nav&gt;
+
+    &lt;TimerRing :progress="progress" :display="display" :label="`下一段：${PHASE_LABEL[nextPhase]}`"
+               :is-break="isBreak" /&gt;
+
+    &lt;TimerControls :status="status" @start="onStart" @pause="pause" @reset="reset" @skip="skip" /&gt;
+
+    &lt;SessionDots :completed="completed" :long-every="settings.longEvery" /&gt;
+
+    &lt;SettingsPanel v-model="settings" :disabled="status !== 'idle'" /&gt;
+  &lt;/main&gt;
+&lt;/template&gt;
+</pre></div>
+
+<div class="box dj">
+  <div class="t">Django 对照</div>
+  <p>
+    这就像 Django 社区常说的“胖模型、瘦视图”或者 service 层：业务规则放在模型或服务里，视图只负责接收请求、调用、返回。
+    这里 <code>usePomodoro</code> 是“模型”，组件是“视图”。好处也一样：逻辑可以单独测试，同一套逻辑可以换一个完全不同的界面来用。
+  </p>
+</div>
+
+<p>最后，用一张图把整个应用的数据流串起来：</p>
+
+<figure>
+<svg class="dgm" viewBox="0 0 760 304" role="img" aria-label="完整数据流：事件修改状态，状态派生出计算值，计算值和状态通过 props 交给组件；状态变化触发副作用，时钟副作用又产生 tick 事件">
+  <rect class="bx-p" x="20" y="30" width="150" height="180" rx="12"/>
+  <text class="ttl on-p" x="95" y="54" text-anchor="middle">事件</text>
+  <text class="mono sm" x="95" y="84" text-anchor="middle">start()</text>
+  <text class="mono sm" x="95" y="106" text-anchor="middle">pause()</text>
+  <text class="mono sm" x="95" y="128" text-anchor="middle">reset()</text>
+  <text class="mono sm" x="95" y="150" text-anchor="middle">skip()</text>
+  <text class="mono sm" x="95" y="172" text-anchor="middle">tick() → finish()</text>
+
+  <rect class="bx-a" x="210" y="30" width="160" height="180" rx="12"/>
+  <text class="ttl on-a" x="290" y="54" text-anchor="middle">状态 ref</text>
+  <text class="mono sm" x="290" y="84" text-anchor="middle">settings</text>
+  <text class="mono sm" x="290" y="106" text-anchor="middle">phase</text>
+  <text class="mono sm" x="290" y="128" text-anchor="middle">timer</text>
+  <text class="mono sm" x="290" y="150" text-anchor="middle">completed</text>
+  <text class="mono sm" x="290" y="172" text-anchor="middle">now</text>
+
+  <rect class="bx-b" x="410" y="30" width="160" height="180" rx="12"/>
+  <text class="ttl on-b" x="490" y="54" text-anchor="middle">派生 computed</text>
+  <text class="mono sm" x="490" y="84" text-anchor="middle">status · duration</text>
+  <text class="mono sm" x="490" y="106" text-anchor="middle">remaining</text>
+  <text class="mono sm" x="490" y="128" text-anchor="middle">progress</text>
+  <text class="mono sm" x="490" y="150" text-anchor="middle">display</text>
+  <text class="mono sm" x="490" y="172" text-anchor="middle">nextPhase</text>
+
+  <rect class="bx" x="610" y="30" width="130" height="180" rx="12"/>
+  <text class="ttl" x="675" y="54" text-anchor="middle">组件</text>
+  <text class="sm" x="675" y="84" text-anchor="middle">TimerRing</text>
+  <text class="sm" x="675" y="106" text-anchor="middle">TimerControls</text>
+  <text class="sm" x="675" y="128" text-anchor="middle">SessionDots</text>
+  <text class="sm" x="675" y="150" text-anchor="middle">SettingsPanel</text>
+
+  <path class="ln-p" d="M170 120 H206" marker-end="url(#ar)"/>
+  <text class="halo sm on-p" x="188" y="112" text-anchor="middle">改</text>
+  <path class="ln-b" d="M370 120 H406" marker-end="url(#ar)"/>
+  <text class="halo sm on-b" x="388" y="112" text-anchor="middle">算</text>
+  <path class="ln" d="M570 120 H606" marker-end="url(#ar)"/>
+  <text class="halo sm" x="588" y="112" text-anchor="middle">画</text>
+  <path class="ln-p" d="M675 30 V20 Q675 12 667 12 H103 Q95 12 95 20 V26" marker-end="url(#ar)" style="stroke-dasharray:5 4"/>
+  <text class="halo sm on-p" x="385" y="16" text-anchor="middle">用户点击按钮 → 触发事件</text>
+
+  <rect class="bx-r" x="214" y="236" width="152" height="58" rx="10"/>
+  <text class="ttl on-r" x="290" y="258" text-anchor="middle">副作用 watch</text>
+  <text class="sm" x="290" y="278" text-anchor="middle">时钟 · 标题栏 · 存储</text>
+  <path class="ln-r" d="M290 210 V232" marker-end="url(#ar)"/>
+  <path class="ln-r" d="M214 278 H130 Q110 278 110 258 V214" marker-end="url(#ar)"/>
+  <text class="halo sm on-r" x="160" y="296" text-anchor="middle">时钟产生 tick</text>
+</svg>
+<figcaption>图 1-6　完整数据流：事件改状态 → 状态派生 → 组件渲染；副作用把状态同步到外部</figcaption>
+</figure>
+
+<h2 id="review">复盘</h2>
+
+<h3 id="quiz">判断题</h3>
+<p>先自己想答案，再点开看。</p>
+<div class="quiz">
+  <details><summary>“今天完成了几个番茄”的文字，是状态还是派生？</summary>
+    <p>文字本身是派生（由 <code>completed</code> 拼出来的字符串，甚至不用写 <code>computed</code>，直接写在模板里）；<code>completed</code> 这个数字是状态。区分“数据”和“它的展示形式”。</p></details>
+  <details><summary>要加一个功能：专注时圆环是红色，休息时是青色。需要新增状态吗？</summary>
+    <p>不需要。颜色由 <code>phase</code> 决定，是派生：模板里写 <code>:class="{ break: phase !== 'focus' }"</code> 就够了。想加状态之前，先问“能不能由已有状态算出来”。</p></details>
+  <details><summary>如果用 <code>remaining</code> 当状态、每秒减 1，再在 <code>visibilitychange</code> 事件里“补上”后台丢失的时间，这样设计好吗？</summary>
+    <p>能用，但这是在给一个错误的设计打补丁：补丁要算“丢了多少”，本质上还是要知道真实的开始或结束时刻。直接存 <code>endAt</code>，补丁就完全不需要了。遇到“需要补偿”的代码时，回头检查是不是存了结果而不是事实。</p></details>
+  <details><summary>“设置面板是否可点”应该用一个 <code>ref</code> 存起来，在 <code>start</code> 里设为 false、<code>reset</code> 里设为 true 吗？</summary>
+    <p>不应该。它完全由 <code>status</code> 决定，存起来就要在每个改 <code>status</code> 的地方同步维护，漏一处就错。写成 <code>:disabled="status !== 'idle'"</code>。</p></details>
+  <details><summary>为什么定时器要放在 <code>watch</code> 里，而不是在 <code>start</code> 里启动、在 <code>pause</code> 里清除？</summary>
+    <p>因为“有没有时钟”是由状态决定的规则，而让状态变化的入口有很多：开始、暂停、重置、跳过、时间到，还有刷新后从存储恢复。放在事件里，每个入口都要记得处理；放在 <code>watch(status)</code> 里，只写一次，并且自动清理。</p></details>
+</div>
+
+<h3 id="pitfalls">后端出身容易踩的坑</h3>
+<ul>
+  <li><strong>想“手动更新界面”</strong>：“时间变了，我去把那个 div 的文字改掉”。在 Vue 里你只改状态，界面会自己跟上；需要手动改 DOM，通常说明漏了一项状态。</li>
+  <li><strong>把派生数据存成状态</strong>：进度、按钮文字、是否可点……存起来就要手动保持同步，迟早对不上。和数据库存冗余列是同一种错误。</li>
+  <li><strong>把会随时间变的值当状态</strong>：剩余时间、“3 分钟前”、是否过期。存不变的时刻，变化的部分实时算。</li>
+  <li><strong>用多个布尔值表示一个状态</strong>：先画状态机，数清楚有几种状态，再用一个字段表示。</li>
+  <li><strong>忘记清理</strong>：后端每个请求结束一切都释放了，前端不会。启动了什么，就要想好在什么时候关掉它。</li>
+</ul>
+
+<div class="box key">
+  <div class="t">本篇的方法清单</div>
+  <ol>
+    <li>写需求、画草图，圈出所有会变的地方。</li>
+    <li>填设计卡：每个会变的东西都问“要记住，还是能算出来”。</li>
+    <li>会随时间变化的值，找出它背后不变的事实来存。</li>
+    <li>几个互相牵制的布尔值，换成一个状态机。</li>
+    <li>静态原型和设计卡互相校对：每个写死的值都要有来源。</li>
+    <li>状态放在最近公共祖先；props 往下，事件往上。</li>
+    <li>副作用跟着状态走，并且写好清理。</li>
+    <li>来了新需求，先改设计卡，再改代码。</li>
+  </ol>
+</div>
+
+<div class="exercise">
+  <h3>练习</h3>
+  <p>每道题都请先改设计卡，再写代码。</p>
+  <ol>
+    <li><strong>自动开始休息</strong>：加一个开关，打开后专注结束直接开始休息倒计时，不用再点“开始”。设计卡哪几格要改？（提示：只需要改一个事件。）</li>
+    <li><strong>键盘快捷键</strong>：按空格开始或暂停。它是事件还是副作用？监听器应该在什么时候添加、什么时候移除？</li>
+    <li><strong>最近 7 天统计</strong>：显示过去 7 天每天完成了几个。<code>completed</code> 还够用吗？新的状态应该长什么样，才能既算出“今天几个”又算出“7 天柱状图”？</li>
+    <li><strong>多个标签页</strong>：同时打开两个番茄钟标签页，在一个里点开始，另一个也要跟着变。（提示：<code>storage</code> 事件。想一想：为什么存 <code>endAt</code> 让这件事变得容易？）</li>
+  </ol>
+</div>
+
+<div id="pager"></div>
+</main>
+</div>
+<script src="assets/site.js"></script>
+<script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+<script>
+  // 时间线示意图里的竖线：可见时密、后台时疏
+  document.querySelectorAll('.ticks1, .ticks2').forEach((g) => {
+    const y = g.classList.contains('ticks1') ? 100 : 178
+    const xs = []
+    for (let x = 64; x <= 326; x += 12) xs.push(x)
+    for (let x = 380; x <= 560; x += 70) xs.push(x)
+    for (let x = 596; x <= 656; x += 12) xs.push(x)
+    g.innerHTML = xs.map((x) => `<path class="ln" d="M${x} ${y - 6} V${y + 6}"/>`).join('')
+  })
+
+  if (window.Vue) {
+    const { createApp, ref, computed, watch } = Vue
+    const LABEL = { focus: '专注', shortBreak: '短休息', longBreak: '长休息' }
+    createApp({
+      setup() {
+        // 演示版：逻辑与 usePomodoro 相同，只是不写 localStorage，并且可以“加速”
+        const fast = ref(false)
+        const settings = ref({ focus: 25, shortBreak: 5, longBreak: 15, longEvery: 4 })
+        const phase = ref('focus')
+        const timer = ref({ status: 'idle' })
+        const completed = ref(0)
+        const now = ref(Date.now())
+
+        const minute = computed(() => (fast.value ? 1000 : 60000))
+        const status = computed(() => timer.value.status)
+        const duration = computed(() => settings.value[phase.value] * minute.value)
+        const remaining = computed(() => {
+          const t = timer.value
+          if (t.status === 'running') return Math.max(0, t.endAt - now.value)
+          if (t.status === 'paused') return t.left
+          return duration.value
+        })
+        const progress = computed(() => Math.min(1, Math.max(0, 1 - remaining.value / duration.value)))
+        // 加速模式下 1 秒代表 1 分钟，仍按“分:秒”的比例显示
+        const display = computed(() => {
+          const s = Math.ceil(remaining.value / minute.value * 60)
+          return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+        })
+        const nextPhase = computed(() => {
+          if (phase.value !== 'focus') return 'focus'
+          return (completed.value + 1) % settings.value.longEvery === 0 ? 'longBreak' : 'shortBreak'
+        })
+        const timerText = computed(() => {
+          const t = timer.value
+          if (t.status === 'running') return `{ status: "running", endAt: ${t.endAt} }`
+          if (t.status === 'paused') return `{ status: "paused", left: ${t.left} }`
+          return '{ status: "idle" }'
+        })
+
+        const start = () => { timer.value = { status: 'running', endAt: Date.now() + remaining.value } }
+        const pause = () => { timer.value = { status: 'paused', left: Math.max(0, timer.value.endAt - Date.now()) } }
+        const reset = () => { timer.value = { status: 'idle' } }
+        const switchTo = (next) => { phase.value = next; timer.value = { status: 'idle' } }
+        const skip = () => switchTo(nextPhase.value)
+        function finish() {
+          const next = nextPhase.value
+          if (phase.value === 'focus') completed.value++
+          switchTo(next)
+        }
+        function tick() {
+          now.value = Date.now()
+          if (status.value === 'running' && remaining.value === 0) finish()
+        }
+        function set(key, value, min, max) {
+          const n = Math.round(Number(value))
+          if (Number.isFinite(n)) settings.value = { ...settings.value, [key]: Math.min(max, Math.max(min, n)) }
+        }
+        watch(status, (s, _o, onCleanup) => {
+          if (s !== 'running') return
+          tick()
+          const id = setInterval(tick, 250)
+          onCleanup(() => clearInterval(id))
+        })
+        return { LABEL, C: 2 * Math.PI * 90, fast, settings, phase, timer, completed, now, status, duration,
+                 remaining, progress, display, nextPhase, timerText, start, pause, reset, skip, set }
+      }
+    }).mount('#demo-pomo')
+  }
+</script>
+</body>
+</html>
